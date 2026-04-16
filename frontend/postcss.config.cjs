@@ -1,16 +1,16 @@
 // 📦 postcss.config.cjs — Configuração institucional (Tailwind + Autoprefixer)
 module.exports = {
   plugins: {
-    // 🪴 Suporte a nesting (prioriza plugin do Tailwind, com fallback moderno)
-    "tailwindcss/nesting": "postcss-nesting",
+    // 🪴 Nesting CSS moderno
+    "postcss-nesting": {},
 
-    // 🎨 Núcleo do Tailwind
+    // 🎨 Tailwind
     tailwindcss: {},
 
-    // ⚙️ Autoprefixer (melhor compatibilidade + grid moderno)
+    // ⚙️ Compatibilidade de CSS
     autoprefixer: {
       grid: "autoplace",
-      flexbox: "no-2009"
-    }
-  }
+      flexbox: "no-2009",
+    },
+  },
 };

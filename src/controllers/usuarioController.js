@@ -1,4 +1,5 @@
 // ✅ src/controllers/usuarioController.js (UNIFICADO • singular • premium)
+// - Login REMOVIDO deste arquivo: usar src/controllers/loginController.js
 /* eslint-disable no-console */
 "use strict";
 
@@ -13,7 +14,7 @@ const query = dbModule?.query ?? db?.query?.bind?.(db);
 const getClient = dbModule?.getClient ?? null;
 
 /* ──────────────────────────────────────────────────────────────
-   Deps públicas (auth/email)
+   Deps públicas (email/reset)
 ────────────────────────────────────────────────────────────── */
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
@@ -28,12 +29,14 @@ const FRONTEND_URL_STATIC =
 
 const JWT_ISS = process.env.JWT_ISSUER || undefined;
 const JWT_AUD = process.env.JWT_AUDIENCE || undefined;
+const IS_DEV = process.env.NODE_ENV !== "production";
 
 /* ──────────────────────────────────────────────────────────────
    Regex / Regras
 ────────────────────────────────────────────────────────────── */
-// ✅ alinhada ao frontend: mínimo 8, maiúscula, minúscula, número, símbolo e sem espaços
-const SENHA_FORTE_RE = /^(?=\S{8,}$)(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).*$/;
+// mínimo 8, maiúscula, minúscula, número, símbolo e sem espaços
+const SENHA_FORTE_RE =
+  /^(?=\S{8,}$)(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).*$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const REGISTRO_MASK_RE = /^\d{2}\.\d{3}-\d$/;
@@ -52,58 +55,73 @@ const REQUIRED_PROFILE_FIELDS = [
 ];
 
 /* ──────────────────────────────────────────────────────────────
-   Helpers / Normalizações (unificados)
+   Helpers / Normalizações
 ────────────────────────────────────────────────────────────── */
 function normStr(v) {
   return String(v || "").trim();
 }
+
 function onlyDigits(v) {
   return String(v || "").replace(/\D/g, "");
 }
+
 function normEmail(v) {
   return String(v || "").trim().toLowerCase();
 }
+
 function normNome(v) {
   return String(v || "").trim();
 }
+
 function toDateOnly(v) {
   const s = String(v || "").slice(0, 10);
   return DATE_ONLY_RE.test(s) ? s : "";
 }
+
 function numOrNull(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }
+
 function clamp(n, min, max) {
   return Math.min(Math.max(n, min), max);
 }
+
 function isEmail(v) {
   return EMAIL_RE.test(String(v || "").trim());
 }
+
 function uniq(arr) {
   return [...new Set(arr)];
 }
+
 function safePreview(value, start = 6, end = 4) {
   const s = String(value || "");
   if (!s) return "";
   if (s.length <= start + end) return "***";
   return `${s.slice(0, start)}...${s.slice(-end)}`;
 }
+
 function isHttpsUrl(v) {
   return /^https:\/\/.+/i.test(String(v || "").trim());
 }
+
 function removeTrailingSlash(v) {
   return String(v || "").replace(/\/+$/, "");
 }
+
 function normalizeFrontendBase(raw) {
   const base = removeTrailingSlash(String(raw || "").trim());
   if (!base) return "";
   if (/^https?:\/\/.+/i.test(base)) return base;
   return "";
 }
+
 function getFrontendBaseFromRequest(req) {
   const reqOrigin = String(req.headers.origin || "").trim();
-  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").trim().toLowerCase();
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "")
+    .trim()
+    .toLowerCase();
   const forwardedHost = String(req.headers["x-forwarded-host"] || "").trim();
   const host = String(req.headers.host || "").trim();
 
@@ -112,8 +130,12 @@ function getFrontendBaseFromRequest(req) {
 
   if (process.env.NODE_ENV === "production") {
     if (isHttpsUrl(reqOrigin)) return removeTrailingSlash(reqOrigin);
-    if (forwardedProto === "https" && forwardedHost) return `https://${removeTrailingSlash(forwardedHost)}`;
-    if (host && !/localhost|127\.0\.0\.1/i.test(host)) return `https://${removeTrailingSlash(host)}`;
+    if (forwardedProto === "https" && forwardedHost) {
+      return `https://${removeTrailingSlash(forwardedHost)}`;
+    }
+    if (host && !/localhost|127\.0\.0\.1/i.test(host)) {
+      return `https://${removeTrailingSlash(host)}`;
+    }
   }
 
   if (isHttpsUrl(reqOrigin) || /^http:\/\/.+/i.test(reqOrigin)) {
@@ -122,6 +144,7 @@ function getFrontendBaseFromRequest(req) {
 
   return "http://localhost:5173";
 }
+
 function buildPasswordResetLink(req, token) {
   const base = getFrontendBaseFromRequest(req);
   const encodedToken = encodeURIComponent(String(token || "").trim());
@@ -158,10 +181,7 @@ function normalizarPerfis(input, { fallback = ["usuario"], strict = false } = {}
   const recebidos = toPerfilArray(input);
   const validos = uniq(recebidos.filter((p) => PERFIS_VALIDOS.includes(p)));
 
-  if (strict) {
-    return validos;
-  }
-
+  if (strict) return validos;
   return validos.length ? validos : fallback;
 }
 
@@ -183,8 +203,11 @@ function toRegistroMasked(v) {
 }
 
 function camposFaltantes(u = {}) {
-  return REQUIRED_PROFILE_FIELDS.filter((k) => u[k] === null || u[k] === undefined || u[k] === "");
+  return REQUIRED_PROFILE_FIELDS.filter(
+    (k) => u[k] === null || u[k] === undefined || u[k] === ""
+  );
 }
+
 function isPerfilIncompleto(u = {}) {
   return camposFaltantes(u).length > 0;
 }
@@ -204,27 +227,52 @@ function traduzPgError(err) {
   if (code === "23505") {
     const c = String(err.constraint || "").toLowerCase();
     const detail = String(err.detail || "").toLowerCase();
+
     if (c.includes("cpf") || detail.includes("cpf")) {
-      return { message: "CPF já cadastrado.", erro: "Registro duplicado.", fieldErrors: { cpf: "Este CPF já está em uso." } };
+      return {
+        message: "CPF já cadastrado.",
+        erro: "Registro duplicado.",
+        fieldErrors: { cpf: "Este CPF já está em uso." },
+      };
     }
+
     if (c.includes("email") || detail.includes("email")) {
-      return { message: "E-mail já cadastrado.", erro: "Registro duplicado.", fieldErrors: { email: "Este e-mail já está em uso." } };
+      return {
+        message: "E-mail já cadastrado.",
+        erro: "Registro duplicado.",
+        fieldErrors: { email: "Este e-mail já está em uso." },
+      };
     }
-    return { ...base, erro: "Registro duplicado.", message: "Registro já existente." };
+
+    return {
+      ...base,
+      erro: "Registro duplicado.",
+      message: "Registro já existente.",
+    };
   }
 
   if (code === "23502") {
     const col = err?.column || "";
     const fe = {};
     if (col) fe[col] = "Campo obrigatório.";
-    return { ...base, erro: "Campo obrigatório.", message: "Há campos obrigatórios não preenchidos.", fieldErrors: fe };
+    return {
+      ...base,
+      erro: "Campo obrigatório.",
+      message: "Há campos obrigatórios não preenchidos.",
+      fieldErrors: fe,
+    };
   }
 
   if (code === "22P02") {
     const msg = String(err.message || "").toLowerCase();
     const fe = {};
     if (msg.includes("date")) fe.data_nascimento = "Data inválida.";
-    return { ...base, erro: "Valor inválido.", message: "Valor inválido em um ou mais campos.", fieldErrors: fe };
+    return {
+      ...base,
+      erro: "Valor inválido.",
+      message: "Valor inválido em um ou mais campos.",
+      fieldErrors: fe,
+    };
   }
 
   if (code === "23514") {
@@ -234,7 +282,9 @@ function traduzPgError(err) {
         const campo = CHECK_TO_FIELD[k];
         const fieldErrors = {};
         fieldErrors[campo] =
-          campo === "registro" ? "Formato inválido. Use 00.000-0." : "Valor inválido.";
+          campo === "registro"
+            ? "Formato inválido. Use 00.000-0."
+            : "Valor inválido.";
         return {
           message: "Algum campo não atende às regras de validação.",
           erro: "Restrição de validação violada.",
@@ -242,22 +292,41 @@ function traduzPgError(err) {
         };
       }
     }
-    return { ...base, erro: "Restrição de validação violada.", message: "Algum campo não atende às regras de validação." };
+    return {
+      ...base,
+      erro: "Restrição de validação violada.",
+      message: "Algum campo não atende às regras de validação.",
+    };
   }
 
   if (code === "23503") {
     const d = String(err.detail || "").toLowerCase();
     const fieldErrors = {};
-    ["unidade_id", "cargo_id", "genero_id", "orientacao_sexual_id", "cor_raca_id", "escolaridade_id", "deficiencia_id"].forEach(
-      (k) => {
-        if (d.includes(k)) fieldErrors[k] = "ID inexistente na referência.";
-      }
-    );
-    return { message: "Alguma referência informada não existe.", erro: "Violação de integridade referencial.", fieldErrors };
+    [
+      "unidade_id",
+      "cargo_id",
+      "genero_id",
+      "orientacao_sexual_id",
+      "cor_raca_id",
+      "escolaridade_id",
+      "deficiencia_id",
+    ].forEach((k) => {
+      if (d.includes(k)) fieldErrors[k] = "ID inexistente na referência.";
+    });
+
+    return {
+      message: "Alguma referência informada não existe.",
+      erro: "Violação de integridade referencial.",
+      fieldErrors,
+    };
   }
 
   if (code === "42703") {
-    return { ...base, erro: "Erro de configuração no servidor.", message: "Erro de configuração no servidor." };
+    return {
+      ...base,
+      erro: "Erro de configuração no servidor.",
+      message: "Erro de configuração no servidor.",
+    };
   }
 
   return { ...base, erro: err.message || "Erro de banco de dados." };
@@ -279,8 +348,12 @@ async function assertExists(table, id, field = "id") {
   const t = String(table || "").trim();
   const f = String(field || "id").trim();
 
-  if (!FK_TABLES.has(t)) throw new Error(`Tabela não permitida em assertExists: ${t}`);
-  if (f !== "id") throw new Error(`Campo não permitido em assertExists: ${f}`);
+  if (!FK_TABLES.has(t)) {
+    throw new Error(`Tabela não permitida em assertExists: ${t}`);
+  }
+  if (f !== "id") {
+    throw new Error(`Campo não permitido em assertExists: ${f}`);
+  }
 
   const r = await db.query(`SELECT 1 FROM ${t} WHERE id = $1 LIMIT 1`, [id]);
   return r.rowCount > 0;
@@ -311,8 +384,11 @@ async function validarPerfilComplementar(payload) {
     deficiencia_id,
     data_nascimento,
   };
+
   Object.entries(obrig).forEach(([k, v]) => {
-    if (v === null || v === undefined || v === "") fieldErrors[k] = "Campo obrigatório.";
+    if (v === null || v === undefined || v === "") {
+      fieldErrors[k] = "Campo obrigatório.";
+    }
   });
 
   if (data_nascimento) {
@@ -323,12 +399,24 @@ async function validarPerfilComplementar(payload) {
       const now = new Date();
       const dt = new Date(`${d}T00:00:00Z`);
 
-      const hojeUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-      const dtUTC = Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate());
+      const hojeUTC = Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate()
+      );
+      const dtUTC = Date.UTC(
+        dt.getUTCFullYear(),
+        dt.getUTCMonth(),
+        dt.getUTCDate()
+      );
 
-      if (Number.isNaN(dt.getTime())) fieldErrors.data_nascimento = "Data inválida.";
-      else if (dtUTC > hojeUTC) fieldErrors.data_nascimento = "Data não pode ser futura.";
-      else if (dt.getUTCFullYear() < 1900) fieldErrors.data_nascimento = "Ano inválido.";
+      if (Number.isNaN(dt.getTime())) {
+        fieldErrors.data_nascimento = "Data inválida.";
+      } else if (dtUTC > hojeUTC) {
+        fieldErrors.data_nascimento = "Data não pode ser futura.";
+      } else if (dt.getUTCFullYear() < 1900) {
+        fieldErrors.data_nascimento = "Ano inválido.";
+      }
     }
   }
 
@@ -336,7 +424,8 @@ async function validarPerfilComplementar(payload) {
     const masked = String(registro).trim();
     const digits = onlyDigits(registro);
     if (!(REGISTRO_MASK_RE.test(masked) || /^\d{6,7}$/.test(digits))) {
-      fieldErrors.registro = "Formato inválido. Ex.: 28.053-7 (ou somente 6–7 dígitos).";
+      fieldErrors.registro =
+        "Formato inválido. Ex.: 28.053-7 (ou somente 6–7 dígitos).";
     }
   }
 
@@ -349,6 +438,7 @@ async function validarPerfilComplementar(payload) {
     ["escolaridades", "escolaridade_id", escolaridade_id],
     ["deficiencias", "deficiencia_id", deficiencia_id],
   ];
+
   for (const [table, key, value] of checks) {
     if (value != null) {
       const ok = await assertExists(table, value);
@@ -357,7 +447,11 @@ async function validarPerfilComplementar(payload) {
   }
 
   const ok = Object.keys(fieldErrors).length === 0;
-  return { ok, fieldErrors, message: ok ? null : "Erros de validação no formulário." };
+  return {
+    ok,
+    fieldErrors,
+    message: ok ? null : "Erros de validação no formulário.",
+  };
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -368,7 +462,7 @@ async function listar(req, res) {
     const page = clamp(numOrNull(req.query.page) ?? 1, 1, 1000000);
     const pageSize = clamp(numOrNull(req.query.pageSize) ?? 50, 1, 200);
 
-    const q = normStr(req.query.q);
+    const qBusca = normStr(req.query.q);
     const unidadeId = numOrNull(req.query.unidade_id);
     const cargoNome = normStr(req.query.cargo_nome);
     const perfisFiltro = toPerfilArray(req.query.perfil);
@@ -377,11 +471,11 @@ async function listar(req, res) {
     const params = [];
     let i = 1;
 
-    if (q) {
+    if (qBusca) {
       where.push(
         `(u.nome ILIKE $${i} OR u.email ILIKE $${i} OR u.cpf ILIKE $${i} OR u.registro ILIKE $${i})`
       );
-      params.push(`%${q}%`);
+      params.push(`%${qBusca}%`);
       i++;
     }
 
@@ -509,7 +603,9 @@ async function obter(req, res) {
       [id]
     );
 
-    if (!rows.length) return res.status(404).json({ erro: "Usuário não encontrado." });
+    if (!rows.length) {
+      return res.status(404).json({ erro: "Usuário não encontrado." });
+    }
 
     const u = rows[0];
     return res.json({ ok: true, data: { ...u, perfil: toPerfilArray(u.perfil) } });
@@ -557,18 +653,43 @@ async function atualizar(req, res) {
 
   if (email !== undefined) {
     const e = normEmail(email);
-    if (!e || !isEmail(e)) return res.status(400).json({ erro: "E-mail inválido." });
+    if (!e || !isEmail(e)) {
+      return res.status(400).json({ erro: "E-mail inválido." });
+    }
+
+    const dupQ = await db.query(
+      `
+      SELECT id
+      FROM usuarios
+      WHERE LOWER(email) = LOWER($1)
+        AND id <> $2
+      LIMIT 1
+      `,
+      [e, id]
+    );
+
+    if (dupQ.rows?.length) {
+      return res.status(409).json({
+        erro: "E-mail já cadastrado.",
+        fieldErrors: { email: "Este e-mail já está em uso." },
+      });
+    }
+
     updates.push(`email = $${i++}`);
     vals.push(e);
   }
 
   if (perfil !== undefined) {
     if (!ehAdmin) {
-      return res.status(403).json({ erro: "Apenas administradores podem alterar perfil." });
+      return res
+        .status(403)
+        .json({ erro: "Apenas administradores podem alterar perfil." });
     }
 
     const perfisRecebidos = toPerfilArray(perfil);
-    const perfisInvalidos = perfisRecebidos.filter((p) => !PERFIS_VALIDOS.includes(p));
+    const perfisInvalidos = perfisRecebidos.filter(
+      (p) => !PERFIS_VALIDOS.includes(p)
+    );
 
     if (!perfisRecebidos.length) {
       return res.status(400).json({ erro: "Perfil é obrigatório." });
@@ -613,10 +734,10 @@ async function atualizar(req, res) {
       rows = result.rows;
     } catch (err) {
       if (err?.code === "42703") {
-        console.warn("[usuarioController.atualizar] coluna atualizado_em ausente, usando fallback", {
-          id,
-          solicitanteId: solicitante?.id ?? null,
-        });
+        console.warn(
+          "[usuarioController.atualizar] coluna atualizado_em ausente, usando fallback",
+          { id, solicitanteId: solicitante?.id ?? null }
+        );
 
         const fallbackSql = `
           UPDATE usuarios
@@ -660,7 +781,9 @@ async function atualizar(req, res) {
     });
 
     const payload = traduzPgError(err);
-    const isClientErr = ["23505", "23514", "23503", "23502", "22P02"].includes(err?.code);
+    const isClientErr = ["23505", "23514", "23503", "23502", "22P02"].includes(
+      err?.code
+    );
 
     return res
       .status(isClientErr ? 400 : 500)
@@ -682,7 +805,10 @@ async function excluir(req, res) {
       "DELETE FROM usuarios WHERE id = $1 RETURNING id, nome, cpf, email, perfil",
       [id]
     );
-    if (!rows.length) return res.status(404).json({ erro: "Usuário não encontrado." });
+
+    if (!rows.length) {
+      return res.status(404).json({ erro: "Usuário não encontrado." });
+    }
 
     const u = rows[0];
     return res.json({
@@ -697,50 +823,82 @@ async function excluir(req, res) {
 }
 
 /* ──────────────────────────────────────────────────────────────
-   (E) ADMIN — listar instrutor (métricas)
+   (E) ADMIN — listar instrutores (padrão novo)
 ────────────────────────────────────────────────────────────── */
 async function listarInstrutor(req, res) {
   try {
     const { rows } = await db.query(`
       WITH instrutores_base AS (
-        SELECT DISTINCT u.id, u.nome, u.email
+        SELECT DISTINCT u.id, u.nome, u.email, u.perfil
         FROM usuarios u
+        LEFT JOIN turma_instrutor ti ON ti.instrutor_id = u.id
         LEFT JOIN evento_instrutor ei ON ei.instrutor_id = u.id
-        WHERE LOWER(u.perfil) LIKE '%instrutor%'
+        WHERE LOWER(COALESCE(u.perfil, '')) LIKE '%instrutor%'
+           OR LOWER(COALESCE(u.perfil, '')) LIKE '%administrador%'
+           OR ti.instrutor_id IS NOT NULL
            OR ei.instrutor_id IS NOT NULL
+      ),
+      vinc_ti AS (
+        SELECT ti.instrutor_id, t.evento_id, t.id AS turma_id
+        FROM turma_instrutor ti
+        JOIN turmas t ON t.id = ti.turma_id
+      ),
+      vinc_ei AS (
+        SELECT ei.instrutor_id, t.evento_id, t.id AS turma_id
+        FROM evento_instrutor ei
+        JOIN turmas t ON t.evento_id = ei.evento_id
+      ),
+      vinculos AS (
+        SELECT DISTINCT instrutor_id, evento_id, turma_id FROM vinc_ti
+        UNION
+        SELECT DISTINCT instrutor_id, evento_id, turma_id FROM vinc_ei
+      ),
+      eventos_por_instrutor AS (
+        SELECT
+          instrutor_id,
+          COUNT(DISTINCT evento_id)::int AS eventos_ministrados
+        FROM vinculos
+        GROUP BY instrutor_id
+      ),
+      notas_por_instrutor AS (
+        SELECT
+          v.instrutor_id,
+          CASE
+            WHEN a.desempenho_instrutor IS NULL THEN NULL
+            WHEN trim(a.desempenho_instrutor::text) ~ '^[1-5](?:[\\.,]0+)?$'
+              THEN REPLACE(trim(a.desempenho_instrutor::text), ',', '.')::numeric
+            WHEN lower(a.desempenho_instrutor::text) IN ('ótimo','otimo','excelente','muito bom') THEN 5
+            WHEN lower(a.desempenho_instrutor::text) = 'bom' THEN 4
+            WHEN lower(a.desempenho_instrutor::text) IN ('regular','médio','medio') THEN 3
+            WHEN lower(a.desempenho_instrutor::text) = 'ruim' THEN 2
+            WHEN lower(a.desempenho_instrutor::text) IN ('péssimo','pessimo','muito ruim') THEN 1
+            ELSE NULL
+          END AS nota
+        FROM vinculos v
+        LEFT JOIN avaliacoes a
+          ON a.turma_id = v.turma_id
+      ),
+      agg_notas AS (
+        SELECT
+          instrutor_id,
+          COUNT(nota)::int AS total_respostas,
+          ROUND(AVG(nota)::numeric, 2) AS media_avaliacao
+        FROM notas_por_instrutor
+        GROUP BY instrutor_id
       )
       SELECT
         b.id,
         b.nome,
         b.email,
-        COALESCE(e_stats.eventos_ministrados, 0) AS eventos_ministrados,
-        e_stats.media_avaliacao,
-        (s.id IS NOT NULL) AS possui_assinatura
+        COALESCE(ep.eventos_ministrados, 0) AS eventos_ministrados,
+        COALESCE(an.total_respostas, 0) AS total_respostas,
+        an.media_avaliacao,
+        (s.usuario_id IS NOT NULL) AS possui_assinatura
       FROM instrutores_base b
-      LEFT JOIN (
-        SELECT
-          u.id AS uid,
-          COUNT(DISTINCT ei.evento_id) AS eventos_ministrados,
-          ROUND(AVG(
-            CASE a.desempenho_instrutor
-              WHEN 'Ótimo'  THEN 5
-              WHEN 'Otimo'  THEN 5
-              WHEN 'Bom'    THEN 4
-              WHEN 'Regular' THEN 3
-              WHEN 'Ruim'   THEN 2
-              WHEN 'Péssimo' THEN 1
-              WHEN 'Pessimo' THEN 1
-              ELSE NULL
-            END
-          )::numeric, 1) AS media_avaliacao
-        FROM usuarios u
-        LEFT JOIN evento_instrutor ei ON ei.instrutor_id = u.id
-        LEFT JOIN turmas t ON t.evento_id = ei.evento_id
-        LEFT JOIN avaliacoes a ON a.turma_id = t.id AND a.instrutor_id = u.id
-        GROUP BY u.id
-      ) e_stats ON e_stats.uid = b.id
+      LEFT JOIN eventos_por_instrutor ep ON ep.instrutor_id = b.id
+      LEFT JOIN agg_notas an ON an.instrutor_id = b.id
       LEFT JOIN assinaturas s ON s.usuario_id = b.id
-      ORDER BY b.nome ASC;
+      ORDER BY b.nome ASC
     `);
 
     const data = (rows || []).map((r) => ({
@@ -748,6 +906,7 @@ async function listarInstrutor(req, res) {
       nome: r.nome,
       email: r.email,
       eventosMinistrados: Number(r.eventos_ministrados) || 0,
+      totalRespostas: Number(r.total_respostas) || 0,
       mediaAvaliacao: r.media_avaliacao !== null ? Number(r.media_avaliacao) : null,
       possuiAssinatura: !!r.possui_assinatura,
     }));
@@ -793,7 +952,9 @@ async function atualizarPerfil(req, res) {
   }
 
   const perfisRecebidos = toPerfilArray(perfilBruto);
-  const perfisInvalidos = perfisRecebidos.filter((p) => !PERFIS_VALIDOS.includes(p));
+  const perfisInvalidos = perfisRecebidos.filter(
+    (p) => !PERFIS_VALIDOS.includes(p)
+  );
 
   if (!perfisRecebidos.length) {
     console.warn("[usuarioController.atualizarPerfil] perfil vazio", {
@@ -896,10 +1057,10 @@ async function atualizarPerfil(req, res) {
       rows = r1.rows;
     } catch (err) {
       if (err?.code === "42703") {
-        console.warn("[usuarioController.atualizarPerfil] coluna atualizado_em ausente, usando fallback", {
-          id,
-          adminId,
-        });
+        console.warn(
+          "[usuarioController.atualizarPerfil] coluna atualizado_em ausente, usando fallback",
+          { id, adminId }
+        );
 
         const r2 = await db.query(
           `
@@ -953,7 +1114,9 @@ async function atualizarPerfil(req, res) {
     });
 
     const payload = traduzPgError(err);
-    const isClientErr = ["23505", "23514", "23503", "23502", "22P02"].includes(err?.code);
+    const isClientErr = ["23505", "23514", "23503", "23502", "22P02"].includes(
+      err?.code
+    );
 
     return res
       .status(isClientErr ? 400 : 500)
@@ -966,7 +1129,9 @@ async function atualizarPerfil(req, res) {
 ────────────────────────────────────────────────────────────── */
 async function obterResumo(req, res) {
   const id = Number(req.params.id);
-  if (!Number.isFinite(id)) return res.status(400).json({ erro: "ID inválido." });
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ erro: "ID inválido." });
+  }
 
   try {
     const sqlCursos75 = `
@@ -1023,7 +1188,10 @@ async function obterResumo(req, res) {
       WHERE usuario_id = $1 AND tipo = 'usuario';
     `;
 
-    const [cursosQ, certsQ] = await Promise.all([db.query(sqlCursos75, [id]), db.query(sqlCerts, [id])]);
+    const [cursosQ, certsQ] = await Promise.all([
+      db.query(sqlCursos75, [id]),
+      db.query(sqlCerts, [id]),
+    ]);
 
     const cursos75 = Number(cursosQ?.rows?.[0]?.n || 0);
     const certificados = Number(certsQ?.rows?.[0]?.n || 0);
@@ -1031,7 +1199,10 @@ async function obterResumo(req, res) {
 
     return res.json({
       ok: true,
-      data: { cursos_concluidos_75, certificados_emitidos: certificados },
+      data: {
+        cursos_concluidos_75,
+        certificados_emitidos: certificados,
+      },
     });
   } catch (err) {
     console.error("❌ [obterResumo] erro:", err);
@@ -1102,7 +1273,9 @@ async function cadastrar(req, res) {
   const cor_raca_id = req.body?.cor_raca_id ?? null;
   const escolaridade_id = req.body?.escolaridade_id ?? null;
   const deficiencia_id = req.body?.deficiencia_id ?? null;
-  const data_nascimento = req.body?.data_nascimento ? toDateOnly(req.body.data_nascimento) : null;
+  const data_nascimento = req.body?.data_nascimento
+    ? toDateOnly(req.body.data_nascimento)
+    : null;
   const registro = req.body?.registro ? toRegistroMasked(req.body.registro) : null;
 
   const fieldErrors = {};
@@ -1112,18 +1285,27 @@ async function cadastrar(req, res) {
   if (email && !EMAIL_RE.test(email)) fieldErrors.email = "E-mail inválido.";
   if (!senha) fieldErrors.senha = "Senha é obrigatória.";
   if (senha && !SENHA_FORTE_RE.test(senha)) {
-    fieldErrors.senha = "Mín. 8 caracteres com maiúscula, minúscula, número, símbolo e sem espaços.";
+    fieldErrors.senha =
+      "Mín. 8 caracteres com maiúscula, minúscula, número, símbolo e sem espaços.";
   }
+
   if (Object.keys(fieldErrors).length) {
     return res.status(422).json({ message: "Erros de validação.", fieldErrors });
   }
 
   try {
-    const existente = await db.query("SELECT id FROM usuarios WHERE cpf = $1 OR LOWER(email) = LOWER($2)", [cpf, email]);
+    const existente = await db.query(
+      "SELECT id FROM usuarios WHERE cpf = $1 OR LOWER(email) = LOWER($2)",
+      [cpf, email]
+    );
+
     if (existente.rows.length > 0) {
       return res.status(409).json({
         message: "CPF ou e-mail já cadastrado.",
-        fieldErrors: { cpf: "Verifique o CPF.", email: "Verifique o e-mail." },
+        fieldErrors: {
+          cpf: "Verifique o CPF.",
+          email: "Verifique o e-mail.",
+        },
       });
     }
 
@@ -1141,7 +1323,8 @@ async function cadastrar(req, res) {
       RETURNING
         id, nome, cpf, email, perfil,
         unidade_id, cargo_id, genero_id, orientacao_sexual_id,
-        cor_raca_id, escolaridade_id, deficiencia_id, data_nascimento, registro
+        cor_raca_id, escolaridade_id, deficiencia_id,
+        data_nascimento, registro
     `;
 
     const values = [
@@ -1183,113 +1366,7 @@ async function cadastrar(req, res) {
 }
 
 /* ──────────────────────────────────────────────────────────────
-   (J) PÚBLICO — login (CPF + senha)
-────────────────────────────────────────────────────────────── */
-async function login(req, res) {
-  const cpf = onlyDigits(req.body?.cpf);
-  const senha = String(req.body?.senha || "");
-
-  if (!cpf || !senha) {
-    const fieldErrors = {};
-    if (!cpf) fieldErrors.cpf = "Informe o CPF.";
-    if (!senha) fieldErrors.senha = "Informe a senha.";
-    return res.status(422).json({ message: "Erros de validação.", fieldErrors });
-  }
-
-  try {
-    const result = await db.query(
-      `
-      SELECT
-        id, nome, cpf, email, senha, perfil,
-        unidade_id, cargo_id, genero_id, orientacao_sexual_id,
-        cor_raca_id, escolaridade_id, deficiencia_id,
-        data_nascimento, registro
-      FROM usuarios
-      WHERE cpf = $1
-      LIMIT 1
-      `,
-      [cpf]
-    );
-
-    const usuario = result.rows[0];
-
-    if (!usuario) {
-      return res.status(401).json({
-        message: "Usuário não encontrado.",
-        fieldErrors: { cpf: "Verifique o CPF." },
-      });
-    }
-
-    const senhaCorreta = await bcrypt.compare(senha, usuario.senha);
-    if (!senhaCorreta) {
-      return res.status(401).json({
-        message: "Senha incorreta.",
-        fieldErrors: { senha: "Senha inválida." },
-      });
-    }
-
-    const perfilArray = toPerfilArray(usuario.perfil);
-    const jwtSecret = String(process.env.JWT_SECRET || "").trim();
-
-    if (!jwtSecret) {
-      console.error("[usuarioController.login] JWT_SECRET ausente no ambiente.");
-      return res.status(500).json({ message: "Configuração do servidor ausente." });
-    }
-
-    const incompleto = isPerfilIncompleto(usuario);
-    const faltantes = camposFaltantes(usuario);
-    res.set("X-Perfil-Incompleto", incompleto ? "1" : "0");
-
-    const signOpts = { expiresIn: "4h" };
-    if (JWT_ISS) signOpts.issuer = JWT_ISS;
-    if (JWT_AUD) signOpts.audience = JWT_AUD;
-
-    const token = jwt.sign(
-      {
-        sub: String(usuario.id),
-        id: usuario.id,
-        nome: usuario.nome,
-        email: usuario.email,
-        perfil: perfilArray,
-      },
-      jwtSecret,
-      signOpts
-    );
-
-    console.log("[usuarioController.login] SUCESSO", {
-      usuarioId: usuario.id,
-      nome: usuario.nome,
-      perfis: perfilArray,
-      perfilIncompleto: incompleto,
-    });
-
-    return res.status(200).json({
-      mensagem: "Login realizado com sucesso.",
-      token,
-      usuario: {
-        id: usuario.id,
-        nome: usuario.nome,
-        cpf: usuario.cpf,
-        email: usuario.email,
-        perfil: perfilArray,
-      },
-      perfilIncompleto: incompleto,
-      camposFaltantes: faltantes,
-    });
-  } catch (err) {
-    console.error("[usuarioController.login] ERRO", {
-      message: err?.message,
-      code: err?.code,
-      detail: err?.detail,
-      constraint: err?.constraint,
-      stack: err?.stack,
-    });
-    return res.status(500).json({ message: "Erro ao realizar login." });
-  }
-}
-
-/* ──────────────────────────────────────────────────────────────
-   (K) PÚBLICO — recuperar senha (idempotente)
+   (J) PÚBLICO — recuperar senha (idempotente)
 ────────────────────────────────────────────────────────────── */
 async function recuperarSenha(req, res) {
   const email = normEmail(req.body?.email);
@@ -1319,9 +1396,10 @@ async function recuperarSenha(req, res) {
     );
 
     if (result.rows.length === 0) {
-      console.log("[usuarioController.recuperarSenha] e-mail não encontrado, resposta idempotente", {
-        email,
-      });
+      console.log(
+        "[usuarioController.recuperarSenha] e-mail não encontrado, resposta idempotente",
+        { email }
+      );
       return res.status(200).json(okMsg);
     }
 
@@ -1329,7 +1407,9 @@ async function recuperarSenha(req, res) {
     const jwtSecret = String(process.env.JWT_SECRET || "").trim();
 
     if (!jwtSecret) {
-      console.error("[usuarioController.recuperarSenha] JWT_SECRET ausente no ambiente");
+      console.error(
+        "[usuarioController.recuperarSenha] JWT_SECRET ausente no ambiente"
+      );
       return res.status(200).json(okMsg);
     }
 
@@ -1389,7 +1469,7 @@ async function recuperarSenha(req, res) {
 }
 
 /* ──────────────────────────────────────────────────────────────
-   (L) PÚBLICO — redefinir senha
+   (K) PÚBLICO — redefinir senha
 ────────────────────────────────────────────────────────────── */
 async function redefinirSenha(req, res) {
   const tokenRaw = req.body?.token || req.params?.token || req.query?.token || "";
@@ -1406,8 +1486,8 @@ async function redefinirSenha(req, res) {
     return res.status(422).json({
       message: "Erros de validação.",
       fieldErrors: {
-        ...( !token ? { token: "Token ausente." } : {} ),
-        ...( !novaSenha ? { novaSenha: "Informe a nova senha." } : {} ),
+        ...(!token ? { token: "Token ausente." } : {}),
+        ...(!novaSenha ? { novaSenha: "Informe a nova senha." } : {}),
       },
     });
   }
@@ -1481,16 +1561,20 @@ async function redefinirSenha(req, res) {
 }
 
 /* ──────────────────────────────────────────────────────────────
-   (M) PÚBLICO/SELF — obter usuário por id (fallback assinatura)
+   (L) PÚBLICO/SELF — obter usuário por id (fallback assinatura)
 ────────────────────────────────────────────────────────────── */
 async function obterPorId(req, res) {
   const { id } = req.params;
   const usuarioLogado = req.user || {};
-  const perfilArr = Array.isArray(usuarioLogado.perfil) ? usuarioLogado.perfil : perfilToArray(usuarioLogado.perfil);
+  const perfilArr = Array.isArray(usuarioLogado.perfil)
+    ? usuarioLogado.perfil
+    : perfilToArray(usuarioLogado.perfil);
   const ehAdmin = perfilArr.includes("administrador");
 
   if (Number(id) !== Number(usuarioLogado.id) && !ehAdmin) {
-    return res.status(403).json({ message: "Sem permissão para acessar este usuário." });
+    return res
+      .status(403)
+      .json({ message: "Sem permissão para acessar este usuário." });
   }
 
   const baseSelect = `
@@ -1513,7 +1597,7 @@ async function obterPorId(req, res) {
                  cor_raca_id, escolaridade_id, deficiencia_id,
                  data_nascimento, registro
           FROM usuarios WHERE id = $1
-        `,
+          `,
           [id]
         );
       } else {
@@ -1521,7 +1605,9 @@ async function obterPorId(req, res) {
       }
     }
 
-    if (result.rows.length === 0) return res.status(404).json({ message: "Usuário não encontrado." });
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Usuário não encontrado." });
+    }
 
     const row = result.rows[0];
     const incompleto = isPerfilIncompleto(row);
@@ -1541,16 +1627,20 @@ async function obterPorId(req, res) {
 }
 
 /* ──────────────────────────────────────────────────────────────
-   (N) PÚBLICO/SELF — atualizar dados básicos (nome/email/senha)
+   (M) PÚBLICO/SELF — atualizar dados básicos (nome/email/senha)
 ────────────────────────────────────────────────────────────── */
 async function atualizarBasico(req, res) {
   const { id } = req.params;
   const usuarioLogado = req.user || {};
-  const perfilArr = Array.isArray(usuarioLogado.perfil) ? usuarioLogado.perfil : perfilToArray(usuarioLogado.perfil);
+  const perfilArr = Array.isArray(usuarioLogado.perfil)
+    ? usuarioLogado.perfil
+    : perfilToArray(usuarioLogado.perfil);
   const ehAdmin = perfilArr.includes("administrador");
 
   if (Number(id) !== Number(usuarioLogado.id) && !ehAdmin) {
-    return res.status(403).json({ message: "Sem permissão para alterar este usuário." });
+    return res
+      .status(403)
+      .json({ message: "Sem permissão para alterar este usuário." });
   }
 
   const nome = req.body?.nome != null ? normNome(req.body.nome) : undefined;
@@ -1558,46 +1648,81 @@ async function atualizarBasico(req, res) {
   const senha = req.body?.senha != null ? String(req.body.senha) : undefined;
 
   const fieldErrors = {};
-  if (email != null && email !== "" && !EMAIL_RE.test(email)) fieldErrors.email = "E-mail inválido.";
+  if (email != null && email !== "" && !EMAIL_RE.test(email)) {
+    fieldErrors.email = "E-mail inválido.";
+  }
   if (senha != null && senha !== "" && !SENHA_FORTE_RE.test(senha)) {
-    fieldErrors.senha = "Mín. 8 caracteres com maiúscula, minúscula, número, símbolo e sem espaços.";
-  }
-  if (Object.keys(fieldErrors).length) return res.status(422).json({ message: "Erros de validação.", fieldErrors });
-
-  const campos = [];
-  const valores = [];
-  let index = 1;
-
-  if (nome != null && nome !== "") {
-    campos.push(`nome = $${index++}`);
-    valores.push(nome);
-  }
-  if (email != null && email !== "") {
-    campos.push(`email = $${index++}`);
-    valores.push(email);
-  }
-  if (senha != null && senha !== "") {
-    const senhaHash = await bcrypt.hash(senha, 10);
-    campos.push(`senha = $${index++}`);
-    valores.push(senhaHash);
+    fieldErrors.senha =
+      "Mín. 8 caracteres com maiúscula, minúscula, número, símbolo e sem espaços.";
   }
 
-  if (campos.length === 0) {
-    return res.status(422).json({ message: "Erros de validação.", fieldErrors: { _global: "Nenhum dado para atualizar." } });
+  if (Object.keys(fieldErrors).length) {
+    return res.status(422).json({ message: "Erros de validação.", fieldErrors });
   }
-
-  valores.push(id);
-  const queryStr = `UPDATE usuarios SET ${campos.join(", ")} WHERE id = $${index}`;
 
   try {
+    if (email != null && email !== "") {
+      const dupQ = await db.query(
+        `
+        SELECT id
+        FROM usuarios
+        WHERE LOWER(email) = LOWER($1)
+          AND id <> $2
+        LIMIT 1
+        `,
+        [email, id]
+      );
+
+      if (dupQ.rows?.length) {
+        return res.status(409).json({
+          message: "E-mail já cadastrado.",
+          fieldErrors: { email: "Este e-mail já está em uso." },
+        });
+      }
+    }
+
+    const campos = [];
+    const valores = [];
+    let index = 1;
+
+    if (nome != null && nome !== "") {
+      campos.push(`nome = $${index++}`);
+      valores.push(nome);
+    }
+
+    if (email != null && email !== "") {
+      campos.push(`email = $${index++}`);
+      valores.push(email);
+    }
+
+    if (senha != null && senha !== "") {
+      const senhaHash = await bcrypt.hash(senha, 10);
+      campos.push(`senha = $${index++}`);
+      valores.push(senhaHash);
+    }
+
+    if (campos.length === 0) {
+      return res.status(422).json({
+        message: "Erros de validação.",
+        fieldErrors: { _global: "Nenhum dado para atualizar." },
+      });
+    }
+
+    valores.push(id);
+    const queryStr = `UPDATE usuarios SET ${campos.join(", ")} WHERE id = $${index}`;
+
     await db.query(queryStr, valores);
 
     const { rows } = await db.query(
-      `SELECT unidade_id, cargo_id, genero_id, orientacao_sexual_id,
-              cor_raca_id, escolaridade_id, deficiencia_id, data_nascimento
-         FROM usuarios WHERE id = $1`,
+      `
+      SELECT unidade_id, cargo_id, genero_id, orientacao_sexual_id,
+             cor_raca_id, escolaridade_id, deficiencia_id, data_nascimento
+      FROM usuarios
+      WHERE id = $1
+      `,
       [id]
     );
+
     const u = rows[0] || {};
     const incompleto = isPerfilIncompleto(u);
     const faltantes = camposFaltantes(u);
@@ -1617,34 +1742,50 @@ async function atualizarBasico(req, res) {
 }
 
 /* ──────────────────────────────────────────────────────────────
-   (O) PÚBLICO/SELF — atualizar perfil completo
+   (N) PÚBLICO/SELF — atualizar perfil completo
 ────────────────────────────────────────────────────────────── */
 async function atualizarPerfilCompleto(req, res) {
   const { id } = req.params;
   const usuarioLogado = req.user || {};
-  const perfilArr = Array.isArray(usuarioLogado.perfil) ? usuarioLogado.perfil : perfilToArray(usuarioLogado.perfil);
+  const perfilArr = Array.isArray(usuarioLogado.perfil)
+    ? usuarioLogado.perfil
+    : perfilToArray(usuarioLogado.perfil);
   const ehAdmin = perfilArr.includes("administrador");
 
   if (Number(id) !== Number(usuarioLogado.id) && !ehAdmin) {
-    return res.status(403).json({ message: "Sem permissão para alterar este usuário." });
+    return res
+      .status(403)
+      .json({ message: "Sem permissão para alterar este usuário." });
   }
 
   const payload = {
-    unidade_id: req.body?.unidade_id ?? null,
-    cargo_id: req.body?.cargo_id ?? null,
-    genero_id: req.body?.genero_id ?? null,
-    orientacao_sexual_id: req.body?.orientacao_sexual_id ?? null,
-    cor_raca_id: req.body?.cor_raca_id ?? null,
-    escolaridade_id: req.body?.escolaridade_id ?? null,
-    deficiencia_id: req.body?.deficiencia_id ?? null,
-    data_nascimento: req.body?.data_nascimento ? toDateOnly(req.body.data_nascimento) : "",
+    unidade_id: req.body?.unidade_id != null ? Number(req.body.unidade_id) : null,
+    cargo_id: req.body?.cargo_id != null ? Number(req.body.cargo_id) : null,
+    genero_id: req.body?.genero_id != null ? Number(req.body.genero_id) : null,
+    orientacao_sexual_id:
+      req.body?.orientacao_sexual_id != null
+        ? Number(req.body.orientacao_sexual_id)
+        : null,
+    cor_raca_id: req.body?.cor_raca_id != null ? Number(req.body.cor_raca_id) : null,
+    escolaridade_id:
+      req.body?.escolaridade_id != null
+        ? Number(req.body.escolaridade_id)
+        : null,
+    deficiencia_id:
+      req.body?.deficiencia_id != null ? Number(req.body.deficiencia_id) : null,
+    data_nascimento: req.body?.data_nascimento
+      ? toDateOnly(req.body.data_nascimento)
+      : "",
     registro: req.body?.registro ? req.body.registro : "",
   };
 
   const { ok, fieldErrors, message } = await validarPerfilComplementar(payload);
   if (!ok) return res.status(422).json({ message, fieldErrors });
 
-  const toSave = { ...payload, registro: payload.registro ? toRegistroMasked(payload.registro) : null };
+  const toSave = {
+    ...payload,
+    registro: payload.registro ? toRegistroMasked(payload.registro) : null,
+  };
 
   const campos = [];
   const valores = [];
@@ -1662,11 +1803,14 @@ async function atualizarPerfilCompleto(req, res) {
     await db.query(sql, valores);
 
     const { rows } = await db.query(
-      `SELECT id, nome, cpf, email, perfil,
-              unidade_id, cargo_id, genero_id, orientacao_sexual_id,
-              cor_raca_id, escolaridade_id, deficiencia_id,
-              data_nascimento, registro
-         FROM usuarios WHERE id = $1`,
+      `
+      SELECT id, nome, cpf, email, perfil,
+             unidade_id, cargo_id, genero_id, orientacao_sexual_id,
+             cor_raca_id, escolaridade_id, deficiencia_id,
+             data_nascimento, registro
+      FROM usuarios
+      WHERE id = $1
+      `,
       [id]
     );
 
@@ -1692,19 +1836,28 @@ async function atualizarPerfilCompleto(req, res) {
 }
 
 /* ──────────────────────────────────────────────────────────────
-   (P) PÚBLICO — obter assinatura
+   (O) PÚBLICO — obter assinatura
 ────────────────────────────────────────────────────────────── */
 async function obterAssinatura(req, res) {
   const usuarioId = req.user?.id;
-  const perfilArr = Array.isArray(req.user?.perfil) ? req.user.perfil : perfilToArray(req.user?.perfil);
+  const perfilArr = Array.isArray(req.user?.perfil)
+    ? req.user.perfil
+    : perfilToArray(req.user?.perfil);
 
-  if (!usuarioId) return res.status(401).json({ message: "Usuário não autenticado." });
+  if (!usuarioId) {
+    return res.status(401).json({ message: "Usuário não autenticado." });
+  }
+
   if (!perfilArr.includes("instrutor") && !perfilArr.includes("administrador")) {
-    return res.status(403).json({ message: "Acesso restrito a instrutor ou administradores." });
+    return res
+      .status(403)
+      .json({ message: "Acesso restrito a instrutor ou administradores." });
   }
 
   try {
-    const result = await db.query("SELECT assinatura FROM usuarios WHERE id = $1", [usuarioId]);
+    const result = await db.query("SELECT assinatura FROM usuarios WHERE id = $1", [
+      usuarioId,
+    ]);
     const assinatura = result.rows[0]?.assinatura || null;
     return res.status(200).json({ assinatura });
   } catch (err) {
@@ -1714,7 +1867,7 @@ async function obterAssinatura(req, res) {
 }
 
 /* ──────────────────────────────────────────────────────────────
-   (Q) PÚBLICO — buscar (autocomplete)
+   (P) PÚBLICO — buscar (autocomplete)
 ────────────────────────────────────────────────────────────── */
 async function buscar(req, res) {
   const search = String(req.query.search || "").trim();
@@ -1730,9 +1883,15 @@ async function buscar(req, res) {
     const like = `%${search}%`;
 
     const rolesCsv = String(req.query.roles || "").trim();
-    const roles = rolesCsv ? rolesCsv.split(",").map((r) => r.trim().toLowerCase()).filter(Boolean) : null;
+    const roles = rolesCsv
+      ? rolesCsv
+          .split(",")
+          .map((r) => r.trim().toLowerCase())
+          .filter(Boolean)
+      : null;
 
-    const unidadeId = req.query.unidade_id != null ? Number(req.query.unidade_id) : null;
+    const unidadeId =
+      req.query.unidade_id != null ? Number(req.query.unidade_id) : null;
     const filtros = ["(nome ILIKE $1 OR email ILIKE $1)"];
     const params = [like];
     let idx = 2;
@@ -1745,10 +1904,10 @@ async function buscar(req, res) {
     const { rows } = await db.query(
       `
       SELECT id, nome, email, perfil, unidade_id
-        FROM usuarios
-       WHERE ${filtros.join(" AND ")}
-       ORDER BY nome
-       LIMIT 20
+      FROM usuarios
+      WHERE ${filtros.join(" AND ")}
+      ORDER BY nome
+      LIMIT 20
       `,
       params
     );
@@ -1777,7 +1936,7 @@ async function buscar(req, res) {
 }
 
 /* ──────────────────────────────────────────────────────────────
-   (R) ESTATÍSTICAS
+   (Q) ESTATÍSTICAS
 ────────────────────────────────────────────────────────────── */
 async function dbOneCompat(dbx, sql, params) {
   if (typeof dbx.one === "function") return dbx.one(sql, params);
@@ -1785,28 +1944,35 @@ async function dbOneCompat(dbx, sql, params) {
   if (!resx?.rows?.length) throw new Error("Registro não encontrado");
   return resx.rows[0];
 }
+
 async function dbManyOrNoneCompat(dbx, sql, params) {
   if (typeof dbx.manyOrNone === "function") return dbx.manyOrNone(sql, params);
   const resx = await dbx.query(sql, params);
   return resx?.rows ?? [];
 }
+
 function getDbFromReq(req) {
   const base = req?.db ?? (dbModule?.db ?? dbModule);
   if (!base) throw new Error("DB não inicializado");
   return base;
 }
-async function aggWithJoin(dbx, {
-  table,
-  joinCol,
-  labelCol = "nome",
-  extraLabel = null,
-  textCol = null,
-  nullLabel = "Não informado",
-  where = "",
-  order,
-  labelMode = "extra-first",
-}) {
-  const computedOrder = order ?? (labelMode === "extra-only" ? "4 DESC, 3 ASC" : "4 DESC, 2 ASC");
+
+async function aggWithJoin(
+  dbx,
+  {
+    table,
+    joinCol,
+    labelCol = "nome",
+    extraLabel = null,
+    textCol = null,
+    nullLabel = "Não informado",
+    where = "",
+    order,
+    labelMode = "extra-first",
+  }
+) {
+  const computedOrder =
+    order ?? (labelMode === "extra-only" ? "4 DESC, 3 ASC" : "4 DESC, 2 ASC");
 
   const sql = `
     SELECT
@@ -1832,9 +1998,15 @@ async function aggWithJoin(dbx, {
     const base = r?.label_base ? String(r.label_base).trim() : "";
     const extra = r?.extra ? String(r.extra).trim() : "";
     let label;
-    if (labelMode === "extra-only") label = extra || base || nullLabel;
-    else if (labelMode === "base-only") label = base || extra || nullLabel;
-    else label = extra && base ? `${extra} — ${base}` : extra || base || nullLabel;
+
+    if (labelMode === "extra-only") {
+      label = extra || base || nullLabel;
+    } else if (labelMode === "base-only") {
+      label = base || extra || nullLabel;
+    } else {
+      label = extra && base ? `${extra} — ${base}` : extra || base || nullLabel;
+    }
+
     return { id: r.id, label, value: r.value };
   });
 }
@@ -1849,7 +2021,9 @@ async function obterEstatistica(req, res, opts = {}) {
     const totalRow = await dbOneCompat(dbx, `SELECT COUNT(*)::int AS total FROM usuarios`);
     const total = totalRow?.total ?? 0;
 
-    const rowsIdade = await dbManyOrNoneCompat(dbx, `
+    const rowsIdade = await dbManyOrNoneCompat(
+      dbx,
+      `
       SELECT faixa, COUNT(*)::int AS qtde
       FROM (
         SELECT CASE
@@ -1874,7 +2048,8 @@ async function obterEstatistica(req, res, opts = {}) {
           WHEN '60+'   THEN 6
           ELSE 7
         END
-    `);
+      `
+    );
 
     const faixaMap = new Map(rowsIdade.map((r) => [r.faixa, r.qtde]));
     const faixaArr = [
@@ -1966,10 +2141,13 @@ async function obterEstatistica(req, res, opts = {}) {
   } catch (err) {
     console.error("❌ /usuario/estatistica erro:", err);
     if (opts.preview) return null;
-    if (!res.headersSent) res.status(500).json({ error: "Falha ao calcular estatísticas" });
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Falha ao calcular estatísticas" });
+    }
     return null;
   }
 }
+
 async function obterEstatisticaDetalhada(req, res) {
   const data = await obterEstatistica(req, res, { internal: true });
   return data;
@@ -1990,7 +2168,6 @@ module.exports = {
   listarAvaliador,
 
   cadastrar,
-  login,
   recuperarSenha,
   redefinirSenha,
   obterPorId,
@@ -2016,7 +2193,6 @@ module.exports = {
   listarAvaliadoresElegiveis: listarAvaliador,
 
   cadastrarUsuario: cadastrar,
-  loginUsuario: login,
   obterUsuarioPorId: obterPorId,
   atualizarUsuarioPublico: atualizarBasico,
   atualizarUsuarioBasico: atualizarBasico,

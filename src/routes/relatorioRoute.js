@@ -7,56 +7,108 @@ const rateLimit = require("express-rate-limit");
 
 const router = express.Router();
 
-/* ───────────────── Auth / Authorization ───────────────── */
-const requireAuth = require("../auth/authMiddleware");
+/* ───────────────── Auth resiliente ───────────────── */
+const _auth = require("../auth/authMiddleware");
+const requireAuth =
+  typeof _auth === "function"
+    ? _auth
+    : _auth?.default ||
+      _auth?.authMiddleware ||
+      _auth?.protect ||
+      _auth?.auth;
 
-const authorizeMod = require("../middlewares/authorize");
-const authorizeRoles =
-  (typeof authorizeMod === "function" ? authorizeMod : authorizeMod?.authorizeRoles) ||
-  authorizeMod?.authorizeRole ||
-  authorizeMod?.authorize?.any ||
-  authorizeMod?.authorize;
-
-if (typeof authorizeRoles !== "function") {
-  throw new Error("authorizeRoles não exportado corretamente em src/middlewares/authorize.js");
+if (typeof requireAuth !== "function") {
+  console.error("[relatorioRoute] authMiddleware inválido:", _auth);
+  throw new Error(
+    "authMiddleware não é função (verifique exports em src/auth/authMiddleware.js)"
+  );
 }
 
-// (Opcional) pronto caso queira usar em algum endpoint admin-only
-const requireAdmin = [requireAuth, authorizeRoles("administrador")];
+/* ───────────────── Roles resiliente ───────────────── */
+const authorizeMod = require("../middlewares/authorize");
+const authorizeRoles =
+  (typeof authorizeMod === "function"
+    ? authorizeMod
+    : authorizeMod?.authorizeRoles) ||
+  authorizeMod?.authorizeRole ||
+  authorizeMod?.authorize?.any ||
+  authorizeMod?.authorize ||
+  authorizeMod?.default;
 
-/* ───────────────── Controllers ───────────────── */
-const { gerarRelatorios, exportarRelatorios, opcaoRelatorios } = require("../controllers/relatorioController");
-const relatorioController = require("../controllers/relatorioController");
+if (typeof authorizeRoles !== "function") {
+  console.error("[relatorioRoute] authorizeRoles inválido:", authorizeMod);
+  throw new Error(
+    "authorizeRoles não exportado corretamente em src/middlewares/authorize.js"
+  );
+}
+
+/* ───────────────── Controller resiliente ───────────────── */
+const relatorioCtrlRaw = require("../controllers/relatorioController");
+const relatorioController =
+  relatorioCtrlRaw?.default || relatorioCtrlRaw;
+
+const {
+  gerarRelatorios,
+  exportarRelatorios,
+  opcaoRelatorios,
+  presencasPorTurma,
+  presencasPorTurmaDetalhado,
+  presencasPorEvento,
+} = relatorioController;
+
+for (const [name, fn] of Object.entries({
+  gerarRelatorios,
+  exportarRelatorios,
+  opcaoRelatorios,
+  presencasPorTurma,
+  presencasPorTurmaDetalhado,
+  presencasPorEvento,
+})) {
+  if (typeof fn !== "function") {
+    console.error("[relatorioRoute] Controller inválido:", name, relatorioCtrlRaw);
+    throw new Error(`relatorioController inválido (função ausente: ${name})`);
+  }
+}
 
 /* ───────────────── Helpers ───────────────── */
-const wrap = (fn) => async (req, res, next) => {
+const wrap =
+  (fn) =>
+  (req, res, next) =>
+    Promise.resolve(fn(req, res, next)).catch(next);
+
+const routeTag = (tag) => (req, res, next) => {
   try {
-    await fn(req, res, next);
-  } catch (err) {
-    next(err);
-  }
+    res.setHeader("X-Route-Handler", tag);
+  } catch {}
+  return next();
 };
 
 function validarIdParam(param, label = param) {
   return (req, res, next) => {
     const raw = req.params?.[param];
     const id = Number(raw);
+
     if (!Number.isInteger(id) || id <= 0) {
-      return res.status(400).json({ ok: false, erro: `${label}_INVALIDO` });
+      return res.status(400).json({
+        ok: false,
+        erro: `${label}_INVALIDO`,
+      });
     }
-    req.params[param] = String(id); // normaliza
+
+    req.params[param] = String(id);
     return next();
   };
 }
 
-// 🔒 dados sensíveis → não cachear (vale para tudo aqui)
+/* ───────────────── Middlewares globais do grupo ───────────────── */
+// 🔒 dados sensíveis → não cachear
 router.use((_req, res, next) => {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Pragma", "no-cache");
   next();
 });
 
-// 🚦 rate limit (relatórios tendem a ser pesados)
+// 🚦 relatórios tendem a ser pesados
 const relatorioLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 120,
@@ -65,13 +117,12 @@ const relatorioLimiter = rateLimit({
   message: { erro: "Muitas requisições. Aguarde alguns instantes." },
 });
 
-/* =========================================================
-   ✅ RELATÓRIOS DE PRESENÇAS (admin/instrutor)
-   - Prefixo interno: /presenca
-========================================================= */
-
-// Tudo autenticado daqui pra baixo
+// 🔐 tudo daqui pra frente exige autenticação
 router.use(requireAuth);
+
+/* =========================================================
+   ✅ RELATÓRIOS DE PRESENÇAS
+========================================================= */
 
 // 📄 Relatório de presenças por turma (administrador ou instrutor)
 router.get(
@@ -79,7 +130,8 @@ router.get(
   relatorioLimiter,
   authorizeRoles("administrador", "instrutor"),
   validarIdParam("turma_id", "TURMA_ID"),
-  wrap(relatorioController.porTurma)
+  routeTag("relatorioRoute:GET /presenca/turma/:turma_id"),
+  wrap(presencasPorTurma)
 );
 
 // 📄 Relatório detalhado de presenças por turma (administrador ou instrutor)
@@ -88,7 +140,8 @@ router.get(
   relatorioLimiter,
   authorizeRoles("administrador", "instrutor"),
   validarIdParam("turma_id", "TURMA_ID"),
-  wrap(relatorioController.porTurmaDetalhado)
+  routeTag("relatorioRoute:GET /presenca/turma/:turma_id/detalhado"),
+  wrap(presencasPorTurmaDetalhado)
 );
 
 // 📄 Relatório de presenças por evento (somente administrador)
@@ -97,37 +150,50 @@ router.get(
   relatorioLimiter,
   authorizeRoles("administrador"),
   validarIdParam("evento_id", "EVENTO_ID"),
-  wrap(relatorioController.porEvento)
+  routeTag("relatorioRoute:GET /presenca/evento/:evento_id"),
+  wrap(presencasPorEvento)
 );
 
 /* =========================================================
    ✅ RELATÓRIOS GERAIS (admin only)
 ========================================================= */
 
-// A partir daqui: admin only
-router.use(authorizeRoles("administrador"));
+router.get(
+  "/",
+  relatorioLimiter,
+  authorizeRoles("administrador"),
+  routeTag("relatorioRoute:GET /"),
+  wrap(gerarRelatorios)
+);
 
-// 📄 GET /api/relatorio
-router.get("/", relatorioLimiter, wrap(gerarRelatorios));
+router.post(
+  "/exportar",
+  relatorioLimiter,
+  authorizeRoles("administrador"),
+  routeTag("relatorioRoute:POST /exportar"),
+  wrap(exportarRelatorios)
+);
 
-// 📤 POST /api/relatorio/exportar
-router.post("/exportar", relatorioLimiter, wrap(exportarRelatorios));
-
-// ⚙️ GET /api/relatorio/opcao
-router.get("/opcao", relatorioLimiter, wrap(opcaoRelatorios));
+router.get(
+  "/opcao",
+  relatorioLimiter,
+  authorizeRoles("administrador"),
+  routeTag("relatorioRoute:GET /opcao"),
+  wrap(opcaoRelatorios)
+);
 
 /* =========================================================
-   ♻️ ALIASES internos (opcional)
-   - Se este router for montado em /api/relatorios-presencas,
-     estes caminhos batem:
+   ♻️ ALIASES internos de compat
 ========================================================= */
 
+// aliases para uso em mounts como /api/relatorios-presencas
 router.get(
   "/turma/:turma_id",
   relatorioLimiter,
   authorizeRoles("administrador", "instrutor"),
   validarIdParam("turma_id", "TURMA_ID"),
-  wrap(relatorioController.porTurma)
+  routeTag("relatorioRoute:GET /turma/:turma_id"),
+  wrap(presencasPorTurma)
 );
 
 router.get(
@@ -135,7 +201,8 @@ router.get(
   relatorioLimiter,
   authorizeRoles("administrador", "instrutor"),
   validarIdParam("turma_id", "TURMA_ID"),
-  wrap(relatorioController.porTurmaDetalhado)
+  routeTag("relatorioRoute:GET /turma/:turma_id/detalhado"),
+  wrap(presencasPorTurmaDetalhado)
 );
 
 router.get(
@@ -143,7 +210,8 @@ router.get(
   relatorioLimiter,
   authorizeRoles("administrador"),
   validarIdParam("evento_id", "EVENTO_ID"),
-  wrap(relatorioController.porEvento)
+  routeTag("relatorioRoute:GET /evento/:evento_id"),
+  wrap(presencasPorEvento)
 );
 
 module.exports = router;

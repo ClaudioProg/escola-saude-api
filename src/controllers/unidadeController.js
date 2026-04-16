@@ -1,28 +1,35 @@
 // ✅ src/controllers/unidadeController.js
 /* eslint-disable no-console */
+"use strict";
+
 const crypto = require("crypto");
 
 function getDb(req) {
   try {
     if (req?.db?.query) return req.db;
+
     const mod = require("../db");
     if (mod?.query) return mod;
     if (mod?.db?.query) return mod.db;
-  } catch (_) {}
+  } catch (_) {
+    // noop
+  }
+
   throw new Error("DB não inicializado.");
 }
 
-const {
-  q = "",
-  limit = "200", // ✅ default alinhado ao máximo real
-  offset = "0",
-  orderBy = "sigla",
-  direction = "asc",
-  fields = "",
-} = qs;
+function parseQueryParams(qs = {}) {
+  const {
+    q = "",
+    limit = "200",
+    offset = "0",
+    orderBy = "sigla",
+    direction = "asc",
+    fields = "",
+  } = qs;
 
-// ✅ (NOVO) — linha anterior incluída acima
-const lim = Math.min(Math.max(parseInt(limit, 10) || 200, 1), 200); // 1..200 (definitivo)
+  const lim = Math.min(Math.max(parseInt(limit, 10) || 200, 1), 200);
+  const off = Math.max(parseInt(offset, 10) || 0, 0);
 
   const safeOrderBy = ["id", "nome", "sigla"].includes(String(orderBy).toLowerCase())
     ? String(orderBy).toLowerCase()
@@ -30,12 +37,10 @@ const lim = Math.min(Math.max(parseInt(limit, 10) || 200, 1), 200); // 1..200 (d
 
   const safeDirection = String(direction).toLowerCase() === "desc" ? "DESC" : "ASC";
 
-  const off = Math.max(parseInt(offset, 10) || 0, 0);
-
   const allowed = new Set(["id", "nome", "sigla"]);
   const selectedFields = String(fields)
     .split(",")
-    .map((s) => s.trim())
+    .map((s) => s.trim().toLowerCase())
     .filter(Boolean)
     .filter((f) => allowed.has(f));
 
@@ -74,19 +79,22 @@ exports.listar = async (req, res) => {
     const params = [];
 
     if (q) {
-      params.push(`%${q}%`, `%${q}%`);
-      where.push("(unidades.nome ILIKE $1 OR unidades.sigla ILIKE $2)");
+      params.push(`%${q}%`);
+      params.push(`%${q}%`);
+      where.push(`(unidades.nome ILIKE $${params.length - 1} OR unidades.sigla ILIKE $${params.length})`);
     }
 
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const selectCols = fields.map((f) => `unidades.${f}`).join(", ");
 
-    // total
-    const countSql = `SELECT COUNT(*)::int AS total FROM unidades ${whereSql};`;
+    const countSql = `
+      SELECT COUNT(*)::int AS total
+      FROM unidades
+      ${whereSql};
+    `;
     const countRes = await db.query(countSql, params);
-    const total = countRes.rows?.[0]?.total ?? 0;
+    const total = Number(countRes.rows?.[0]?.total || 0);
 
-    // dados
     const orderSql =
       orderBy === "sigla"
         ? `ORDER BY unidades.sigla ${direction} NULLS LAST, unidades.nome ASC`
@@ -108,10 +116,23 @@ exports.listar = async (req, res) => {
       `[UNIDADES] q="${q}" | total=${total} | returned=${rows.length} | limit=${limit} | offset=${offset} | order=${orderBy} ${direction}`
     );
 
-    const snapshot = JSON.stringify({ q, limit, offset, orderBy, direction, fields, total, rows });
+    const snapshot = JSON.stringify({
+      q,
+      limit,
+      offset,
+      orderBy,
+      direction,
+      fields,
+      total,
+      rows,
+    });
+
     const etag = buildETag(snapshot);
     setCachingHeaders(res, etag);
-    if (req.headers["if-none-match"] === etag) return res.status(304).end();
+
+    if (req.headers["if-none-match"] === etag) {
+      return res.status(304).end();
+    }
 
     const body = {
       data: rows,
@@ -149,15 +170,27 @@ exports.obterPorId = async (req, res) => {
   const uid = Number(id);
   if (!Number.isInteger(uid) || uid <= 0) {
     return res.status(400).json({ message: "Parâmetro :id inválido." });
-    }
+  }
+
   try {
-    const sql = `SELECT id, sigla, nome FROM unidades WHERE id = $1 LIMIT 1;`;
+    const sql = `
+      SELECT id, sigla, nome
+      FROM unidades
+      WHERE id = $1
+      LIMIT 1;
+    `;
     const r = await db.query(sql, [uid]);
-    if (!r.rows?.length) return res.status(404).json({ message: "Unidade não encontrada." });
+
+    if (!r.rows?.length) {
+      return res.status(404).json({ message: "Unidade não encontrada." });
+    }
 
     const etag = buildETag(JSON.stringify(r.rows[0]));
     setCachingHeaders(res, etag);
-    if (req.headers["if-none-match"] === etag) return res.status(304).end();
+
+    if (req.headers["if-none-match"] === etag) {
+      return res.status(304).end();
+    }
 
     return res.status(200).json({ data: r.rows[0] });
   } catch (err) {

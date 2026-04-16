@@ -2,29 +2,37 @@
 "use strict";
 
 // ✅ src/routes/avaliacaoRoute.js — PREMIUM/UNIFICADO (singular + compat + debug pós-curso)
+
 const express = require("express");
 const { param, validationResult } = require("express-validator");
 
 /* ───────────────── Auth resiliente ───────────────── */
 const _auth = require("../auth/authMiddleware");
 const requireAuth =
-  typeof _auth === "function" ? _auth : _auth?.default || _auth?.authMiddleware || _auth?.auth;
+  typeof _auth === "function"
+    ? _auth
+    : _auth?.default || _auth?.authMiddleware || _auth?.authAny || _auth?.auth;
 
 if (typeof requireAuth !== "function") {
   console.error("[avaliacaoRoute] authMiddleware inválido:", _auth);
-  throw new Error("authMiddleware não é função (verifique exports em src/auth/authMiddleware.js)");
+  throw new Error(
+    "authMiddleware não é função (verifique exports em src/auth/authMiddleware.js)"
+  );
 }
 
 /* ───────────────── Roles resiliente ───────────────── */
 const authorizeMod = require("../middlewares/authorize");
 const authorizeRoles =
-  (typeof authorizeMod === "function" ? authorizeMod : authorizeMod?.authorizeRoles) ||
+  authorizeMod?.authorizeRoles ||
   authorizeMod?.authorizeRole ||
   authorizeMod?.authorize?.any ||
   authorizeMod?.authorize;
 
 if (typeof authorizeRoles !== "function") {
-  throw new Error("authorizeRoles não exportado corretamente em src/middlewares/authorize.js");
+  console.error("[avaliacaoRoute] authorizeRoles inválido:", authorizeMod);
+  throw new Error(
+    "authorizeRoles não exportado corretamente em src/middlewares/authorize.js"
+  );
 }
 
 // ✅ Controller principal
@@ -50,7 +58,10 @@ function validate(req, res, next) {
   return res.status(400).json({
     ok: false,
     erro: "Parâmetros inválidos.",
-    detalhes: errors.array().map((e) => ({ campo: e.path || e.param, msg: e.msg })),
+    detalhes: errors.array().map((e) => ({
+      campo: e.path || e.param,
+      msg: e.msg,
+    })),
     requestId: res.getHeader?.("X-Request-Id"),
   });
 }
@@ -66,7 +77,14 @@ const idParam = (name) =>
 
 function getPerfis(user) {
   const raw = user?.perfis ?? user?.perfil ?? user?.roles ?? user?.role ?? "";
-  if (Array.isArray(raw)) return raw.map(String).map((s) => s.trim().toLowerCase()).filter(Boolean);
+
+  if (Array.isArray(raw)) {
+    return raw
+      .map(String)
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+  }
+
   return String(raw)
     .split(",")
     .map((s) => s.trim().toLowerCase())
@@ -92,7 +110,7 @@ function ensureSelfOrAdmin(req, res, next) {
   const paramId = Number(req.params.usuario_id);
 
   const perfis = getPerfis(user);
-  const isAdmin = perfis.includes("administrador");
+  const isAdmin = perfis.includes("administrador") || perfis.includes("admin");
 
   if (!Number.isFinite(paramId) || paramId <= 0) {
     return res.status(400).json({ erro: "usuario_id inválido." });
@@ -103,7 +121,19 @@ function ensureSelfOrAdmin(req, res, next) {
   }
 
   if (isAdmin || tokenId === paramId) return next();
+
   return res.status(403).json({ erro: "Acesso negado." });
+}
+
+function injectCurrentUserIdIntoParams(req, res, next) {
+  const uid = getUserId(req);
+
+  if (!uid) {
+    return res.status(401).json({ erro: "Não autenticado." });
+  }
+
+  req.params.usuario_id = String(uid);
+  return next();
 }
 
 /* =========================
@@ -120,7 +150,6 @@ router.use((_req, res, next) => {
 
 /* =========================================================
    ✅ DEBUG PÓS-CURSO
-   Mantido dentro do módulo de avaliação, sem rota admin genérica
    Final: GET /api/avaliacao/debug/pos-curso/:usuario_id
 ========================================================= */
 router.get(
@@ -137,6 +166,7 @@ router.get(
    (e também funciona via alias do index: /api/admin/avaliacao -> /api/admin/avaliacao/...)
 ========================================================= */
 const admin = express.Router();
+
 admin.use(authorizeRoles("administrador"));
 
 /**
@@ -176,16 +206,20 @@ router.use("/admin", admin);
    ✅ ROTAS “NORMAIS” (usuário / instrutor / admin)
 ========================================================= */
 
-// 📝 Enviar avaliação
-// POST /api/avaliacao
+/**
+ * 📝 Enviar avaliação
+ * POST /api/avaliacao
+ */
 router.post(
   "/",
   authorizeRoles("administrador", "instrutor", "usuario"),
   asyncHandler(avaliacaoCtrl.enviarAvaliacao)
 );
 
-// 📊 (Admin) Agregado/RAW por turma (todas respostas)
-// GET /api/avaliacao/turma/:turma_id/all
+/**
+ * 📊 (Admin) agregado/RAW por turma (todas respostas)
+ * GET /api/avaliacao/turma/:turma_id/all
+ */
 router.get(
   "/turma/:turma_id/all",
   authorizeRoles("administrador"),
@@ -194,7 +228,10 @@ router.get(
   asyncHandler(avaliacaoCtrl.avaliacaoPorTurma)
 );
 
-// 📊 (Instrutor/Admin) respostas da turma (restrito ao instrutor vinculado)
+/**
+ * 📊 (Instrutor/Admin) respostas da turma
+ * GET /api/avaliacao/turma/:turma_id
+ */
 router.get(
   "/turma/:turma_id",
   authorizeRoles("instrutor", "administrador"),
@@ -203,7 +240,10 @@ router.get(
   asyncHandler(avaliacaoCtrl.listarPorTurmaParaInstrutor)
 );
 
-// 🧾 (Admin) agregado por evento
+/**
+ * 🧾 (Admin) agregado por evento
+ * GET /api/avaliacao/evento/:evento_id
+ */
 router.get(
   "/evento/:evento_id",
   authorizeRoles("administrador"),
@@ -212,8 +252,10 @@ router.get(
   asyncHandler(avaliacaoCtrl.avaliacaoPorEvento)
 );
 
-// 📋 Pendentes por usuário (protegido contra IDOR)
-// Canon: GET /api/avaliacao/disponivel/:usuario_id
+/**
+ * 📋 Pendentes por usuário (protegido contra IDOR)
+ * Canon: GET /api/avaliacao/disponivel/:usuario_id
+ */
 router.get(
   "/disponivel/:usuario_id",
   authorizeRoles("administrador", "instrutor", "usuario"),
@@ -223,23 +265,24 @@ router.get(
   asyncHandler(avaliacaoCtrl.listarAvaliacaoDisponiveis)
 );
 
-// Alias: GET /api/avaliacao/disponivel  (usa id do token)
+/**
+ * Alias: GET /api/avaliacao/disponivel
+ * usa o id do token
+ */
 router.get(
   "/disponivel",
   authorizeRoles("administrador", "instrutor", "usuario"),
-  asyncHandler((req, res, next) => {
-    const uid = req.user?.id ?? req.usuario?.id;
-    if (!uid) return res.status(401).json({ erro: "Não autenticado." });
-    req.params.usuario_id = String(uid);
-    return avaliacaoCtrl.listarAvaliacaoDisponiveis(req, res, next);
-  })
+  injectCurrentUserIdIntoParams,
+  asyncHandler(avaliacaoCtrl.listarAvaliacaoDisponiveis)
 );
 
 /* =========================================================
    ♻️ ALIASES de compat (mantém URLs antigas vivas)
 ========================================================= */
 
-// alias do path antigo “disponiveis”
+/**
+ * Alias antigo: /disponiveis/:usuario_id
+ */
 router.get(
   "/disponiveis/:usuario_id",
   authorizeRoles("administrador", "instrutor", "usuario"),
@@ -249,15 +292,14 @@ router.get(
   asyncHandler(avaliacaoCtrl.listarAvaliacaoDisponiveis)
 );
 
+/**
+ * Alias antigo: /disponiveis
+ */
 router.get(
   "/disponiveis",
   authorizeRoles("administrador", "instrutor", "usuario"),
-  asyncHandler((req, res, next) => {
-    const uid = req.user?.id ?? req.usuario?.id;
-    if (!uid) return res.status(401).json({ erro: "Não autenticado." });
-    req.params.usuario_id = String(uid);
-    return avaliacaoCtrl.listarAvaliacaoDisponiveis(req, res, next);
-  })
+  injectCurrentUserIdIntoParams,
+  asyncHandler(avaliacaoCtrl.listarAvaliacaoDisponiveis)
 );
 
 module.exports = router;

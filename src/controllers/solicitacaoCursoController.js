@@ -1,15 +1,118 @@
 /* eslint-disable no-console */
-// ✅ src/controllers/solicitacaoCursoController.js
-const { db, getClient } = require("../db");
+// ✅ src/controllers/solicitacaoCursoController.js — PREMIUM++ (robusto, compat DB, sem drift de tabela)
+"use strict";
+
+const dbMod = require("../db");
 
 const IS_DEV = process.env.NODE_ENV !== "production";
-const rid = () => `sc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 
-function logDev(rid, ...a) {
-  if (IS_DEV) console.log("[solicitacaoCurso]", rid, ...a);
+function rid() {
+  return `sc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
-function logErr(rid, ...a) {
-  console.error("[solicitacaoCurso][ERR]", rid, ...a);
+
+function logDev(requestId, ...a) {
+  if (IS_DEV) console.log("[solicitacaoCurso]", requestId, ...a);
+}
+
+function logWarn(requestId, ...a) {
+  if (IS_DEV) console.warn("[solicitacaoCurso][WARN]", requestId, ...a);
+}
+
+function logErr(requestId, ...a) {
+  console.error("[solicitacaoCurso][ERR]", requestId, ...a);
+}
+
+/* ───────────────────────── Compat DB ───────────────────────── */
+
+const pool =
+  dbMod?.pool ||
+  dbMod?.Pool ||
+  dbMod?.db?.pool ||
+  dbMod;
+
+const query =
+  dbMod?.query ||
+  dbMod?.db?.query?.bind(dbMod.db) ||
+  (pool?.query ? pool.query.bind(pool) : null);
+
+if (typeof query !== "function") {
+  console.error("[solicitacaoCursoController] DB inválido:", Object.keys(dbMod || {}));
+  throw new Error("DB inválido em solicitacaoCursoController.js (query ausente)");
+}
+
+function getDb(req) {
+  const reqDb = req?.db;
+  if (reqDb?.query && typeof reqDb.query === "function") return reqDb;
+  return { query };
+}
+
+async function getClient(req) {
+  const reqDb = req?.db;
+  const reqPool =
+    reqDb?.pool ||
+    reqDb?.Pool ||
+    reqDb?.db?.pool ||
+    dbMod?.pool ||
+    dbMod?.Pool ||
+    dbMod?.db?.pool ||
+    null;
+
+  if (reqPool?.connect && typeof reqPool.connect === "function") {
+    return reqPool.connect();
+  }
+
+  // fallback “client fake” para ambientes sem pool.connect
+  return {
+    query,
+    release() {},
+  };
+}
+
+async function tryQueryList(dbConn, sqls, params = []) {
+  let lastErr = null;
+  for (const sql of sqls) {
+    try {
+      return await dbConn.query(sql, params);
+    } catch (e) {
+      lastErr = e;
+      if (["42P01", "42703", "42883"].includes(e?.code)) continue;
+      throw e;
+    }
+  }
+  throw lastErr || new Error("Nenhuma variante SQL funcionou.");
+}
+
+/* ───────────────────────── Descoberta de tabelas ───────────────────────── */
+
+let _tableCache = null;
+
+async function resolveTables(dbConn) {
+  if (_tableCache) return _tableCache;
+
+  async function existsTable(name) {
+    const q = await dbConn.query(
+      `SELECT to_regclass($1) IS NOT NULL AS ok`,
+      [`public.${name}`]
+    );
+    return q.rows?.[0]?.ok === true;
+  }
+
+  const mainPlural = await existsTable("solicitacoes_curso");
+  const mainSingular = await existsTable("solicitacao_curso");
+
+  const datasPlural = await existsTable("solicitacoes_curso_datas");
+  const datasSingular = await existsTable("solicitacao_curso_datas");
+
+  const palesPlural = await existsTable("solicitacoes_curso_palestrantes");
+  const palesSingular = await existsTable("solicitacao_curso_palestrantes");
+
+  _tableCache = {
+    main: mainPlural ? "solicitacoes_curso" : mainSingular ? "solicitacao_curso" : "solicitacoes_curso",
+    datas: datasPlural ? "solicitacoes_curso_datas" : datasSingular ? "solicitacao_curso_datas" : "solicitacao_curso_datas",
+    pales: palesPlural ? "solicitacoes_curso_palestrantes" : palesSingular ? "solicitacao_curso_palestrantes" : "solicitacao_curso_palestrantes",
+  };
+
+  return _tableCache;
 }
 
 /* ───────────────────────── Helpers de auth/perfil ───────────────────────── */
@@ -30,7 +133,12 @@ function normalizarPerfil(raw) {
 }
 
 function isAdmin(req) {
-  const raw = req.user?.perfil || req.usuario?.perfil || req.perfil;
+  const raw =
+    req.user?.perfil ??
+    req.usuario?.perfil ??
+    req.user?.perfis ??
+    req.usuario?.perfis ??
+    req.perfil;
   const arr = normalizarPerfil(raw);
   return arr.includes("administrador") || arr.includes("admin");
 }
@@ -38,7 +146,7 @@ function isAdmin(req) {
 function toIntOrNull(v) {
   if (v === "" || v == null) return null;
   const n = Number(v);
-  return Number.isFinite(n) ? n : null;
+  return Number.isFinite(n) ? Math.trunc(n) : null;
 }
 
 function toBool(v) {
@@ -77,7 +185,6 @@ function normalizeDatas(datas) {
     });
   }
 
-  // dedup por data + hi + hf
   const seen = new Set();
   const unique = [];
   for (const x of out) {
@@ -87,7 +194,6 @@ function normalizeDatas(datas) {
     unique.push(x);
   }
 
-  // ordena por data/horário
   unique.sort((a, b) => {
     const ak = `${a.data} ${a.horario_inicio || "00:00"}`;
     const bk = `${b.data} ${b.horario_inicio || "00:00"}`;
@@ -104,7 +210,6 @@ function normalizePalestrantes(palestrantes) {
   for (const p of arr) {
     if (!p) continue;
 
-    // string => externo
     if (typeof p === "string") {
       const nome = cleanStr(p);
       if (nome) out.push({ palestrante_id: null, nome_externo: nome });
@@ -114,24 +219,22 @@ function normalizePalestrantes(palestrantes) {
     const palestranteId = toIntOrNull(p.usuario_id ?? p.id);
     const nomeExterno = cleanStr(p.nome_externo ?? p.nome ?? p.label ?? p.value);
 
-    // se tem ID, nome_externo é opcional (podemos preencher por join na listagem)
-    // se não tem ID, nome_externo é obrigatório
     if (!palestranteId && !nomeExterno) continue;
 
     out.push({ palestrante_id: palestranteId, nome_externo: nomeExterno });
   }
 
-  // dedup por id ou nome
   const seen = new Set();
   const unique = [];
   for (const x of out) {
-    const k = x.palestrante_id ? `id:${x.palestrante_id}` : `n:${(x.nome_externo || "").toLowerCase()}`;
+    const k = x.palestrante_id
+      ? `id:${x.palestrante_id}`
+      : `n:${(x.nome_externo || "").toLowerCase()}`;
     if (seen.has(k)) continue;
     seen.add(k);
     unique.push(x);
   }
 
-  // ordena por nome “resolvido”
   unique.sort((a, b) => {
     const an = (a.nome_externo || "").toLowerCase();
     const bn = (b.nome_externo || "").toLowerCase();
@@ -141,19 +244,27 @@ function normalizePalestrantes(palestrantes) {
   return unique;
 }
 
-async function assertPodeEditar({ client, solicitacaoId, usuarioId, admin }) {
-  const q = await client.query(
-    `SELECT criador_id FROM solicitacoes_curso WHERE id = $1`,
+async function assertPodeEditar({
+  client,
+  solicitacaoId,
+  usuarioId,
+  admin,
+  tables,
+}) {
+  const qRes = await client.query(
+    `SELECT criador_id FROM ${tables.main} WHERE id = $1`,
     [Number(solicitacaoId)]
   );
-  if (!q.rowCount) {
+
+  if (!qRes.rowCount) {
     const err = new Error("SOLICITACAO_NAO_ENCONTRADA");
     err.httpStatus = 404;
     throw err;
   }
 
-  const criadorId = Number(q.rows[0].criador_id);
+  const criadorId = Number(qRes.rows[0].criador_id);
   const pode = admin || criadorId === Number(usuarioId);
+
   if (!pode) {
     const err = new Error("SEM_PERMISSAO");
     err.httpStatus = 403;
@@ -168,14 +279,16 @@ async function assertPodeEditar({ client, solicitacaoId, usuarioId, admin }) {
 async function listarSolicitacao(req, res) {
   const requestId = rid();
   const usuarioId = getUsuarioId(req);
+
   if (!usuarioId) return res.status(401).json({ erro: "Não autenticado." });
 
   const admin = isAdmin(req);
   logDev(requestId, "listarSolicitacao", { usuarioId, admin });
 
   try {
-    // ✅ Evita efeito “multiplicativo” (datas x palestrantes)
-    // Fazemos 1 query base + 2 subqueries agregadas por solicitacao_id
+    const dbConn = getDb(req);
+    const tables = await resolveTables(dbConn);
+
     const sql = `
       WITH base AS (
         SELECT
@@ -197,7 +310,7 @@ async function listarSolicitacao(req, res) {
           uc.nome AS criador_nome,
           s.criado_em,
           s.atualizado_em
-        FROM solicitacoes_curso s
+        FROM ${tables.main} s
         LEFT JOIN unidades u  ON u.id  = s.unidade_id
         LEFT JOIN usuarios uc ON uc.id = s.criador_id
         WHERE 1=1
@@ -215,7 +328,7 @@ async function listarSolicitacao(req, res) {
             )
             ORDER BY d.data ASC, d.horario_inicio ASC NULLS LAST, d.id ASC
           ) AS datas
-        FROM solicitacao_curso_datas d
+        FROM ${tables.datas} d
         GROUP BY d.solicitacao_id
       ),
       pales AS (
@@ -229,7 +342,7 @@ async function listarSolicitacao(req, res) {
             )
             ORDER BY COALESCE(NULLIF(trim(p.nome_externo), ''), pu.nome) ASC, p.id ASC
           ) AS palestrantes
-        FROM solicitacao_curso_palestrantes p
+        FROM ${tables.pales} p
         LEFT JOIN usuarios pu ON pu.id = p.palestrante_id
         GROUP BY p.solicitacao_id
       )
@@ -244,9 +357,9 @@ async function listarSolicitacao(req, res) {
     `;
 
     const params = admin ? [] : [Number(usuarioId)];
-    const result = await db.query(sql, params);
+    const result = await dbConn.query(sql, params);
 
-    const data = result.rows.map((row) => ({
+    const data = (result.rows || []).map((row) => ({
       ...row,
       pode_editar: admin || Number(row.criador_id) === Number(usuarioId),
     }));
@@ -267,17 +380,22 @@ async function listarSolicitacao(req, res) {
 async function listarTipos(req, res) {
   const requestId = rid();
   const usuarioId = getUsuarioId(req);
+
   if (!usuarioId) return res.status(401).json({ erro: "Não autenticado." });
 
   try {
+    const dbConn = getDb(req);
+    const tables = await resolveTables(dbConn);
+
     const sql = `
       SELECT DISTINCT tipo
-      FROM solicitacoes_curso
+      FROM ${tables.main}
       WHERE tipo IS NOT NULL AND trim(tipo) <> ''
       ORDER BY tipo ASC
     `;
-    const result = await db.query(sql);
-    return res.status(200).json(result.rows.map((r) => r.tipo));
+
+    const result = await dbConn.query(sql);
+    return res.status(200).json((result.rows || []).map((r) => r.tipo));
   } catch (err) {
     logErr(requestId, "Erro ao listar tipos:", err?.message);
     return res.status(500).json({ erro: "Erro ao listar tipos de curso." });
@@ -289,6 +407,7 @@ async function listarTipos(req, res) {
 async function criarSolicitacao(req, res) {
   const requestId = rid();
   const usuarioId = getUsuarioId(req);
+
   if (!usuarioId) return res.status(401).json({ erro: "Usuário não autenticado." });
 
   const body = req.body || {};
@@ -300,37 +419,43 @@ async function criarSolicitacao(req, res) {
   const tipo = cleanStr(body.tipo);
   const unidade_id = toIntOrNull(body.unidade_id);
   const modalidade = cleanStr(body.modalidade);
-  const restrito = toBool(body.restrito);
+  const restrito = body.restrito !== undefined ? toBool(body.restrito) : false;
   const restricao_descricao = cleanStr(body.restricao_descricao);
-  const carga_horaria_total = body.carga_horaria_total != null ? Number(body.carga_horaria_total) : null;
-  const gera_certificado = toBool(body.gera_certificado);
-  const status = cleanStr(body.status); // se vier, respeita; senão default
+  const carga_horaria_total =
+    body.carga_horaria_total != null ? Number(body.carga_horaria_total) : null;
+  const gera_certificado =
+    body.gera_certificado !== undefined ? toBool(body.gera_certificado) : false;
+  const status = cleanStr(body.status);
   const datas = normalizeDatas(body.datas);
   const palestrantes = normalizePalestrantes(body.palestrantes);
 
   if (!titulo) return res.status(400).json({ erro: "Informe o título do curso." });
+
   if (!Array.isArray(datas) || datas.length === 0) {
     return res.status(400).json({ erro: "Informe ao menos uma data para a solicitação." });
   }
 
-  // valida coerência quando restrito=true
   if (restrito && !restricao_descricao) {
     return res.status(400).json({ erro: "Informe a descrição da restrição." });
   }
 
-  // valida carga horária
-  if (carga_horaria_total != null && (!Number.isFinite(carga_horaria_total) || carga_horaria_total < 0)) {
+  if (
+    carga_horaria_total != null &&
+    (!Number.isFinite(carga_horaria_total) || carga_horaria_total < 0)
+  ) {
     return res.status(400).json({ erro: "Carga horária total inválida." });
   }
 
   let client;
   try {
-    client = await getClient();
+    client = await getClient(req);
+    const tables = await resolveTables(client);
+
     await client.query("BEGIN");
 
     const ins = await client.query(
       `
-      INSERT INTO solicitacao_curso (
+      INSERT INTO ${tables.main} (
         titulo, descricao, publico_alvo, local, tipo, unidade_id,
         modalidade, restrito, restricao_descricao,
         carga_horaria_total, gera_certificado, status,
@@ -363,11 +488,10 @@ async function criarSolicitacao(req, res) {
     const solicitacaoId = Number(ins.rows[0]?.id);
     if (!solicitacaoId) throw new Error("FALHA_CRIAR_SOLICITACAO");
 
-    // datas
     for (const d of datas) {
       await client.query(
         `
-        INSERT INTO solicitacao_curso_datas
+        INSERT INTO ${tables.datas}
           (solicitacao_id, data, horario_inicio, horario_fim)
         VALUES ($1, $2::date, $3::time, $4::time)
         `,
@@ -375,11 +499,10 @@ async function criarSolicitacao(req, res) {
       );
     }
 
-    // palestrantes
     for (const p of palestrantes) {
       await client.query(
         `
-        INSERT INTO solicitacao_curso_palestrantes
+        INSERT INTO ${tables.pales}
           (solicitacao_id, palestrante_id, nome_externo)
         VALUES ($1, $2, $3)
         `,
@@ -395,14 +518,16 @@ async function criarSolicitacao(req, res) {
     try {
       if (client) await client.query("ROLLBACK");
     } catch {}
+
     logErr(requestId, "Erro ao criar:", {
       message: err?.message,
       code: err?.code,
       detail: err?.detail,
     });
+
     return res.status(500).json({ erro: "Erro ao criar solicitação de curso." });
   } finally {
-    if (client) client.release();
+    if (client) client.release?.();
   }
 }
 
@@ -411,6 +536,7 @@ async function criarSolicitacao(req, res) {
 async function atualizarSolicitacao(req, res) {
   const requestId = rid();
   const usuarioId = getUsuarioId(req);
+
   if (!usuarioId) return res.status(401).json({ erro: "Usuário não autenticado." });
 
   const solicitacaoId = Number(req.params.id);
@@ -421,50 +547,71 @@ async function atualizarSolicitacao(req, res) {
   const admin = isAdmin(req);
   const body = req.body || {};
 
-  const titulo = cleanStr(body.titulo);
-  const descricao = cleanStr(body.descricao);
-  const publico_alvo = cleanStr(body.publico_alvo);
-  const local = cleanStr(body.local);
-  const tipo = cleanStr(body.tipo);
-  const unidade_id = body.unidade_id !== undefined ? toIntOrNull(body.unidade_id) : undefined;
-  const modalidade = cleanStr(body.modalidade);
-  const restrito = body.restrito !== undefined ? toBool(body.restrito) : undefined;
-  const restricao_descricao = body.restricao_descricao !== undefined ? cleanStr(body.restricao_descricao) : undefined;
-  const carga_horaria_total = body.carga_horaria_total !== undefined
-    ? (body.carga_horaria_total == null ? null : Number(body.carga_horaria_total))
-    : undefined;
-  const gera_certificado = body.gera_certificado !== undefined ? toBool(body.gera_certificado) : undefined;
+  const titulo = body.titulo !== undefined ? cleanStr(body.titulo) : undefined;
+  const descricao = body.descricao !== undefined ? cleanStr(body.descricao) : undefined;
+  const publico_alvo =
+    body.publico_alvo !== undefined ? cleanStr(body.publico_alvo) : undefined;
+  const local = body.local !== undefined ? cleanStr(body.local) : undefined;
+  const tipo = body.tipo !== undefined ? cleanStr(body.tipo) : undefined;
+  const unidade_id =
+    body.unidade_id !== undefined ? toIntOrNull(body.unidade_id) : undefined;
+  const modalidade =
+    body.modalidade !== undefined ? cleanStr(body.modalidade) : undefined;
+  const restrito =
+    body.restrito !== undefined ? toBool(body.restrito) : undefined;
+  const restricao_descricao =
+    body.restricao_descricao !== undefined
+      ? cleanStr(body.restricao_descricao)
+      : undefined;
+  const carga_horaria_total =
+    body.carga_horaria_total !== undefined
+      ? body.carga_horaria_total == null
+        ? null
+        : Number(body.carga_horaria_total)
+      : undefined;
+  const gera_certificado =
+    body.gera_certificado !== undefined ? toBool(body.gera_certificado) : undefined;
   const status = body.status !== undefined ? cleanStr(body.status) : undefined;
 
   const datas = body.datas !== undefined ? normalizeDatas(body.datas) : undefined;
-  const palestrantes = body.palestrantes !== undefined ? normalizePalestrantes(body.palestrantes) : undefined;
+  const palestrantes =
+    body.palestrantes !== undefined
+      ? normalizePalestrantes(body.palestrantes)
+      : undefined;
 
-  // validações rápidas se vierem campos
   if (titulo !== undefined && !titulo) {
     return res.status(400).json({ erro: "Informe o título do curso." });
   }
+
   if (restrito === true && (restricao_descricao === undefined || !restricao_descricao)) {
     return res.status(400).json({ erro: "Informe a descrição da restrição." });
   }
+
   if (carga_horaria_total !== undefined && carga_horaria_total != null) {
     if (!Number.isFinite(carga_horaria_total) || carga_horaria_total < 0) {
       return res.status(400).json({ erro: "Carga horária total inválida." });
     }
   }
+
   if (datas !== undefined && datas.length === 0) {
     return res.status(400).json({ erro: "Informe ao menos uma data para a solicitação." });
   }
 
   let client;
   try {
-    client = await getClient();
+    client = await getClient(req);
+    const tables = await resolveTables(client);
 
-    // permissão (criador/admin)
-    await assertPodeEditar({ client, solicitacaoId, usuarioId, admin });
+    await assertPodeEditar({
+      client,
+      solicitacaoId,
+      usuarioId,
+      admin,
+      tables,
+    });
 
     await client.query("BEGIN");
 
-    // UPDATE dinâmico (só o que veio)
     const sets = [];
     const vals = [];
     const push = (col, val) => {
@@ -485,26 +632,35 @@ async function atualizarSolicitacao(req, res) {
     if (gera_certificado !== undefined) push("gera_certificado", gera_certificado);
     if (status !== undefined) push("status", status);
 
-    // sempre atualiza atualizado_em
-    sets.push(`atualizado_em = NOW()`);
+    if (sets.length) {
+      sets.push(`atualizado_em = NOW()`);
+      vals.push(solicitacaoId);
 
-    vals.push(solicitacaoId);
-    await client.query(
-      `
-      UPDATE solicitacao_curso
-         SET ${sets.join(", ")}
-       WHERE id = $${vals.length}
-      `,
-      vals
-    );
+      await client.query(
+        `
+        UPDATE ${tables.main}
+           SET ${sets.join(", ")}
+         WHERE id = $${vals.length}
+        `,
+        vals
+      );
+    } else {
+      await client.query(
+        `UPDATE ${tables.main} SET atualizado_em = NOW() WHERE id = $1`,
+        [solicitacaoId]
+      );
+    }
 
-    // datas (se veio no payload, substitui)
     if (datas !== undefined) {
-      await client.query(`DELETE FROM solicitacao_curso_datas WHERE solicitacao_id = $1`, [solicitacaoId]);
+      await client.query(
+        `DELETE FROM ${tables.datas} WHERE solicitacao_id = $1`,
+        [solicitacaoId]
+      );
+
       for (const d of datas) {
         await client.query(
           `
-          INSERT INTO solicitacao_curso_datas
+          INSERT INTO ${tables.datas}
             (solicitacao_id, data, horario_inicio, horario_fim)
           VALUES ($1, $2::date, $3::time, $4::time)
           `,
@@ -513,13 +669,16 @@ async function atualizarSolicitacao(req, res) {
       }
     }
 
-    // palestrantes (se veio no payload, substitui)
     if (palestrantes !== undefined) {
-      await client.query(`DELETE FROM solicitacao_curso_palestrantes WHERE solicitacao_id = $1`, [solicitacaoId]);
+      await client.query(
+        `DELETE FROM ${tables.pales} WHERE solicitacao_id = $1`,
+        [solicitacaoId]
+      );
+
       for (const p of palestrantes) {
         await client.query(
           `
-          INSERT INTO solicitacao_curso_palestrantes
+          INSERT INTO ${tables.pales}
             (solicitacao_id, palestrante_id, nome_externo)
           VALUES ($1, $2, $3)
           `,
@@ -553,7 +712,7 @@ async function atualizarSolicitacao(req, res) {
 
     return res.status(httpStatus).json({ erro: msg });
   } finally {
-    if (client) client.release();
+    if (client) client.release?.();
   }
 }
 
@@ -562,6 +721,7 @@ async function atualizarSolicitacao(req, res) {
 async function excluirSolicitacao(req, res) {
   const requestId = rid();
   const usuarioId = getUsuarioId(req);
+
   if (!usuarioId) return res.status(401).json({ erro: "Usuário não autenticado." });
 
   const solicitacaoId = Number(req.params.id);
@@ -573,17 +733,31 @@ async function excluirSolicitacao(req, res) {
 
   let client;
   try {
-    client = await getClient();
+    client = await getClient(req);
+    const tables = await resolveTables(client);
 
-    // permissão (criador/admin)
-    await assertPodeEditar({ client, solicitacaoId, usuarioId, admin });
+    await assertPodeEditar({
+      client,
+      solicitacaoId,
+      usuarioId,
+      admin,
+      tables,
+    });
 
     await client.query("BEGIN");
 
-    // se não houver ON DELETE CASCADE, garantimos limpeza
-    await client.query(`DELETE FROM solicitacao_curso_palestrantes WHERE solicitacao_id = $1`, [solicitacaoId]);
-    await client.query(`DELETE FROM solicitacao_curso_datas        WHERE solicitacao_id = $1`, [solicitacaoId]);
-    await client.query(`DELETE FROM solicitacoes_curso             WHERE id = $1`, [solicitacaoId]);
+    await client.query(
+      `DELETE FROM ${tables.pales} WHERE solicitacao_id = $1`,
+      [solicitacaoId]
+    );
+    await client.query(
+      `DELETE FROM ${tables.datas} WHERE solicitacao_id = $1`,
+      [solicitacaoId]
+    );
+    await client.query(
+      `DELETE FROM ${tables.main} WHERE id = $1`,
+      [solicitacaoId]
+    );
 
     await client.query("COMMIT");
     logDev(requestId, "Solicitação excluída", { solicitacaoId });
@@ -610,7 +784,7 @@ async function excluirSolicitacao(req, res) {
 
     return res.status(httpStatus).json({ erro: msg });
   } finally {
-    if (client) client.release();
+    if (client) client.release?.();
   }
 }
 

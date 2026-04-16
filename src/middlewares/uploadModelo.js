@@ -1,8 +1,10 @@
 // 📁 src/middlewares/uploadModelo.js
 /* eslint-disable no-console */
+"use strict";
 
 const os = require("os");
 const path = require("path");
+const crypto = require("crypto");
 const multer = require("multer");
 
 /* =========================
@@ -12,37 +14,68 @@ const MAX_SIZE_MB = 50;
 const MAX_SIZE_BYTES = MAX_SIZE_MB * 1024 * 1024;
 
 // extensões permitidas
-const ALLOWED_EXTENSIONS = [".ppt", ".pptx"];
+const ALLOWED_EXTENSIONS = new Set([".ppt", ".pptx"]);
 
 // mimetypes comuns para PowerPoint
-const ALLOWED_MIME = [
+const ALLOWED_MIME = new Set([
   "application/vnd.ms-powerpoint",
   "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-  // fallback (alguns browsers)
+  // alguns navegadores / proxies mandam genérico
   "application/octet-stream",
-];
+]);
+
+/* =========================
+   Helpers
+========================= */
+function getExtension(filename = "") {
+  return path.extname(String(filename || "")).toLowerCase();
+}
+
+function sanitizeBaseName(filename = "arquivo") {
+  const ext = getExtension(filename);
+  const base = path.basename(String(filename || "arquivo"), ext);
+
+  return (
+    base
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^\w.-]+/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 80) || "arquivo"
+  );
+}
+
+function buildSafeTmpName(originalname = "arquivo") {
+  const ext = getExtension(originalname) || ".pptx";
+  const safeExt = ALLOWED_EXTENSIONS.has(ext) ? ext : ".pptx";
+  const base = sanitizeBaseName(originalname);
+  const nonce = crypto.randomBytes(4).toString("hex");
+  return `${Date.now()}_${nonce}_${base}${safeExt}`;
+}
+
+function isAllowedExtension(file) {
+  return ALLOWED_EXTENSIONS.has(getExtension(file?.originalname));
+}
+
+function isExpectedMime(file) {
+  return ALLOWED_MIME.has(String(file?.mimetype || "").toLowerCase());
+}
 
 /* =========================
    Storage (tmp do SO)
 ========================= */
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
-    // usa diretório temporário do sistema (seguro e portátil)
     cb(null, os.tmpdir());
   },
 
   filename: (_req, file, cb) => {
-    const original = String(file.originalname || "arquivo");
-    const ext = path.extname(original).toLowerCase() || ".pptx";
-
-    // remove caracteres estranhos
-    const base = path
-      .basename(original, ext)
-      .replace(/[^\w.-]+/g, "_")
-      .slice(0, 80); // evita nomes gigantes
-
-    const safeName = `${Date.now()}_${base}${ext}`;
-    cb(null, safeName);
+    try {
+      cb(null, buildSafeTmpName(file?.originalname));
+    } catch (error) {
+      cb(error);
+    }
   },
 });
 
@@ -50,26 +83,25 @@ const storage = multer.diskStorage({
    Filtro de arquivos
 ========================= */
 function fileFilter(_req, file, cb) {
-  const ext = path.extname(file.originalname || "").toLowerCase();
-  const mime = String(file.mimetype || "").toLowerCase();
-
-  const extOk = ALLOWED_EXTENSIONS.includes(ext);
-  const mimeOk = ALLOWED_MIME.includes(mime);
-
-  // exige extensão válida; mime ajuda mas não é único critério
-  if (!extOk) {
-    return cb(new Error("Envie apenas arquivos .ppt ou .pptx"), false);
+  if (!file || !file.originalname) {
+    return cb(new Error("Arquivo inválido."), false);
   }
 
+  const extOk = isAllowedExtension(file);
+  const mimeOk = isExpectedMime(file);
+
+  // extensão é obrigatória
+  if (!extOk) {
+    return cb(new Error("Envie apenas arquivos .ppt ou .pptx."), false);
+  }
+
+  // MIME inesperado: não bloqueia se a extensão está correta,
+  // mas registra para diagnóstico
   if (!mimeOk) {
-    // não bloqueia por completo se a extensão for válida,
-    // mas registra para auditoria
-    console.warn(
-      "[uploadModelo] MIME inesperado:",
-      mime,
-      "arquivo:",
-      file.originalname
-    );
+    console.warn("[uploadModelo] MIME inesperado recebido", {
+      mimetype: file.mimetype,
+      originalname: file.originalname,
+    });
   }
 
   return cb(null, true);
@@ -83,10 +115,12 @@ const uploadModelo = multer({
   fileFilter,
   limits: {
     fileSize: MAX_SIZE_BYTES,
+    files: 1,
   },
 });
 
 /* =========================
-   Export
+   Middleware pronto para uso
+   Exemplo: uploadModelo.single("file")
 ========================= */
 module.exports = uploadModelo;

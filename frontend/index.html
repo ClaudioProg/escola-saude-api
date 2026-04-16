@@ -41,7 +41,15 @@
     />
     <meta property="og:image" content="/icons/og-image.png" />
     <meta property="og:locale" content="pt_BR" />
+    <meta property="og:url" content="https://escoladasaude.vercel.app" />
+
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Plataforma - Escola da Saúde" />
+    <meta
+      name="twitter:description"
+      content="Inscrições, presença e certificados de eventos da Escola da Saúde de Santos."
+    />
+    <meta name="twitter:image" content="/icons/og-image.png" />
 
     <!-- Performance: pré-conexões -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -60,20 +68,31 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-32.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
-    <link rel="icon" sizes="512x512" href="/icons/maskable-512.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icons/maskable-512.png" />
     <link rel="mask-icon" href="/icons/maskable-512.svg" color="#14532d" />
 
     <!-- ✅ Boot do tema inlined (com CSP nonce) -->
     <script nonce="{{CSP_NONCE}}">
       (function () {
         try {
-          var KEY = "residencia_theme";           // mantém a mesma chave usada no app
+          var KEY = "escola_theme";
           var saved = localStorage.getItem(KEY) || "system";
-          var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+          var prefersDark =
+            window.matchMedia &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+
           var mode = saved === "system" ? prefersDark : saved;
           var html = document.documentElement;
+
           html.dataset.theme = mode;
-          if (mode === "dark") html.classList.add("dark"); else html.classList.remove("dark");
+
+          if (mode === "dark") {
+            html.classList.add("dark");
+          } else {
+            html.classList.remove("dark");
+          }
         } catch (e) {
           /* silencia para não travar boot em ambientes restritos */
         }
@@ -87,7 +106,10 @@
           "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji",
           "Segoe UI Symbol", sans-serif;
       }
-      html { font-family: var(--font-sans); }
+
+      html {
+        font-family: var(--font-sans);
+      }
     </style>
   </head>
 
@@ -97,7 +119,7 @@
     <div id="root"></div>
     <div id="modal-root"></div>
 
-    <!-- ✅ Vite entry (DEV). Em PROD o Vite injeta assets automaticamente no build -->
+    <!-- ✅ Entry do Vite; o build reescreve este módulo para os assets finais -->
     <script type="module" nonce="{{CSP_NONCE}}" src="/src/main.jsx"></script>
   </body>
 </html>

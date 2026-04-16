@@ -1,4 +1,4 @@
-// ✅ src/main.jsx — PREMIUM (2026)
+// ✅ src/main.jsx — PREMIUM REFINADO (2026)
 // - Tema aplicado antes do React
 // - Bootstrap global de sessão
 // - Sem toast indevido no bootstrap de autenticação
@@ -6,7 +6,8 @@
 // - ErrorBoundary premium
 // - PWA update safe
 // - Correção: /redefinir-senha é rota pública real
-// - Premiumrização do bootstrap e da organização geral
+// - HMR-safe em watchers/listeners globais
+// - Tema/storage mais defensivo
 
 import React from "react";
 import ReactDOM from "react-dom/client";
@@ -71,6 +72,15 @@ function safeGetLS(key) {
   }
 }
 
+function safeSetLS(key, value) {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function getStoredToken() {
   return (
     safeGetLS("token") ||
@@ -106,7 +116,7 @@ function readSavedEscolaThemeWithMigration() {
 
   const legacy = safeGetLS("theme");
   if (legacy === "light" || legacy === "dark" || legacy === "system") {
-    localStorage.setItem(ESCOLA_THEME_KEY, legacy);
+    safeSetLS(ESCOLA_THEME_KEY, legacy);
     return legacy;
   }
 
@@ -124,6 +134,8 @@ if (bootTheme === "system") {
 /* ──────────────────────────────────────────────────────────────
    🔎 Tripwire DEV
 ────────────────────────────────────────────────────────────── */
+let __themeTripwireDispose = null;
+
 (function installThemeTripwireDev() {
   if (!IS_DEV) return;
   if (typeof document === "undefined") return;
@@ -150,15 +162,13 @@ if (bootTheme === "system") {
   log();
   console.log("[TEMA] Tripwire DEV instalado (MutationObserver, read-only).");
 
-  if (import.meta?.hot) {
-    import.meta.hot.dispose(() => {
-      try {
-        mo.disconnect();
-      } catch {
-        /* noop */
-      }
-    });
-  }
+  __themeTripwireDispose = () => {
+    try {
+      mo.disconnect();
+    } catch {
+      /* noop */
+    }
+  };
 })();
 
 /* ──────────────────────────────────────────────────────────────
@@ -185,7 +195,11 @@ if (bootTheme === "system") {
 /* ──────────────────────────────────────────────────────────────
    DEV: logs estratégicos do Google Sign-In
 ────────────────────────────────────────────────────────────── */
-if (IS_DEV) {
+let __gsiDevCleanup = null;
+
+(function setupGSIDevDiagnostics() {
+  if (!IS_DEV) return;
+
   console.groupCollapsed(
     "%c[GSI:init]",
     "color:#14532d;font-weight:800",
@@ -202,20 +216,32 @@ if (IS_DEV) {
     /* noop */
   }
 
-  window.addEventListener("error", (ev) => {
+  const onError = (ev) => {
     const src = ev?.filename || "";
     if (/accounts\.google\.com|gstatic\.com/i.test(src)) {
       console.error("[GSI:error] script", src, ev?.message || ev?.error);
     }
-  });
+  };
 
-  window.addEventListener("unhandledrejection", (ev) => {
+  const onUnhandled = (ev) => {
     const msg = ev?.reason?.message || String(ev?.reason || "");
     if (/accounts\.google\.com|gstatic\.com/i.test(msg)) {
       console.error("[GSI:unhandledrejection]", msg);
     }
-  });
-}
+  };
+
+  window.addEventListener("error", onError);
+  window.addEventListener("unhandledrejection", onUnhandled);
+
+  __gsiDevCleanup = () => {
+    try {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onUnhandled);
+    } catch {
+      /* noop */
+    }
+  };
+})();
 
 if (!clientId) {
   console.warn("⚠️ VITE_GOOGLE_CLIENT_ID ausente! Verifique o .env.");
@@ -223,9 +249,6 @@ if (!clientId) {
 
 /* ──────────────────────────────────────────────────────────────
    ✅ Bootstrap global de sessão
-   - Não mostra toast de erro ao validar sessão
-   - Só redireciona quando necessário
-   - Respeita rotas públicas reais, incluindo redefinição de senha
 ────────────────────────────────────────────────────────────── */
 async function bootstrapAuthSession() {
   const pathname = window.location.pathname;
@@ -302,6 +325,7 @@ class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
     this.state = { hasError: false, info: null, error: null };
+    this._toastShown = false;
   }
 
   static getDerivedStateFromError(error) {
@@ -315,10 +339,13 @@ class ErrorBoundary extends React.Component {
 
     this.setState({ info });
 
-    try {
-      toast.error("Ocorreu um erro inesperado.");
-    } catch {
-      /* noop */
+    if (!this._toastShown) {
+      this._toastShown = true;
+      try {
+        toast.error("Ocorreu um erro inesperado.");
+      } catch {
+        /* noop */
+      }
     }
   }
 
@@ -443,9 +470,13 @@ async function startApp() {
       }}
       onScriptLoadError={() => {
         console.error("[GSI] Falha ao carregar a SDK do Google.");
-        toast.warn(
-          "Falha ao carregar login Google. Você ainda pode usar login por e-mail/senha."
-        );
+        try {
+          toast.warn(
+            "Falha ao carregar login Google. Você ainda pode usar login por e-mail/senha."
+          );
+        } catch {
+          /* noop */
+        }
       }}
     >
       <App />
@@ -488,6 +519,8 @@ startApp().catch((error) => {
 /* ──────────────────────────────────────────────────────────────
    PWA (prod): informar atualização aplicada e recarregar
 ────────────────────────────────────────────────────────────── */
+let __pwaDispose = null;
+
 (function setupPWA() {
   if (!IS_PROD) return;
   if (typeof window === "undefined" || !("serviceWorker" in navigator)) {
@@ -496,7 +529,7 @@ startApp().catch((error) => {
 
   let reloaded = false;
 
-  navigator.serviceWorker.addEventListener("controllerchange", () => {
+  const onControllerChange = () => {
     if (reloaded) return;
     reloaded = true;
 
@@ -507,16 +540,52 @@ startApp().catch((error) => {
     }
 
     setTimeout(() => window.location.reload(), 1200);
-  });
+  };
+
+  navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
+
+  __pwaDispose = () => {
+    try {
+      navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
+    } catch {
+      /* noop */
+    }
+  };
 })();
 
 /* ──────────────────────────────────────────────────────────────
    Cleanup watchers fora do React
 ────────────────────────────────────────────────────────────── */
-window.addEventListener?.("beforeunload", () => {
+function cleanupGlobals() {
   try {
     stopWatch?.();
   } catch {
     /* noop */
   }
-});
+
+  try {
+    __themeTripwireDispose?.();
+  } catch {
+    /* noop */
+  }
+
+  try {
+    __gsiDevCleanup?.();
+  } catch {
+    /* noop */
+  }
+
+  try {
+    __pwaDispose?.();
+  } catch {
+    /* noop */
+  }
+}
+
+window.addEventListener?.("beforeunload", cleanupGlobals);
+
+if (import.meta?.hot) {
+  import.meta.hot.dispose(() => {
+    cleanupGlobals();
+  });
+}

@@ -1,7 +1,11 @@
-// ✅ src/routes/unidadeRoute.js
+// ✅ src/routes/unidadeRoute.js — PREMIUM/UNIFICADO
+/* eslint-disable no-console */
+"use strict";
+
 const express = require("express");
 const rateLimit = require("express-rate-limit");
 const crypto = require("crypto");
+
 const router = express.Router();
 
 /* ──────────────────────────────────────────────────────────────
@@ -10,31 +14,33 @@ const router = express.Router();
 function getDb(req) {
   try {
     if (req?.db && typeof req.db.query === "function") return req.db;
+
     const mod = require("../db");
     if (mod && typeof mod.query === "function") return mod;
     if (mod?.db && typeof mod.db.query === "function") return mod.db;
   } catch (_) {}
+
   throw new Error("DB não inicializado.");
 }
 
 function parseQueryParams(qs = {}) {
   const {
     q = "",
-    limit = "200", // ✅ default 200
+    limit = "200",
     offset = "0",
     orderBy = "nome",
     direction = "asc",
-    fields = "", // ex.: "id,nome,sigla"
+    fields = "",
+    legacy = "0",
   } = qs;
 
-  const safeOrderBy = ["nome", "sigla", "id"].includes(String(orderBy).toLowerCase())
+  const safeOrderBy = ["id", "nome", "sigla"].includes(String(orderBy).toLowerCase())
     ? String(orderBy).toLowerCase()
     : "nome";
 
   const safeDirection = String(direction).toLowerCase() === "desc" ? "DESC" : "ASC";
 
-  // ✅ teto 200 (você disse que nunca passará disso)
-  const lim = Math.min(Math.max(parseInt(limit, 10) || 200, 1), 200); // 1..200
+  const lim = Math.min(Math.max(parseInt(limit, 10) || 200, 1), 200);
   const off = Math.max(parseInt(offset, 10) || 0, 0);
 
   const allowed = new Set(["id", "nome", "sigla"]);
@@ -53,6 +59,7 @@ function parseQueryParams(qs = {}) {
     orderBy: safeOrderBy,
     direction: safeDirection,
     fields: finalFields,
+    legacy: String(legacy) === "1",
   };
 }
 
@@ -65,28 +72,45 @@ function setCachingHeaders(res, etag) {
   res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
 }
 
+function routeTag(tag) {
+  return (_req, res, next) => {
+    res.setHeader("X-Route-Handler", tag);
+    return next();
+  };
+}
+
+function asPositiveInt(v) {
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 /* ──────────────────────────────────────────────────────────────
-   Rate limit (defensivo)
+   Rate limit
 ────────────────────────────────────────────────────────────── */
 const limiter = rateLimit({
   windowMs: 60 * 1000,
   max: 120,
   standardHeaders: true,
   legacyHeaders: false,
+  message: { erro: "Muitas requisições. Aguarde alguns instantes." },
 });
 
 /* ──────────────────────────────────────────────────────────────
-   🏥 GET /unidades — Lista com filtros/paginação/ordenação
-   Compatível com a resposta antiga (array), porém agora envelopada.
-   Para manter 100% de compatibilidade, permita ?legacy=1 para retornar array puro.
+   Middleware base
+────────────────────────────────────────────────────────────── */
+router.use(routeTag("unidadeRoute"));
+
+/* ──────────────────────────────────────────────────────────────
+   🏥 GET /unidade
+   Lista com filtros/paginação/ordenação
+   Compatível com ?legacy=1
 ────────────────────────────────────────────────────────────── */
 router.get("/", limiter, async (req, res) => {
   const db = getDb(req);
 
   try {
-    const { q, limit, offset, orderBy, direction, fields } = parseQueryParams(req.query);
+    const { q, limit, offset, orderBy, direction, fields, legacy } = parseQueryParams(req.query);
 
-    // WHERE + params
     const where = [];
     const params = [];
 
@@ -97,17 +121,23 @@ router.get("/", limiter, async (req, res) => {
     }
 
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-
-    // Campos seguros
     const selectCols = fields.map((f) => `unidades.${f}`).join(", ");
 
-    // Total
-    const countSql = `SELECT COUNT(*)::int AS total FROM unidades ${whereSql};`;
+    const countSql = `
+      SELECT COUNT(*)::int AS total
+      FROM unidades
+      ${whereSql};
+    `;
     const countRes = await db.query(countSql, params);
     const total = countRes.rows?.[0]?.total ?? 0;
 
-    // Dados
-    const orderSql = `ORDER BY unidades.${orderBy} ${direction}`;
+    const orderSql =
+      orderBy === "sigla"
+        ? `ORDER BY unidades.sigla ${direction} NULLS LAST, unidades.nome ASC, unidades.id ASC`
+        : orderBy === "nome"
+          ? `ORDER BY unidades.nome ${direction} NULLS LAST, unidades.sigla ASC, unidades.id ASC`
+          : `ORDER BY unidades.id ${direction}`;
+
     const dataSql = `
       SELECT ${selectCols}
       FROM unidades
@@ -120,13 +150,21 @@ router.get("/", limiter, async (req, res) => {
     const dataRes = await db.query(dataSql, dataParams);
     const rows = dataRes.rows || [];
 
-    // Logs “premium”
     console.log(
       `[UNIDADES] q="${q}" | total=${total} | returned=${rows.length} | limit=${limit} | offset=${offset} | order=${orderBy} ${direction}`
     );
 
-    // ETag + Conditional GET
-    const payloadPreview = JSON.stringify({ q, limit, offset, orderBy, direction, fields, total, rows });
+    const payloadPreview = JSON.stringify({
+      q,
+      limit,
+      offset,
+      orderBy,
+      direction,
+      fields,
+      total,
+      rows,
+    });
+
     const etag = buildETag(payloadPreview);
     setCachingHeaders(res, etag);
 
@@ -134,8 +172,11 @@ router.get("/", limiter, async (req, res) => {
       return res.status(304).end();
     }
 
-    // Envelope moderno + fallback opcional de compat
-    const body = {
+    if (legacy) {
+      return res.status(200).json(rows);
+    }
+
+    return res.status(200).json({
       data: rows,
       meta: {
         total,
@@ -148,30 +189,22 @@ router.get("/", limiter, async (req, res) => {
         q,
         fields,
       },
-    };
-
-    if (String(req.query.legacy) === "1") {
-      // Compat: apenas o array de linhas
-      return res.status(200).json(rows);
-    }
-
-    return res.status(200).json(body);
+    });
   } catch (err) {
-    console.error("❌ Erro ao buscar unidades:", err);
-    return res.status(500).json({ erro: "Erro ao buscar unidades" });
+    console.error("❌ Erro ao listar unidades:", err);
+    return res.status(500).json({ erro: "Erro ao listar unidades." });
   }
 });
 
 /* ──────────────────────────────────────────────────────────────
-   🆔 GET /unidades/:id — Busca uma unidade específica
+   🆔 GET /unidade/:id
+   Busca uma unidade específica
 ────────────────────────────────────────────────────────────── */
 router.get("/:id", limiter, async (req, res) => {
   const db = getDb(req);
-  const { id } = req.params;
+  const id = asPositiveInt(req.params.id);
 
-  // Validação simples de ID numérico
-  const uid = Number(id);
-  if (!Number.isInteger(uid) || uid <= 0) {
+  if (!id) {
     return res.status(400).json({ erro: "Parâmetro :id inválido." });
   }
 
@@ -182,22 +215,25 @@ router.get("/:id", limiter, async (req, res) => {
       WHERE id = $1
       LIMIT 1;
     `;
-    const r = await db.query(sql, [uid]);
-    if (!r.rows?.length) {
+
+    const result = await db.query(sql, [id]);
+    const row = result.rows?.[0];
+
+    if (!row) {
       return res.status(404).json({ erro: "Unidade não encontrada." });
     }
 
-    // ETag individual
-    const etag = buildETag(JSON.stringify(r.rows[0]));
+    const etag = buildETag(JSON.stringify(row));
     setCachingHeaders(res, etag);
+
     if (req.headers["if-none-match"] === etag) {
       return res.status(304).end();
     }
 
-    return res.status(200).json({ data: r.rows[0] });
+    return res.status(200).json({ data: row });
   } catch (err) {
     console.error(`❌ Erro ao buscar unidade ${id}:`, err);
-    return res.status(500).json({ erro: "Erro ao buscar unidade" });
+    return res.status(500).json({ erro: "Erro ao buscar unidade." });
   }
 });
 

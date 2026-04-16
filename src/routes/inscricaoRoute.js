@@ -1,41 +1,60 @@
-// 📁 src/routes/inscricaoRoute.js — PREMIUM (robusto, consistente, sem surpresas)
+/// 📁 src/routes/inscricaoRoute.js — PREMIUM (robusto, consistente, sem surpresas)
 /* eslint-disable no-console */
+"use strict";
+
 const express = require("express");
 const router = express.Router();
-
-const _auth = require("../auth/authMiddleware");
-const requireAuth =
-  typeof _auth === "function" ? _auth : _auth?.default || _auth?.authMiddleware;
-
-if (typeof requireAuth !== "function") {
-  console.error("[inscricaoRoute] authMiddleware inválido:", _auth);
-  throw new Error("authMiddleware não é função (verifique exports em src/auth/authMiddleware.js)");
-}
-
-const _roles = require("../middlewares/authorize");
-const authorizeRoles =
-  typeof _roles === "function" ? _roles : _roles?.default || _roles?.authorizeRoles;
-
-if (typeof authorizeRoles !== "function") {
-  console.error("[inscricaoRoute] authorizeRoles inválido:", _roles);
-  throw new Error("authorizeRoles não é função (verifique exports em src/middlewares/authorize.js)");
-}
 
 const inscricaoController = require("../controllers/inscricaoController");
 
 // serviços/DB para validar acesso por registro
-const db = require("../db");
+const dbMod = require("../db");
+const db = dbMod?.db ?? dbMod;
 const { podeVerEvento } = require("../services/eventoAcessoRegistroService");
+
+/* ───────────────── Auth resiliente ───────────────── */
+const _auth = require("../auth/authMiddleware");
+const requireAuth =
+  typeof _auth === "function"
+    ? _auth
+    : _auth?.default || _auth?.authMiddleware || _auth?.auth;
+
+if (typeof requireAuth !== "function") {
+  console.error("[inscricaoRoute] authMiddleware inválido:", _auth);
+  throw new Error(
+    "authMiddleware não é função (verifique exports em src/auth/authMiddleware.js)"
+  );
+}
+
+/* ───────────────── Roles resiliente ───────────────── */
+const authorizeMod = require("../middlewares/authorize");
+const authorizeRoles =
+  (typeof authorizeMod === "function" ? authorizeMod : authorizeMod?.authorizeRoles) ||
+  authorizeMod?.authorizeRole ||
+  authorizeMod?.authorize?.any ||
+  authorizeMod?.authorize;
+
+if (typeof authorizeRoles !== "function") {
+  console.error("[inscricaoRoute] authorizeRoles inválido:", authorizeMod);
+  throw new Error(
+    "authorizeRoles não é função (verifique exports em src/middlewares/authorize.js)"
+  );
+}
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 
 /* ───────────────────────────────────────────────────────────────
    🧰 Helpers premium
-   ─────────────────────────────────────────────────────────────── */
+─────────────────────────────────────────────────────────────── */
 const routeTag = (tag) => (req, res, next) => {
   res.set("X-Route-Handler", tag);
-  res.set("Cache-Control", "no-store");
   return next();
+};
+
+const noStore = (_req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  res.set("Pragma", "no-cache");
+  next();
 };
 
 const asPositiveInt = (v) => {
@@ -43,32 +62,59 @@ const asPositiveInt = (v) => {
   return Number.isFinite(n) && Number.isInteger(n) && n > 0 ? n : null;
 };
 
-const getUserId = (req) => req.user?.id ?? null;
+const getUserId = (req) =>
+  req.user?.id ??
+  req.usuario?.id ??
+  req.userId ??
+  req.auth?.userId ??
+  null;
 
 function getPerfis(req) {
-  const raw = req.user?.perfil ?? req.user?.perfis ?? [];
+  const raw =
+    req.user?.perfil ??
+    req.user?.perfis ??
+    req.usuario?.perfil ??
+    req.usuario?.perfis ??
+    req.auth?.perfil ??
+    [];
+
   const arr = Array.isArray(raw)
     ? raw
     : String(raw)
         .split(",")
         .map((p) => p.replace(/[\[\]"]/g, "").trim())
         .filter(Boolean);
+
   return arr.map((p) => String(p).toLowerCase());
 }
 
+function isAdmin(req) {
+  return getPerfis(req).includes("administrador") || getPerfis(req).includes("admin");
+}
+
 function getTurmaIdFromReq(req) {
-  // cobre POST /, GET /conflito/:turmaId, GET /?turma_id=, etc.
   return (
     req.body?.turma_id ||
     req.body?.turmaId ||
     req.params?.turma_id ||
-    req.params?.turmaId || // cobre /conflito/:turmaId
+    req.params?.turmaId ||
     req.query?.turma_id ||
     req.query?.turmaId
   );
 }
 
-// Wrapper seguro (sync/async) para não repetir try/catch
+function buildDevLog(req, extra = {}) {
+  return {
+    method: req.method,
+    url: req.originalUrl,
+    userId: getUserId(req),
+    perfis: getPerfis(req),
+    ip: req.ip,
+    ...extra,
+  };
+}
+
+// Wrapper seguro (sync/async)
 const handle =
   (fn) =>
   (req, res, next) => {
@@ -79,6 +125,19 @@ const handle =
       next(err);
     }
   };
+
+function ensureNumericParam(paramName, label = paramName) {
+  return (req, res, next) => {
+    const n = asPositiveInt(req.params?.[paramName]);
+
+    if (!n) {
+      return res.status(400).json({ erro: `${label} inválido.` });
+    }
+
+    req.params[paramName] = String(n);
+    return next();
+  };
+}
 
 /**
  * 🛡️ Middleware: valida se o usuário pode se inscrever / consultar conflito
@@ -100,12 +159,17 @@ async function checarAcessoPorRegistroNaTurma(req, res, next) {
       return res.status(401).json({ ok: false, erro: "NAO_AUTENTICADO" });
     }
 
-    const { rows } = await db.query(
-      "SELECT id, evento_id FROM turmas WHERE id = $1",
+    const turmaQ = await db.query(
+      `
+      SELECT id, evento_id
+      FROM turmas
+      WHERE id = $1
+      LIMIT 1
+      `,
       [turmaId]
     );
 
-    const turma = rows?.[0];
+    const turma = turmaQ.rows?.[0];
     if (!turma) {
       return res.status(400).json({ ok: false, erro: "TURMA_INVALIDA" });
     }
@@ -116,20 +180,24 @@ async function checarAcessoPorRegistroNaTurma(req, res, next) {
     });
 
     if (!acesso?.ok) {
-      // Motivos esperados: 'SEM_REGISTRO' | 'REGISTRO_NAO_AUTORIZADO' | ...
       if (IS_DEV) {
-        console.warn("[inscricaoRoute] acesso negado", {
+        console.warn("[inscricaoRoute] acesso negado por registro", {
           rid,
-          usuarioId,
-          turmaId,
-          eventoId: turma.evento_id,
-          motivo: acesso?.motivo,
+          ...buildDevLog(req, {
+            turmaId,
+            eventoId: turma.evento_id,
+            motivo: acesso?.motivo,
+          }),
         });
       }
-      return res.status(403).json({ ok: false, motivo: acesso?.motivo || "SEM_PERMISSAO" });
+
+      return res.status(403).json({
+        ok: false,
+        motivo: acesso?.motivo || "SEM_PERMISSAO",
+      });
     }
 
-    // Normaliza para uso de controllers que esperam turmaId em params
+    // normaliza para controllers que esperam turmaId em params
     req.params = req.params || {};
     req.params.turmaId = String(turmaId);
 
@@ -140,14 +208,17 @@ async function checarAcessoPorRegistroNaTurma(req, res, next) {
   }
 }
 
+/* ───────────────── Middlewares do grupo ───────────────── */
+router.use(requireAuth);
+router.use(noStore);
+
 /* ──────────────────────────────────────────────────────────
    📌 Inscrições
-   ────────────────────────────────────────────────────────── */
+──────────────────────────────────────────────────────────── */
 
 // ➕ Inscrever (usuario/instrutor/administrador)
 router.post(
   "/",
-  requireAuth,
   authorizeRoles("administrador", "instrutor", "usuario"),
   routeTag("inscricaoRoute:POST /"),
   checarAcessoPorRegistroNaTurma,
@@ -157,7 +228,8 @@ router.post(
 // ❌ Cancelar minha inscrição (usuário autenticado)
 router.delete(
   "/minha/:turmaId",
-  requireAuth,
+  authorizeRoles("administrador", "instrutor", "usuario"),
+  ensureNumericParam("turmaId", "turmaId"),
   routeTag("inscricaoRoute:DELETE /minha/:turmaId"),
   handle(inscricaoController.cancelarMinhaInscricao)
 );
@@ -165,8 +237,9 @@ router.delete(
 // ❌ Cancelar inscrição (ADMIN) de qualquer usuário
 router.delete(
   "/:turmaId/usuario/:usuarioId",
-  requireAuth,
   authorizeRoles("administrador"),
+  ensureNumericParam("turmaId", "turmaId"),
+  ensureNumericParam("usuarioId", "usuarioId"),
   routeTag("inscricaoRoute:DELETE /:turmaId/usuario/:usuarioId"),
   handle(inscricaoController.cancelarInscricaoAdmin)
 );
@@ -174,7 +247,7 @@ router.delete(
 // 👤 Minhas inscrições
 router.get(
   "/minhas",
-  requireAuth,
+  authorizeRoles("administrador", "instrutor", "usuario"),
   routeTag("inscricaoRoute:GET /minhas"),
   handle(inscricaoController.obterMinhasInscricao)
 );
@@ -182,64 +255,84 @@ router.get(
 // 📋 Listar inscritos da turma (instrutor/admin)
 router.get(
   "/turma/:turma_id",
-  requireAuth,
   authorizeRoles("administrador", "instrutor"),
+  ensureNumericParam("turma_id", "turma_id"),
   routeTag("inscricaoRoute:GET /turma/:turma_id"),
   handle(inscricaoController.listarInscritosPorTurma)
 );
 
 /* ──────────────────────────────────────────────────────────
    🔎 Checagem de conflito (para o frontend pintar o card/botão)
-   ────────────────────────────────────────────────────────── */
+──────────────────────────────────────────────────────────── */
 
 // ✅ Checa conflito para UMA turma (mesmo evento + global)
 router.get(
   "/conflito/:turmaId",
-  requireAuth,
+  authorizeRoles("administrador", "instrutor", "usuario"),
+  ensureNumericParam("turmaId", "turmaId"),
   routeTag("inscricaoRoute:GET /conflito/:turmaId"),
   checarAcessoPorRegistroNaTurma,
-  handle(inscricaoController.conflitoPorTurma) // certifique-se de exportar no controller
+  handle(inscricaoController.conflitoPorTurma)
 );
 
 /* ──────────────────────────────────────────────────────────
    🧯 LEGADO: DELETE /inscricao/:id
    Tenta tratar :id como inscricao_id; se não achar, tenta como turma_id
-   para cancelar a própria inscrição. Mantém compatibilidade com frontend antigo.
-   ────────────────────────────────────────────────────────── */
+   para cancelar a própria inscrição.
+──────────────────────────────────────────────────────────── */
 router.delete(
   "/:id",
-  requireAuth,
+  authorizeRoles("administrador", "instrutor", "usuario"),
+  ensureNumericParam("id", "id"),
   routeTag("inscricaoRoute:DELETE /:id@legacy"),
   async (req, res) => {
     const id = asPositiveInt(req.params.id);
-    if (!id) return res.status(400).json({ erro: "ID inválido." });
 
     try {
-      // 1) Tentar como inscrição_id
+      // 1) Tentar como inscricao_id
       const ins = await db.query(
-        "SELECT usuario_id, turma_id FROM inscricoes WHERE id = $1",
+        `
+        SELECT usuario_id, turma_id
+        FROM inscricoes
+        WHERE id = $1
+        LIMIT 1
+        `,
         [id]
       );
 
       if (ins.rowCount) {
         const { usuario_id, turma_id } = ins.rows[0] || {};
 
-        const perfis = getPerfis(req);
-        const isAdmin = perfis.includes("administrador");
+        const admin = isAdmin(req);
         const isSelf = Number(usuario_id) === Number(getUserId(req));
 
-        if (!isAdmin && !isSelf) {
-          return res.status(403).json({ erro: "Sem permissão para cancelar esta inscrição." });
+        if (!admin && !isSelf) {
+          return res.status(403).json({
+            erro: "Sem permissão para cancelar esta inscrição.",
+          });
         }
 
         req.params.turmaId = String(turma_id);
         req.params.usuarioId = String(usuario_id);
 
+        if (IS_DEV) {
+          console.log("[inscricaoRoute] legacy delete tratado como inscricao_id", {
+            ...buildDevLog(req, { inscricaoId: id, turma_id, usuario_id }),
+          });
+        }
+
         return inscricaoController.cancelarInscricaoAdmin(req, res);
       }
 
-      // 2) Caso contrário, tratar :id como turmaId para "minha"
+      // 2) Caso contrário, tratar :id como turmaId para "minha inscrição"
       req.params.turmaId = String(id);
+
+      if (IS_DEV) {
+        console.log("[inscricaoRoute] legacy delete tratado como turmaId/minha", {
+          ...buildDevLog(req, { turmaId: id }),
+        });
+      }
+
       return inscricaoController.cancelarMinhaInscricao(req, res);
     } catch (e) {
       console.error("[inscricaoRoute] LEGADO DELETE /inscricao/:id erro:", e);

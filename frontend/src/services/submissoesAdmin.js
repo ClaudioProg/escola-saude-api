@@ -1,4 +1,4 @@
-// src/services/submissaoAdmin.js
+// ✅ src/services/submissaoAdmin.js — PREMIUM++
 import {
   apiGet,
   apiPost,
@@ -21,8 +21,14 @@ function assertId(id, ctx = "id") {
     (typeof id === "number" && !Number.isFinite(id)) ||
     (typeof id === "string" && id.trim() === "")
   ) {
-    throw new Error(`Parâmetro obrigatório ausente/ inválido: ${ctx}`);
+    throw new Error(`Parâmetro obrigatório ausente/inválido: ${ctx}`);
   }
+}
+
+function coerceNum(v) {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && /^\d+$/.test(v.trim())) return Number(v.trim());
+  return v;
 }
 
 /** Normaliza boolean para "1" | "0" | undefined (para usar em querystring). */
@@ -32,9 +38,40 @@ function boolTo01(val) {
   return undefined;
 }
 
-/** Garante array. Ex.: ensureArray(3) -> [3]; ensureArray([1,2]) -> [1,2] */
+/** Garante array. */
 function ensureArray(v) {
   return Array.isArray(v) ? v : v == null ? [] : [v];
+}
+
+/** Remove entradas vazias de um array simples. */
+function cleanArray(values = []) {
+  return ensureArray(values).filter((v) => {
+    if (v === null || v === undefined) return false;
+    if (typeof v === "string" && !v.trim()) return false;
+    return true;
+  });
+}
+
+/** Remove campos undefined, null, "", [] da query. */
+function compactQuery(obj = {}) {
+  const out = {};
+
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined || value === null) continue;
+
+    if (typeof value === "string" && !value.trim()) continue;
+
+    if (Array.isArray(value)) {
+      const cleaned = cleanArray(value);
+      if (!cleaned.length) continue;
+      out[key] = cleaned;
+      continue;
+    }
+
+    out[key] = value;
+  }
+
+  return out;
 }
 
 /* ============================================================================
@@ -44,23 +81,6 @@ function ensureArray(v) {
 /**
  * Lista submissões com filtros opcionais.
  * @param {Object} [filtros]
- * @param {number} [filtros.page]            - página (1-based)
- * @param {number} [filtros.perPage]         - itens por página
- * @param {string} [filtros.busca]           - termo livre
- * @param {string|string[]} [filtros.status] - status (ou array)
- * @param {string|string[]} [filtros.categoria]
- * @param {string} [filtros.modalidade]
- * @param {number|string} [filtros.chamadaId]
- * @param {number|string} [filtros.turmaId]
- * @param {string} [filtros.ordenarPor]      - coluna para ordenação
- * @param {"asc"|"desc"} [filtros.ordem]
- * @param {boolean} [filtros.apenasComPoster]
- * @param {boolean} [filtros.apenasSemPoster]
- * @param {number|string} [filtros.avaliadorId]
- * @param {string} [filtros.parecerStatus]   - ex.: "aprovado" | "reprovado" | "pendente"
- * @param {number} [filtros.notaMin]
- * @param {number} [filtros.notaMax]
- * @param {boolean} [filtros.comPendencias]
  */
 export const listarsubmissaoAdmin = (filtros = {}) => {
   const {
@@ -83,8 +103,7 @@ export const listarsubmissaoAdmin = (filtros = {}) => {
     comPendencias,
   } = filtros || {};
 
-  // monta query sem enviar valores vazios/NaN (api.qs já ajuda, mas filtramos aqui tb)
-  const query = {
+  const query = compactQuery({
     page,
     perPage,
     busca,
@@ -94,15 +113,15 @@ export const listarsubmissaoAdmin = (filtros = {}) => {
     parecerStatus,
     notaMin,
     notaMax,
-    chamadaId,
-    turmaId,
-    avaliadorId,
-    status: ensureArray(status),
-    categoria: ensureArray(categoria),
+    chamadaId: coerceNum(chamadaId),
+    turmaId: coerceNum(turmaId),
+    avaliadorId: coerceNum(avaliadorId),
+    status: cleanArray(status),
+    categoria: cleanArray(categoria),
     apenasComPoster: boolTo01(apenasComPoster),
     apenasSemPoster: boolTo01(apenasSemPoster),
     comPendencias: boolTo01(comPendencias),
-  };
+  });
 
   return apiGet("/admin/submissao", { query });
 };
@@ -111,12 +130,14 @@ export const listarsubmissaoAdmin = (filtros = {}) => {
  * Obtém uma submissão específica.
  * @param {number|string} id
  * @param {Object} [opts]
- * @param {string} [opts.include] - dica opcional para o backend (ex.: "avaliacao,avaliadores")
+ * @param {string} [opts.include]
  */
 export const obterSubmissao = (id, opts = {}) => {
   assertId(id);
+
   const { include } = opts || {};
-  const query = include ? { include } : undefined;
+  const query = compactQuery({ include });
+
   return apiGet(`/submissao/${id}`, { query });
 };
 
@@ -131,17 +152,24 @@ export const obterSubmissao = (id, opts = {}) => {
  */
 export const listarAvaliadores = (id, tipo = "todos") => {
   assertId(id);
-  return apiGet(`/admin/submissao/${id}/avaliadores`, { query: { tipo } });
+
+  return apiGet(`/admin/submissao/${id}/avaliadores`, {
+    query: { tipo: tipo || "todos" },
+  });
 };
 
 /**
  * Inclui avaliadores (pode enviar id único ou array).
  * @param {number|string} id
- * @param {Array|number|string} itens - ex.: [{avaliadorId, tipo}] OU ids simples
+ * @param {Array|number|string} itens
  */
 export const incluirAvaliadores = (id, itens) => {
   assertId(id);
-  const payload = { itens: ensureArray(itens) };
+
+  const payload = {
+    itens: ensureArray(itens),
+  };
+
   return apiPost(`/admin/submissao/${id}/avaliadores`, payload);
 };
 
@@ -150,12 +178,15 @@ export const incluirAvaliadores = (id, itens) => {
  * @param {number|string} id
  * @param {{ avaliadorId: number|string, tipo?: string }} params
  */
-export const revogarAvaliador = (id, { avaliadorId, tipo }) => {
+export const revogarAvaliador = (id, { avaliadorId, tipo } = {}) => {
   assertId(id);
   assertId(avaliadorId, "avaliadorId");
-  // body no DELETE é suportado na nossa api central
+
   return apiDelete(`/admin/submissao/${id}/avaliadores`, {
-    body: { avaliadorId, tipo },
+    body: compactQuery({
+      avaliadorId: coerceNum(avaliadorId),
+      tipo,
+    }),
   });
 };
 
@@ -164,13 +195,14 @@ export const revogarAvaliador = (id, { avaliadorId, tipo }) => {
  * @param {number|string} id
  * @param {{ avaliadorId: number|string, tipo?: string }} params
  */
-export const restaurarAvaliador = (id, { avaliadorId, tipo }) => {
+export const restaurarAvaliador = (id, { avaliadorId, tipo } = {}) => {
   assertId(id);
   assertId(avaliadorId, "avaliadorId");
-  return apiPatch(`/admin/submissao/${id}/avaliadores/restore`, {
-    avaliadorId,
+
+  return apiPatch(`/admin/submissao/${id}/avaliadores/restore`, compactQuery({
+    avaliadorId: coerceNum(avaliadorId),
     tipo,
-  });
+  }));
 };
 
 /* ============================================================================
@@ -184,9 +216,11 @@ export const restaurarAvaliador = (id, { avaliadorId, tipo }) => {
  */
 export const listarAvaliacao = (id, opts = {}) => {
   assertId(id);
+
   const { detalhe } = opts || {};
+
   return apiGet(`/admin/submissao/${id}/avaliacao`, {
-    query: detalhe ? { detalhe } : undefined,
+    query: compactQuery({ detalhe }),
   });
 };
 
@@ -197,6 +231,7 @@ export const listarAvaliacao = (id, opts = {}) => {
  */
 export const definirNotaVisivel = (id, visivel) => {
   assertId(id);
+
   return apiPost(`/admin/submissao/${id}/nota-visivel`, {
     visivel: !!visivel,
   });
@@ -231,6 +266,7 @@ export const existePoster = async (id) => {
  */
 export const baixarPoster = async (id) => {
   assertId(id);
+
   const { blob, filename } = await apiGetFile(`/submissao/${id}/poster`);
   downloadBlob(filename || `poster-${id}.bin`, blob);
 };
@@ -238,11 +274,13 @@ export const baixarPoster = async (id) => {
 /**
  * Baixa o pôster forçando um nome de arquivo.
  * @param {number|string} id
- * @param {string} nomeArquivo - ex.: "poster-submissao-123.pdf"
+ * @param {string} nomeArquivo
  */
 export const baixarPosterComo = async (id, nomeArquivo = "") => {
   assertId(id);
+
   const { blob, filename } = await apiGetFile(`/submissao/${id}/poster`);
-  const finalName = (nomeArquivo || filename || `poster-${id}.bin`).trim();
-  downloadBlob(finalName, blob);
+  const finalName = String(nomeArquivo || filename || `poster-${id}.bin`).trim();
+
+  downloadBlob(finalName || `poster-${id}.bin`, blob);
 };

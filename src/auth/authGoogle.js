@@ -1,46 +1,98 @@
-// src/auth/authGoogle.js
+/* eslint-disable no-console */
+"use strict";
+
 const express = require("express");
-const router = express.Router();
 const { OAuth2Client } = require("google-auth-library");
 const jwt = require("jsonwebtoken");
-const db = require("../db");
+const dbMod = require("../db");
+const generateToken = require("./generateToken");
 
-// ✅ Fail-fast: variáveis essenciais
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-const JWT_SECRET = process.env.JWT_SECRET;
+const router = express.Router();
+
+/* ──────────────────────────────────────────────────────────────
+   DB compat resiliente
+────────────────────────────────────────────────────────────── */
+const pool =
+  dbMod?.pool ||
+  dbMod?.Pool ||
+  dbMod?.db?.pool ||
+  dbMod?.db ||
+  dbMod;
+
+const query =
+  dbMod?.query ||
+  dbMod?.db?.query?.bind?.(dbMod.db) ||
+  (pool?.query ? pool.query.bind(pool) : null);
+
+if (typeof query !== "function") {
+  console.error("[authGoogle] DB inválido:", Object.keys(dbMod || {}));
+  throw new Error("DB inválido em authGoogle.js (query ausente)");
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Config
+────────────────────────────────────────────────────────────── */
+const GOOGLE_CLIENT_ID = String(process.env.GOOGLE_CLIENT_ID || "").trim();
+const JWT_SECRET = String(process.env.JWT_SECRET || "").trim();
+const IS_PROD = process.env.NODE_ENV === "production";
 
 if (!GOOGLE_CLIENT_ID) {
-  console.warn("⚠️ [authGoogle] GOOGLE_CLIENT_ID não definido no .env");
+  console.warn("⚠️ [authGoogle] GOOGLE_CLIENT_ID não definido no ambiente");
 }
 if (!JWT_SECRET) {
-  console.warn("⚠️ [authGoogle] JWT_SECRET não definido no .env");
+  console.warn("⚠️ [authGoogle] JWT_SECRET não definido no ambiente");
 }
 
-// 🔑 Cliente OAuth com Client ID
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
 
-/* =========================
-   Helpers (premium)
-========================= */
+/* ──────────────────────────────────────────────────────────────
+   Logs
+────────────────────────────────────────────────────────────── */
+function mkRid() {
+  return `gauth-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function log(rid, level, msg, extra) {
+  const prefix = `[authGoogle][RID=${rid}]`;
+
+  if (level === "error") {
+    return console.error(`${prefix} ✖ ${msg}`, extra?.stack || extra?.message || extra);
+  }
+
+  if (!IS_PROD) {
+    if (level === "warn") return console.warn(`${prefix} ⚠ ${msg}`, extra || "");
+    return console.log(`${prefix} • ${msg}`, extra || "");
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Helpers
+────────────────────────────────────────────────────────────── */
 function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
 
 function normalizeName(name) {
   const n = String(name || "").trim();
-  return n.length ? n : "Usuário";
+  return n || "Usuário";
 }
 
 function normalizePerfil(perfilRaw) {
   if (Array.isArray(perfilRaw)) {
-    return perfilRaw
-      .map((p) => String(p || "").trim().toLowerCase())
-      .filter(Boolean);
+    return [...new Set(
+      perfilRaw
+        .map((p) => String(p || "").trim().toLowerCase())
+        .filter(Boolean)
+    )];
   }
 
   if (typeof perfilRaw === "string") {
-    const p = perfilRaw.trim().toLowerCase();
-    return p ? [p] : [];
+    return [...new Set(
+      perfilRaw
+        .split(",")
+        .map((p) => p.trim().toLowerCase())
+        .filter(Boolean)
+    )];
   }
 
   return [];
@@ -62,25 +114,25 @@ function buildTokenPayload(usuario) {
   const perfil = normalizePerfil(usuario?.perfil);
 
   return {
-    id: usuario.id,
-    email: usuario.email,
-    cpf: usuario.cpf || null,
-    nome: usuario.nome,
+    id: usuario?.id ?? null,
+    nome: usuario?.nome ?? "Usuário",
+    email: usuario?.email ?? null,
+    cpf: usuario?.cpf ?? null,
     perfil,
   };
 }
 
 function extractBearerToken(req) {
   const authHeader =
-    req.headers?.authorization || req.headers?.Authorization || "";
+    req.headers?.authorization ||
+    req.headers?.Authorization ||
+    "";
 
   if (typeof authHeader !== "string") return null;
 
   const [scheme, token] = authHeader.split(" ");
 
-  if (scheme !== "Bearer" || !token?.trim()) {
-    return null;
-  }
+  if (scheme !== "Bearer" || !token?.trim()) return null;
 
   return token.trim();
 }
@@ -95,16 +147,66 @@ function verifyJwtToken(token) {
   return jwt.verify(token, JWT_SECRET);
 }
 
-/* =========================
-   Rotas de autenticação
-========================= */
+async function findUsuarioByEmail(email) {
+  const result = await query(
+    `
+    SELECT id, nome, email, cpf, perfil
+    FROM usuarios
+    WHERE LOWER(email) = LOWER($1)
+    LIMIT 1
+    `,
+    [email]
+  );
 
-/**
- * 🔐 Autenticação com Google
- * POST /api/auth/google
- * Body: { credential }
- */
+  return result.rows?.[0] || null;
+}
+
+async function createUsuarioFromGoogle({ nome, email }) {
+  try {
+    const result = await query(
+      `
+      INSERT INTO usuarios (nome, email, cpf, senha, perfil)
+      VALUES ($1, $2, NULL, NULL, 'usuario')
+      RETURNING id, nome, email, cpf, perfil
+      `,
+      [nome, email]
+    );
+
+    return result.rows?.[0] || null;
+  } catch (err) {
+    // se houve corrida e o email já foi criado por outra requisição
+    if (err?.code === "23505") {
+      return findUsuarioByEmail(email);
+    }
+    throw err;
+  }
+}
+
+async function ensureUsuarioGoogle({ nome, email }, rid) {
+  let usuario = await findUsuarioByEmail(email);
+
+  if (usuario) return usuario;
+
+  log(rid, "info", "Usuário Google não encontrado; criando automaticamente", {
+    email,
+  });
+
+  usuario = await createUsuarioFromGoogle({ nome, email });
+
+  if (!usuario) {
+    throw new Error("Falha ao criar usuário Google.");
+  }
+
+  return usuario;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   POST /api/auth/google
+   Body: { credential }
+────────────────────────────────────────────────────────────── */
 router.post("/google", async (req, res) => {
+  const rid = mkRid();
+
   try {
     const { credential } = req.body || {};
 
@@ -113,20 +215,21 @@ router.post("/google", async (req, res) => {
     }
 
     if (!GOOGLE_CLIENT_ID) {
-      return res
-        .status(500)
-        .json({ erro: "Configuração do Google indisponível." });
+      log(rid, "warn", "GOOGLE_CLIENT_ID ausente");
+      return res.status(500).json({
+        erro: "Configuração do Google indisponível.",
+      });
     }
 
     if (!JWT_SECRET) {
-      return res
-        .status(500)
-        .json({ erro: "Configuração de autenticação indisponível." });
+      log(rid, "warn", "JWT_SECRET ausente");
+      return res.status(500).json({
+        erro: "Configuração de autenticação indisponível.",
+      });
     }
 
-    console.log("🔐 [authGoogle] Iniciando autenticação Google");
+    log(rid, "info", "Iniciando autenticação Google");
 
-    // 📥 Verifica token do Google
     const ticket = await client.verifyIdToken({
       idToken: credential,
       audience: GOOGLE_CLIENT_ID,
@@ -139,88 +242,67 @@ router.post("/google", async (req, res) => {
     const emailVerified = payload.email_verified === true;
 
     if (!email) {
-      console.warn("⚠️ [authGoogle] Payload do Google sem e-mail válido");
-      return res.status(401).json({ erro: "Falha na autenticação com Google." });
+      log(rid, "warn", "Payload Google sem e-mail válido");
+      return res.status(401).json({
+        erro: "Falha na autenticação com Google.",
+      });
     }
 
     if (!emailVerified) {
-      console.warn("⚠️ [authGoogle] E-mail não verificado:", email);
-      return res.status(401).json({ erro: "E-mail do Google não verificado." });
+      log(rid, "warn", "E-mail do Google não verificado", { email });
+      return res.status(401).json({
+        erro: "E-mail do Google não verificado.",
+      });
     }
 
-    // 🔎 Busca usuário por email
-    let result = await db.query(
-      `
-        SELECT id, nome, email, cpf, perfil
-        FROM usuarios
-        WHERE email = $1
-        LIMIT 1
-      `,
-      [email]
-    );
-
-    // ➕ Se não existir, cria com defaults seguros
-    if (result.rows.length === 0) {
-      console.log("🆕 [authGoogle] Criando usuário automaticamente:", email);
-
-      result = await db.query(
-        `
-          INSERT INTO usuarios (nome, email, cpf, senha, perfil)
-          VALUES ($1, $2, NULL, NULL, 'usuario')
-          RETURNING id, nome, email, cpf, perfil
-        `,
-        [nome, email]
-      );
-    }
-
-    const usuario = result.rows[0];
+    const usuario = await ensureUsuarioGoogle({ nome, email }, rid);
     const usuarioResponse = buildUsuarioResponse(usuario);
+    const token = generateToken(buildTokenPayload(usuario), "1d");
 
-    // 🔐 JWT
-    const token = jwt.sign(buildTokenPayload(usuario), JWT_SECRET, {
-      expiresIn: "1d",
-    });
-
-    console.log("✅ [authGoogle] Login concluído:", {
+    log(rid, "info", "Login Google concluído", {
       usuarioId: usuario.id,
       email: usuario.email,
       perfis: usuarioResponse.perfil,
     });
 
-    return res.json({
+    return res.status(200).json({
       token,
       perfil: usuarioResponse.perfil,
       usuario: usuarioResponse,
     });
   } catch (err) {
-    console.error("🔴 [authGoogle] Erro ao autenticar:", err?.message || err);
-    return res.status(401).json({ erro: "Falha na autenticação com Google." });
+    log(rid, "error", "Erro ao autenticar com Google", err);
+    return res.status(401).json({
+      erro: "Falha na autenticação com Google.",
+    });
   }
 });
 
-/**
- * 👤 Validação silenciosa de sessão
- * GET /api/auth/me
- * Header: Authorization: Bearer <token>
- */
+/* ──────────────────────────────────────────────────────────────
+   GET /api/auth/me
+   Header: Authorization: Bearer <token>
+────────────────────────────────────────────────────────────── */
 router.get("/me", async (req, res) => {
+  const rid = mkRid();
+
   try {
     const token = extractBearerToken(req);
 
     if (!token) {
-      console.warn("⚠️ [authGoogle:/me] Token ausente");
+      log(rid, "warn", "Token ausente em /me");
       return res.status(401).json({ erro: "Não autenticado." });
     }
 
     let decoded;
-
     try {
       decoded = verifyJwtToken(token);
     } catch (err) {
       const isExpired = err?.name === "TokenExpiredError";
 
-      console.warn(
-        `⚠️ [authGoogle:/me] Token inválido${isExpired ? " ou expirado" : ""}:`,
+      log(
+        rid,
+        "warn",
+        `Token inválido${isExpired ? " ou expirado" : ""} em /me`,
         err?.message || err
       );
 
@@ -230,35 +312,32 @@ router.get("/me", async (req, res) => {
       });
     }
 
-    const usuarioId = Number(decoded?.id);
+    const usuarioId = Number(decoded?.id ?? decoded?.sub);
 
-    if (!usuarioId) {
-      console.warn("⚠️ [authGoogle:/me] Token sem usuarioId válido");
+    if (!Number.isFinite(usuarioId) || usuarioId <= 0) {
+      log(rid, "warn", "Token sem usuarioId válido");
       return res.status(401).json({ erro: "Token inválido." });
     }
 
-    const result = await db.query(
+    const result = await query(
       `
-        SELECT id, nome, email, cpf, perfil
-        FROM usuarios
-        WHERE id = $1
-        LIMIT 1
+      SELECT id, nome, email, cpf, perfil
+      FROM usuarios
+      WHERE id = $1
+      LIMIT 1
       `,
       [usuarioId]
     );
 
-    if (result.rows.length === 0) {
-      console.warn("⚠️ [authGoogle:/me] Usuário do token não encontrado:", {
-        usuarioId,
-      });
-
+    if (!result.rows?.length) {
+      log(rid, "warn", "Usuário do token não encontrado", { usuarioId });
       return res.status(401).json({ erro: "Usuário não encontrado." });
     }
 
     const usuario = result.rows[0];
     const usuarioResponse = buildUsuarioResponse(usuario);
 
-    console.log("✅ [authGoogle:/me] Sessão válida:", {
+    log(rid, "info", "Sessão válida em /me", {
       usuarioId: usuario.id,
       email: usuario.email,
       perfis: usuarioResponse.perfil,
@@ -269,8 +348,10 @@ router.get("/me", async (req, res) => {
       usuario: usuarioResponse,
     });
   } catch (err) {
-    console.error("🔴 [authGoogle:/me] Erro ao validar sessão:", err?.message || err);
-    return res.status(500).json({ erro: "Erro ao validar sessão." });
+    log(rid, "error", "Erro ao validar sessão em /me", err);
+    return res.status(500).json({
+      erro: "Erro ao validar sessão.",
+    });
   }
 });
 

@@ -1,4 +1,4 @@
-// ✅ src/App.jsx (premium, robusto, a11y, auth-friendly, diagnóstico reforçado)
+// ✅ src/App.jsx — PREMIUM REFINADO
 // - basename dinâmico e normalizado
 // - announcer de rota (a11y)
 // - destrava scroll ao trocar de rota
@@ -6,9 +6,10 @@
 // - redirecionos legados (.html e aliases antigos)
 // - wrappers para rotas com params
 // - logs estratégicos em rotas públicas críticas
-// - fallback 404 público real (não mascara bugs mandando tudo para login)
+// - fallback 404 público real
 // - rota pública explícita para redefinição de senha
 // - PrivateShell aplica AppShell + PrivateRoute
+// - role guard separado da checagem de auth
 // - Suspense fallback acessível
 // - lazy loading também para páginas admin pesadas
 // - alias explícito para certificados avulsos
@@ -92,22 +93,11 @@ const CalendarioBloqueiosAdmin = lazy(() => import("./pages/CalendarioBloqueiosA
 const CertificadosAvulsos = lazy(() => import("./pages/CertificadosAvulsos"));
 const QRCodesEventosAdmin = lazy(() => import("./pages/QRCodesEventosAdmin"));
 
-// ✅ Confirmação via QR
 const ConfirmarPresenca = lazy(() => import("./pages/ConfirmarPresenca"));
-
-// 🆕 Manual do Usuário
 const ManualUsuario = lazy(() => import("./pages/usuario/Manual"));
-
-// 🆕 Páginas públicas
 const Privacidade = lazy(() => import("./pages/Privacidade"));
-
-// ✅ Painel oficial pós-login
 const HomeEscola = lazy(() => import("./pages/HomeEscola"));
-
-// 🆕 Admin – Votações
 const AdminVotacao = lazy(() => import("./pages/AdminVotacao"));
-
-// ⚠️ AdminSubmissao
 const AdminSubmissao = lazy(() => import("./pages/AdminSubmissao"));
 
 const IS_DEV =
@@ -160,7 +150,7 @@ function RouteChangeAnnouncer() {
     const safePath =
       rawPath.length > 120 ? `${rawPath.slice(0, 117)}...` : rawPath;
     setMessage(`Página carregada: ${safePath}`);
-  }, [location]);
+  }, [location.pathname]);
 
   return (
     <div aria-live="polite" aria-atomic="true" className="sr-only">
@@ -225,17 +215,23 @@ function ScrollUnlockOnRouteChange() {
       const html = document.documentElement;
       const body = document.body;
 
-      [html, body].forEach((el) => {
-        if (!el) return;
-        el.style.overflow = "";
-        el.style.touchAction = "";
-        el.classList.remove("overflow-hidden", "modal-open", "no-scroll");
-      });
+      if (!html || !body) return;
 
-      if (body && body.style.position === "fixed") {
+      html.style.overflow = "";
+      html.style.touchAction = "";
+      html.classList.remove("overflow-hidden", "modal-open", "no-scroll");
+
+      body.style.overflow = "";
+      body.style.touchAction = "";
+      body.classList.remove("overflow-hidden", "modal-open", "no-scroll");
+
+      if (body.style.position === "fixed") {
         const top = parseInt(body.style.top || "0", 10) || 0;
         body.style.position = "";
         body.style.top = "";
+        body.style.left = "";
+        body.style.right = "";
+        body.style.width = "";
 
         try {
           window.scrollTo({ top: -top, behavior: "auto" });
@@ -267,11 +263,6 @@ function ScrollToTop() {
   }, [pathname]);
 
   return null;
-}
-
-/* Mantém /validar */
-function ValidarWrapper() {
-  return <ValidarCertificado />;
 }
 
 /* Alias para URLs antigas .html */
@@ -492,11 +483,11 @@ function NotFoundPage() {
 
               <div className="mt-4">
                 <Link
-                  to="/"
+                  to="/login"
                   className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-700 dark:text-emerald-300 hover:underline"
                 >
                   <Home className="h-4 w-4" />
-                  Tentar página inicial
+                  Ir para o acesso principal
                 </Link>
               </div>
             </div>
@@ -578,7 +569,7 @@ function PwaUpdatePrompt() {
   );
 }
 
-/* Wrappers para rotas com :id */
+/* Wrappers para rotas com params */
 function AdminChamadaFormWrapper() {
   const { id } = useParams();
   return <AdminChamadaForm chamadaId={id} />;
@@ -659,6 +650,19 @@ function PrivateShell() {
   );
 }
 
+/* ✅ Guard só de perfil dentro do shell já autenticado */
+function OnlyRoles({ permitido, children }) {
+  return (
+    <PrivateRoute permitido={permitido} fallback={<AuthCheckingScreen />}>
+      {children}
+    </PrivateRoute>
+  );
+}
+
+function ProtectedPage({ permitido, element }) {
+  return <OnlyRoles permitido={permitido}>{element}</OnlyRoles>;
+}
+
 /* App */
 export default function App() {
   const BASENAME = normalizeBasename(
@@ -708,19 +712,15 @@ export default function App() {
             <Route path="/privacidade" element={<Privacidade />} />
             <Route path="/privacidade.html" element={<HtmlAliasRedirect />} />
 
-            {/* Certificados */}
             <Route path="/validar-certificado" element={<ValidarCertificado />} />
             <Route path="/validar-certificado.html" element={<HtmlAliasRedirect />} />
 
-            {/* Presença (legado) */}
-            <Route path="/validar" element={<ValidarWrapper />} />
+            <Route path="/validar" element={<ValidarCertificado />} />
             <Route path="/validar-presenca" element={<ValidarPresencaRouter />} />
 
-            {/* QR presença (novo) */}
             <Route path="/presenca" element={<ConfirmarPresenca />} />
             <Route path="/presenca/:turmaId" element={<ConfirmarPresenca />} />
 
-            {/* Outras públicas */}
             <Route path="/historico" element={<HistoricoEventos />} />
             <Route path="/recuperar-senha" element={<RecuperarSenha />} />
             <Route path="/esqueci-senha" element={<RouteAliasRedirect to="/recuperar-senha" />} />
@@ -763,57 +763,64 @@ export default function App() {
               <Route
                 path="instrutor"
                 element={
-                  <PrivateRoute permitido={["instrutor", "administrador"]} fallback={<AuthCheckingScreen />}>
-                    <DashboardInstrutor />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["instrutor", "administrador"]}
+                    element={<DashboardInstrutor />}
+                  />
                 }
               />
               <Route
                 path="agenda-instrutor"
                 element={
-                  <PrivateRoute permitido={["instrutor", "administrador"]} fallback={<AuthCheckingScreen />}>
-                    <AgendaInstrutor />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["instrutor", "administrador"]}
+                    element={<AgendaInstrutor />}
+                  />
                 }
               />
               <Route
                 path="turmas/presencas/:turmaId"
                 element={
-                  <PrivateRoute permitido={["instrutor", "administrador"]} fallback={<AuthCheckingScreen />}>
-                    <PresencasPorTurma />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["instrutor", "administrador"]}
+                    element={<PresencasPorTurma />}
+                  />
                 }
               />
               <Route
                 path="instrutor/presenca"
                 element={
-                  <PrivateRoute permitido={["instrutor", "administrador"]} fallback={<AuthCheckingScreen />}>
-                    <InstrutorPresenca />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["instrutor", "administrador"]}
+                    element={<InstrutorPresenca />}
+                  />
                 }
               />
               <Route
                 path="instrutor/certificados"
                 element={
-                  <PrivateRoute permitido={["instrutor", "administrador"]} fallback={<AuthCheckingScreen />}>
-                    <CertificadosInstrutor />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["instrutor", "administrador"]}
+                    element={<CertificadosInstrutor />}
+                  />
                 }
               />
               <Route
                 path="instrutor/avaliacao"
                 element={
-                  <PrivateRoute permitido={["instrutor", "administrador"]} fallback={<AuthCheckingScreen />}>
-                    <AvaliacaoInstrutor />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["instrutor", "administrador"]}
+                    element={<AvaliacaoInstrutor />}
+                  />
                 }
               />
               <Route
                 path="avaliador/submissao"
                 element={
-                  <PrivateRoute permitido={["instrutor", "administrador"]} fallback={<AuthCheckingScreen />}>
-                    <AvaliadorSubmissao />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["instrutor", "administrador"]}
+                    element={<AvaliadorSubmissao />}
+                  />
                 }
               />
 
@@ -821,89 +828,100 @@ export default function App() {
               <Route
                 path="administrador"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <DashboardAdministrador />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<DashboardAdministrador />}
+                  />
                 }
               />
               <Route
                 path="dashboard-analitico"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <DashboardAnalitico />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<DashboardAnalitico />}
+                  />
                 }
               />
               <Route
                 path="gerenciar-eventos"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <GerenciarEventos />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<GerenciarEventos />}
+                  />
                 }
               />
               <Route
                 path="gestao-instrutor"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <GestaoInstrutor />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<GestaoInstrutor />}
+                  />
                 }
               />
               <Route
                 path="gestao-usuarios"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <GestaoUsuarios />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<GestaoUsuarios />}
+                  />
                 }
               />
               <Route
                 path="gestao-certificados"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <GestaoCertificados />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<GestaoCertificados />}
+                  />
                 }
               />
               <Route
                 path="gestao-informacoes"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <GestaoInformacoes />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<GestaoInformacoes />}
+                  />
                 }
               />
               <Route
                 path="lista-presencas-turma"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <ListaPresencasTurma />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<ListaPresencasTurma />}
+                  />
                 }
               />
               <Route
                 path="relatorios-customizados"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <RelatoriosCustomizados />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<RelatoriosCustomizados />}
+                  />
                 }
               />
               <Route
                 path="agenda-administrador"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <AgendaAdministrador />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<AgendaAdministrador />}
+                  />
                 }
               />
               <Route
                 path="certificados-avulsos"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <CertificadosAvulsos />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<CertificadosAvulsos />}
+                  />
                 }
               />
               <Route
@@ -913,33 +931,37 @@ export default function App() {
               <Route
                 path="gestao-presenca"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <GestaoPresencas />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<GestaoPresencas />}
+                  />
                 }
               />
               <Route
                 path="admin/qr-codes"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <QRCodesEventosAdmin />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<QRCodesEventosAdmin />}
+                  />
                 }
               />
               <Route
                 path="admin/cancelar-inscricao"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <CancelarInscricaoAdmin />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<CancelarInscricaoAdmin />}
+                  />
                 }
               />
               <Route
                 path="admin/avaliacao"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <AdminAvaliacao />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<AdminAvaliacao />}
+                  />
                 }
               />
 
@@ -947,33 +969,37 @@ export default function App() {
               <Route
                 path="admin/solicitacao-curso"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <SolicitacaoCursoAdmin />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<SolicitacaoCursoAdmin />}
+                  />
                 }
               />
               <Route
                 path="admin/agenda-salas"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <AgendaSalasAdmin />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<AgendaSalasAdmin />}
+                  />
                 }
               />
               <Route
                 path="agenda-salas"
                 element={
-                  <PrivateRoute permitido={["usuario", "instrutor", "administrador"]} fallback={<AuthCheckingScreen />}>
-                    <AgendaSalasUsuario />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["usuario", "instrutor", "administrador"]}
+                    element={<AgendaSalasUsuario />}
+                  />
                 }
               />
               <Route
                 path="admin/calendario-bloqueios"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <CalendarioBloqueiosAdmin />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<CalendarioBloqueiosAdmin />}
+                  />
                 }
               />
 
@@ -981,44 +1007,57 @@ export default function App() {
               <Route
                 path="admin/votacao"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <AdminVotacao />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<AdminVotacao />}
+                  />
                 }
               />
-              <Route path="votacao/:votacaoId" element={<VotacaoUsuario />} />
+              <Route
+                path="votacao/:votacaoId"
+                element={
+                  <ProtectedPage
+                    permitido={["usuario", "instrutor", "administrador"]}
+                    element={<VotacaoUsuario />}
+                  />
+                }
+              />
 
               {/* Submissões Admin */}
               <Route
                 path="admin/chamadas/new"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <AdminChamadaForm />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<AdminChamadaForm />}
+                  />
                 }
               />
               <Route
                 path="admin/chamadas/:id"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <AdminChamadaFormWrapper />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<AdminChamadaFormWrapper />}
+                  />
                 }
               />
               <Route
                 path="admin/submissao"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <AdminSubmissaoRouteWrapper />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<AdminSubmissaoRouteWrapper />}
+                  />
                 }
               />
               <Route
                 path="admin/chamadas/:chamadaId/submissao"
                 element={
-                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-                    <AdminSubmissaoRouteWrapper />
-                  </PrivateRoute>
+                  <ProtectedPage
+                    permitido={["administrador"]}
+                    element={<AdminSubmissaoRouteWrapper />}
+                  />
                 }
               />
             </Route>

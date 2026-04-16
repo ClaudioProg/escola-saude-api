@@ -1,4 +1,4 @@
-// src/services/votacao.js
+// ✅ src/services/votacao.js — PREMIUM++
 import { apiGet, apiPost, apiPut, apiPatch, apiDelete } from "./api";
 
 /* ============================================================================
@@ -13,8 +13,14 @@ function assertId(id, ctx = "id") {
     (typeof id === "number" && !Number.isFinite(id)) ||
     (typeof id === "string" && id.trim() === "")
   ) {
-    throw new Error(`Parâmetro obrigatório ausente/ inválido: ${ctx}`);
+    throw new Error(`Parâmetro obrigatório ausente/inválido: ${ctx}`);
   }
+}
+
+function coerceNum(v) {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && /^\d+$/.test(v.trim())) return Number(v.trim());
+  return v;
 }
 
 /** Normaliza string opcional (trim) e retorna undefined se vazia. */
@@ -22,6 +28,19 @@ function optStr(v) {
   if (typeof v !== "string") return v;
   const s = v.trim();
   return s ? s : undefined;
+}
+
+/** Remove campos vazios/undefined/null da query/body simples. */
+function compactObject(obj = {}) {
+  const out = {};
+
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined || value === null) continue;
+    if (typeof value === "string" && !value.trim()) continue;
+    out[key] = value;
+  }
+
+  return out;
 }
 
 /* ============================================================================
@@ -32,20 +51,25 @@ function optStr(v) {
  * Lista votações abertas/elegíveis ao usuário atual.
  * Compat: mantém assinatura original (sem filtros).
  */
-export const listarVotacaoElegiveis = () =>
-  apiGet("/votacao/abertas/mine");
+export const listarVotacaoElegiveis = () => apiGet("/votacao/abertas/mine");
 
 /**
  * Envia voto do usuário.
- * @param {number|string} id       - id da votação
+ * @param {number|string} id
  * @param {{ opcaoId: number|string } & Record<string, any>} payload
  */
 export const votar = (id, payload) => {
   assertId(id, "id (votação)");
-  if (!payload || !payload.opcaoId) {
+
+  const opcaoId = coerceNum(payload?.opcaoId);
+  if (!payload || opcaoId === null || opcaoId === undefined || opcaoId === "") {
     throw new Error("payload.opcaoId é obrigatório para votar.");
   }
-  return apiPost(`/votacao/${id}/votar`, payload);
+
+  return apiPost(`/votacao/${id}/votar`, {
+    ...payload,
+    opcaoId,
+  });
 };
 
 /* ============================================================================
@@ -54,16 +78,7 @@ export const votar = (id, payload) => {
 
 /**
  * Lista votações (admin) com filtros opcionais.
- * Mantém a função original; agora aceita filtros sem quebrar uso atual.
  * @param {Object} [filtros]
- * @param {string} [filtros.busca]
- * @param {"rascunho"|"aberta"|"encerrada"} [filtros.status]
- * @param {number} [filtros.page]
- * @param {number} [filtros.perPage]
- * @param {string} [filtros.inicioDe]     - YYYY-MM-DD
- * @param {string} [filtros.inicioAte]    - YYYY-MM-DD
- * @param {string} [filtros.fimDe]        - YYYY-MM-DD
- * @param {string} [filtros.fimAte]       - YYYY-MM-DD
  */
 export const adminListar = (filtros = {}) => {
   const {
@@ -76,8 +91,9 @@ export const adminListar = (filtros = {}) => {
     fimDe,
     fimAte,
   } = filtros || {};
+
   return apiGet("/votacao", {
-    query: {
+    query: compactObject({
       busca: optStr(busca),
       status: optStr(status),
       page,
@@ -86,7 +102,7 @@ export const adminListar = (filtros = {}) => {
       inicioAte: optStr(inicioAte),
       fimDe: optStr(fimDe),
       fimAte: optStr(fimAte),
-    },
+    }),
   });
 };
 
@@ -101,12 +117,13 @@ export const adminObter = (id) => {
 
 /**
  * Cria votação (admin).
- * @param {Object} data - { titulo, descricao, inicio, fim, ... }
+ * @param {Object} data
  */
 export const adminCriar = (data) => {
-  if (!data || !data.titulo) {
+  if (!data || !optStr(data.titulo)) {
     throw new Error("Título é obrigatório para criar uma votação.");
   }
+
   return apiPost("/votacao", data);
 };
 
@@ -127,21 +144,24 @@ export const adminAtualizar = (id, data) => {
  */
 export const adminCriarOpcao = (id, data) => {
   assertId(id, "id (votação)");
+
   if (!data || !optStr(data.titulo)) {
     throw new Error("Título da opção é obrigatório.");
   }
+
   return apiPost(`/votacao/${id}/opcao`, data);
 };
 
 /**
  * Atualiza opção (admin).
- * @param {number|string} id        - votação
- * @param {number|string} opcaoId   - opção
+ * @param {number|string} id
+ * @param {number|string} opcaoId
  * @param {Object} data
  */
 export const adminAtualizarOpcao = (id, opcaoId, data) => {
   assertId(id, "id (votação)");
   assertId(opcaoId, "opcaoId");
+
   return apiPut(`/votacao/${id}/opcao/${opcaoId}`, data || {});
 };
 
@@ -152,8 +172,12 @@ export const adminAtualizarOpcao = (id, opcaoId, data) => {
  */
 export const adminStatus = (id, status) => {
   assertId(id, "id (votação)");
+
   const st = optStr(status);
-  if (!st) throw new Error("status é obrigatório.");
+  if (!st) {
+    throw new Error("status é obrigatório.");
+  }
+
   return apiPatch(`/votacao/${id}/status`, { status: st });
 };
 
@@ -164,9 +188,13 @@ export const adminStatus = (id, status) => {
  */
 export const adminRanking = (id, opts = {}) => {
   assertId(id, "id (votação)");
+
   const { top } = opts || {};
+
   return apiGet(`/votacao/${id}/ranking`, {
-    query: { top },
+    query: compactObject({
+      top: coerceNum(top),
+    }),
   });
 };
 

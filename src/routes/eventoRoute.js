@@ -1,5 +1,7 @@
-// ✅ src/routes/eventoRoute.js
+// ✅ src/routes/eventoRoute.js — PREMIUM/UNIFICADO
 /* eslint-disable no-console */
+"use strict";
+
 const express = require("express");
 const router = express.Router();
 
@@ -7,31 +9,42 @@ const eventoController = require("../controllers/eventoController");
 const turmaController = require("../controllers/turmaController");
 
 /* ───────────────────────────────────────────────────────────────
-   🔐 Auth/roles resilientes (suporta export default, named e fn direta)
-   ─────────────────────────────────────────────────────────────── */
+   🔐 Auth/roles resilientes
+─────────────────────────────────────────────────────────────── */
 function resolveFn(mod, candidates = []) {
   if (typeof mod === "function") return mod;
-  for (const k of candidates) {
-    if (typeof mod?.[k] === "function") return mod[k];
+
+  for (const key of candidates) {
+    if (typeof mod?.[key] === "function") return mod[key];
   }
-  return mod?.default && typeof mod.default === "function" ? mod.default : null;
+
+  if (typeof mod?.default === "function") return mod.default;
+  return null;
 }
 
 const _auth = require("../auth/authMiddleware");
-const requireAuth = resolveFn(_auth, ["authMiddleware", "requireAuth"]);
+const requireAuth = resolveFn(_auth, [
+  "authMiddleware",
+  "authAny",
+  "requireAuth",
+  "auth",
+]);
 
 if (typeof requireAuth !== "function") {
-  console.error("[eventosRoute] authMiddleware inválido:", _auth);
+  console.error("[eventoRoute] authMiddleware inválido:", _auth);
   throw new Error(
     "authMiddleware não é função (verifique exports em src/auth/authMiddleware.js)"
   );
 }
 
 const _roles = require("../middlewares/authorize");
-const authorizeRoles = resolveFn(_roles, ["authorizeRoles"]);
+const authorizeRoles =
+  resolveFn(_roles, ["authorizeRoles", "authorizeRole"]) ||
+  _roles?.authorize?.any ||
+  _roles?.authorize;
 
 if (typeof authorizeRoles !== "function") {
-  console.error("[eventosRoute] authorizeRoles inválido:", _roles);
+  console.error("[eventoRoute] authorizeRoles inválido:", _roles);
   throw new Error(
     "authorizeRoles não é função (verifique exports em src/middlewares/authorize.js)"
   );
@@ -40,53 +53,49 @@ if (typeof authorizeRoles !== "function") {
 const IS_DEV = process.env.NODE_ENV !== "production";
 
 /* ───────────────────────────────────────────────────────────────
-   🧰 Helpers “premium”
-   ─────────────────────────────────────────────────────────────── */
-const routeTag = (tag, options = {}) => (req, res, next) => {
-  const {
-    cacheControl = "no-store",
-  } = options;
-
-  res.set("X-Route-Handler", tag);
-
-  if (cacheControl) {
-    res.set("Cache-Control", cacheControl);
-  }
-
-  return next();
-};
-
-const ensureNumericParam = (paramName) => (req, res, next) => {
-  const raw = req.params?.[paramName];
-  const n = Number(raw);
-
-  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
-    return res.status(400).json({ erro: `${paramName} inválido.` });
-  }
-
-  req.params[paramName] = String(n);
-  return next();
-};
-
-const handle =
+   🧰 Helpers premium
+─────────────────────────────────────────────────────────────── */
+const asyncHandler =
   (fn) =>
-  (req, res, next) => {
-    try {
-      const out = fn(req, res, next);
-      if (out && typeof out.then === "function") out.catch(next);
-    } catch (err) {
-      next(err);
+  (req, res, next) =>
+    Promise.resolve(fn(req, res, next)).catch(next);
+
+function routeTag(tag, options = {}) {
+  const { cacheControl = "no-store" } = options;
+
+  return (req, res, next) => {
+    res.setHeader("X-Route-Handler", tag);
+
+    if (cacheControl !== null) {
+      res.setHeader("Cache-Control", cacheControl);
     }
+
+    return next();
   };
+}
+
+function ensureNumericParam(paramName) {
+  return (req, res, next) => {
+    const raw = req.params?.[paramName];
+    const n = Number(raw);
+
+    if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
+      return res.status(400).json({ erro: `${paramName} inválido.` });
+    }
+
+    req.params[paramName] = String(Math.trunc(n));
+    return next();
+  };
+}
 
 /* ───────────────────────────────────────────────────────────────
-   🔐 Rota de teste (só DEV)
-   ─────────────────────────────────────────────────────────────── */
+   🔐 Rota de teste (somente DEV)
+─────────────────────────────────────────────────────────────── */
 if (IS_DEV) {
   router.get(
     "/protegido",
     requireAuth,
-    routeTag("eventosRoute:/protegido@dev", { cacheControl: "no-store" }),
+    routeTag("eventoRoute:/protegido@dev", { cacheControl: "no-store" }),
     (req, res) => {
       res.json({
         mensagem: `Acesso autorizado para o usuário ${
@@ -98,117 +107,132 @@ if (IS_DEV) {
 }
 
 /* ───────────────────────────────────────────────────────────────
+   🖼️ Folder público do evento
+   IMPORTANTE: vem antes de "/:id"
+─────────────────────────────────────────────────────────────── */
+router.get(
+  "/:id/folder",
+  ensureNumericParam("id"),
+  routeTag("eventoRoute:GET /:id/folder", {
+    cacheControl: null, // controller decide o cache ideal
+  }),
+  asyncHandler(eventoController.obterFolderDoEvento)
+);
+
+/* ───────────────────────────────────────────────────────────────
    🎯 Eventos “para mim”
-   ─────────────────────────────────────────────────────────────── */
+─────────────────────────────────────────────────────────────── */
 router.get(
   "/para-mim/lista",
   requireAuth,
-  routeTag("eventosRoute:/para-mim/lista", {
+  routeTag("eventoRoute:/para-mim/lista", {
     cacheControl: "private, no-cache, must-revalidate",
   }),
-  handle(eventoController.listarEventosParaMim)
+  asyncHandler(eventoController.listarEventosParaMim)
 );
 
 /* ───────────────────────────────────────────────────────────────
    📆 Agenda & visão do instrutor
-   ─────────────────────────────────────────────────────────────── */
+─────────────────────────────────────────────────────────────── */
 router.get(
   "/agenda",
   requireAuth,
-  routeTag("eventosRoute:/agenda", {
+  routeTag("eventoRoute:/agenda", {
     cacheControl: "private, no-cache, must-revalidate",
   }),
-  handle(eventoController.getAgendaEventos)
+  asyncHandler(eventoController.getAgendaEventos)
 );
 
 router.get(
   "/instrutor",
   requireAuth,
-  routeTag("eventosRoute:/instrutor", {
+  routeTag("eventoRoute:/instrutor", {
     cacheControl: "private, no-cache, must-revalidate",
   }),
-  handle(eventoController.listarEventosDoinstrutor)
+  asyncHandler(eventoController.listarEventosDoinstrutor)
 );
 
 /* ───────────────────────────────────────────────────────────────
-   🔎 Auto-complete de cargos (ANTES de '/:id')
-   ─────────────────────────────────────────────────────────────── */
+   🔎 Auxiliares / autocomplete
+─────────────────────────────────────────────────────────────── */
 router.get(
   "/cargos/sugerir",
   requireAuth,
-  routeTag("eventosRoute:/cargos/sugerir", {
+  routeTag("eventoRoute:/cargos/sugerir", {
     cacheControl: "private, no-cache, must-revalidate",
   }),
-  handle(eventoController.sugerirCargos)
+  asyncHandler(eventoController.sugerirCargos)
 );
 
 router.get(
   "/instrutores/disponiveis",
   requireAuth,
-  routeTag("eventosRoute:/instrutores/disponiveis", {
+  routeTag("eventoRoute:/instrutores/disponiveis", {
     cacheControl: "private, no-cache, must-revalidate",
   }),
-  handle(eventoController.listarInstrutoresDisponiveis)
+  asyncHandler(eventoController.listarInstrutoresDisponiveis)
 );
 
 /* ───────────────────────────────────────────────────────────────
-   📅 CRUD principal de eventos
-   ─────────────────────────────────────────────────────────────── */
-
-// Listar todos
+   📅 Lista principal
+─────────────────────────────────────────────────────────────── */
 router.get(
   "/",
   requireAuth,
-  routeTag("eventosRoute:/", {
+  routeTag("eventoRoute:GET /", {
     cacheControl: "private, no-cache, must-revalidate",
   }),
-  handle(eventoController.listarEventos)
+  asyncHandler(eventoController.listarEventos)
 );
 
-// Turmas por evento (ANTES de '/:id')
+/* ───────────────────────────────────────────────────────────────
+   📚 Turmas por evento
+   IMPORTANTE: vêm antes de "/:id"
+─────────────────────────────────────────────────────────────── */
 router.get(
   "/:id/turmas",
   requireAuth,
   ensureNumericParam("id"),
-  routeTag("eventosRoute:/:id/turmas", {
+  routeTag("eventoRoute:GET /:id/turmas", {
     cacheControl: "private, no-cache, must-revalidate",
   }),
-  handle(eventoController.listarTurmasDoEvento)
+  asyncHandler(eventoController.listarTurmasDoEvento)
 );
 
 router.get(
   "/:id/turmas-simples",
   requireAuth,
   ensureNumericParam("id"),
-  routeTag("eventosRoute:/:id/turmas-simples", {
+  routeTag("eventoRoute:GET /:id/turmas-simples", {
     cacheControl: "private, no-cache, must-revalidate",
   }),
-  handle(eventoController.listarTurmasSimples)
+  asyncHandler(eventoController.listarTurmasSimples)
 );
 
 /* ───────────────────────────────────────────────────────────────
-   📌 Datas reais da turma (usa :id = turma_id)
-   ─────────────────────────────────────────────────────────────── */
+   📌 Datas reais da turma
+   Aqui :id = turma_id
+─────────────────────────────────────────────────────────────── */
 router.get(
   "/turmas/:id/datas",
   requireAuth,
   ensureNumericParam("id"),
-  routeTag("eventosRoute:/turmas/:id/datas", {
+  routeTag("eventoRoute:GET /turmas/:id/datas", {
     cacheControl: "private, no-cache, must-revalidate",
   }),
-  handle(turmaController.listarDatasDaTurma)
+  asyncHandler(turmaController.listarDatasDaTurma)
 );
 
 /* ───────────────────────────────────────────────────────────────
    📣 Publicar / Despublicar (admin)
-   ─────────────────────────────────────────────────────────────── */
+─────────────────────────────────────────────────────────────── */
 router.post(
   "/:id/publicar",
   requireAuth,
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
-  routeTag("eventosRoute:/:id/publicar", { cacheControl: "no-store" }),
-  handle(eventoController.publicarEvento)
+  routeTag("eventoRoute:POST /:id/publicar", { cacheControl: "no-store" }),
+  asyncHandler(eventoController.publicarEvento)
 );
 
 router.post(
@@ -216,34 +240,32 @@ router.post(
   requireAuth,
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
-  routeTag("eventosRoute:/:id/despublicar", { cacheControl: "no-store" }),
-  handle(eventoController.despublicarEvento)
+  routeTag("eventoRoute:POST /:id/despublicar", { cacheControl: "no-store" }),
+  asyncHandler(eventoController.despublicarEvento)
 );
 
 /* ───────────────────────────────────────────────────────────────
-   📎 Upload de arquivos do evento — admin
-   ─────────────────────────────────────────────────────────────── */
-
-// Endpoint unificado (recomendado pelo front)
+   📎 Upload de arquivos do evento (admin)
+   Endpoint unificado + atalhos compat
+─────────────────────────────────────────────────────────────── */
 router.post(
   "/:id/arquivos",
   requireAuth,
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
   eventoController.uploadEventos,
-  routeTag("eventosRoute:/:id/arquivos", { cacheControl: "no-store" }),
-  handle(eventoController.atualizarArquivosDoEvento)
+  routeTag("eventoRoute:POST /:id/arquivos", { cacheControl: "no-store" }),
+  asyncHandler(eventoController.atualizarArquivosDoEvento)
 );
 
-// Atalhos compatíveis
 router.post(
   "/:id/folder",
   requireAuth,
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
   eventoController.uploadFolderOnly,
-  routeTag("eventosRoute:/:id/folder", { cacheControl: "no-store" }),
-  handle(eventoController.atualizarArquivosDoEvento)
+  routeTag("eventoRoute:POST /:id/folder", { cacheControl: "no-store" }),
+  asyncHandler(eventoController.atualizarArquivosDoEvento)
 );
 
 router.post(
@@ -252,66 +274,52 @@ router.post(
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
   eventoController.uploadProgramacaoOnly,
-  routeTag("eventosRoute:/:id/programacao", { cacheControl: "no-store" }),
-  handle(eventoController.atualizarArquivosDoEvento)
+  routeTag("eventoRoute:POST /:id/programacao", { cacheControl: "no-store" }),
+  asyncHandler(eventoController.atualizarArquivosDoEvento)
 );
 
 /* ───────────────────────────────────────────────────────────────
-   🖼️ Folder (blob no DB) — leitura pública (ANTES de '/:id')
-   ─────────────────────────────────────────────────────────────── */
-router.get(
-  "/:id/folder",
-  ensureNumericParam("id"),
-  routeTag("eventosRoute:/:id/folder@GET", {
-    cacheControl: null, // o controller define o cache ideal
-  }),
-  handle(eventoController.obterFolderDoEvento)
-);
-
-/* ───────────────────────────────────────────────────────────────
-   🔎 Buscar / Criar / Atualizar / Excluir (admin)
-   ─────────────────────────────────────────────────────────────── */
-
-// Buscar por ID
+   🔎 Buscar por ID
+─────────────────────────────────────────────────────────────── */
 router.get(
   "/:id",
   requireAuth,
   ensureNumericParam("id"),
-  routeTag("eventosRoute:/:id", {
+  routeTag("eventoRoute:GET /:id", {
     cacheControl: "private, no-cache, must-revalidate",
   }),
-  handle(eventoController.buscarEventoPorId)
+  asyncHandler(eventoController.buscarEventoPorId)
 );
 
-// Criar (admin) — com upload (folder/programacao)
+/* ───────────────────────────────────────────────────────────────
+   ➕ Criar / ✏️ Atualizar / 🗑️ Excluir (admin)
+─────────────────────────────────────────────────────────────── */
 router.post(
   "/",
   requireAuth,
   authorizeRoles("administrador"),
   eventoController.uploadEventos,
-  routeTag("eventosRoute:POST /", { cacheControl: "no-store" }),
-  handle(eventoController.criarEvento)
+  routeTag("eventoRoute:POST /", { cacheControl: "no-store" }),
+  asyncHandler(eventoController.criarEvento)
 );
 
-// Atualizar (admin)
 router.put(
   "/:id",
   requireAuth,
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
   eventoController.uploadEventos,
-  routeTag("eventosRoute:PUT /:id", { cacheControl: "no-store" }),
-  handle(eventoController.atualizarEvento)
+  routeTag("eventoRoute:PUT /:id", { cacheControl: "no-store" }),
+  asyncHandler(eventoController.atualizarEvento)
 );
 
-// Excluir (admin)
 router.delete(
   "/:id",
   requireAuth,
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
-  routeTag("eventosRoute:DELETE /:id", { cacheControl: "no-store" }),
-  handle(eventoController.excluirEvento)
+  routeTag("eventoRoute:DELETE /:id", { cacheControl: "no-store" }),
+  asyncHandler(eventoController.excluirEvento)
 );
 
 module.exports = router;

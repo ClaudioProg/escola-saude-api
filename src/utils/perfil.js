@@ -1,128 +1,203 @@
 // ✅ src/utils/perfil.js
 /* eslint-disable no-console */
+"use strict";
 
-function toArrayLower(v) {
-  if (!v) return [];
-  const arr = Array.isArray(v)
-    ? v
-    : typeof v === "string"
-      ? v.split(/[;,]/) // aceita CSV com , ou ;
-      : [];
-  return arr.map((p) => String(p || "").toLowerCase().trim()).filter(Boolean);
+/* =========================
+   Constantes
+========================= */
+const ROLE_ALIASES = {
+  admin: "administrador",
+};
+
+const CAMPOS_OBRIGATORIOS_PERFIL = [
+  "cargo_id",
+  "unidade_id",
+  "data_nascimento",
+  "genero_id",
+  "orientacao_sexual_id",
+  "cor_raca_id",
+  "escolaridade_id",
+  "deficiencia_id",
+];
+
+/* =========================
+   Helpers base
+========================= */
+function uniq(arr) {
+  return [...new Set(arr)];
+}
+
+function normalizeRole(role) {
+  const value = String(role || "").trim().toLowerCase();
+  if (!value) return "";
+  return ROLE_ALIASES[value] || value;
+}
+
+function toArrayLower(value) {
+  if (!value) return [];
+
+  let arr = [];
+
+  if (Array.isArray(value)) {
+    arr = value;
+  } else if (typeof value === "string") {
+    arr = value.split(/[;,]/);
+  } else {
+    return [];
+  }
+
+  return uniq(
+    arr
+      .map((item) => normalizeRole(item))
+      .filter(Boolean)
+  );
 }
 
 function isEmptyValue(v) {
-  // null/undefined/"" são vazios
   if (v === null || v === undefined) return true;
   if (typeof v === "string" && !v.trim()) return true;
   return false;
 }
 
 function isIsoDateOnly(s) {
-  return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+  if (typeof s !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+
+  const [y, m, d] = s.split("-").map(Number);
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return false;
+  if (m < 1 || m > 12) return false;
+  if (d < 1 || d > 31) return false;
+
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return (
+    dt.getUTCFullYear() === y &&
+    dt.getUTCMonth() === m - 1 &&
+    dt.getUTCDate() === d
+  );
 }
 
-/**
- * Verifica se o perfil de um usuário está incompleto.
- * Regra: campo obrigatório é inválido se estiver null/undefined/"".
- * Observação: não tratamos 0 como inválido automaticamente porque alguns IDs podem ser 0 em legados,
- * mas se no seu banco IDs começam em 1, você pode ativar a checagem (ver comentário abaixo).
- */
-function isPerfilIncompleto(u) {
-  const obrigatorios = [
-    "cargo_id",
-    "unidade_id",
-    "data_nascimento",
-    "genero_id",
-    "orientacao_sexual_id",
-    "cor_raca_id",
-    "escolaridade_id",
-    "deficiencia_id",
-  ];
+function isPositiveNumericId(v) {
+  if (typeof v === "number") {
+    return Number.isFinite(v) && v > 0;
+  }
 
-  for (const campo of obrigatorios) {
-    const v = u?.[campo];
-
-    if (isEmptyValue(v)) return true;
-
-    // ✅ regra especial para IDs numéricos (se seu banco usa SERIAL/IDENTITY, IDs válidos são >= 1)
-    if (campo !== "data_nascimento") {
-      if (typeof v === "number" && Number.isFinite(v) && v <= 0) return true;
-      if (typeof v === "string" && /^\d+$/.test(v) && Number(v) <= 0) return true;
-    }
-
-    // ✅ data_nascimento: aceita ISO date-only (YYYY-MM-DD) ou Date válido
-    if (campo === "data_nascimento") {
-      if (typeof v === "string") {
-        if (!isIsoDateOnly(v)) return true;
-      } else if (v instanceof Date) {
-        if (isNaN(v)) return true;
-      } else {
-        // qualquer outro tipo é inválido
-        return true;
-      }
-    }
+  if (typeof v === "string" && /^\d+$/.test(v.trim())) {
+    return Number(v) > 0;
   }
 
   return false;
 }
 
-/**
- * Extrai e normaliza a lista de perfis de um usuário autenticado.
- * Aceita req.usuario / req.user e perfil como string, lista ou CSV.
- */
-function extrairPerfis(input) {
-  // Aceita:
-  // 1) req express: { usuario, user, auth }
-  // 2) contexto:    { usuario, user, auth } (onde usuario/user podem ser o "user" direto)
-  // 3) user direto: { perfil/perfis } (caso alguém passe só o usuário por engano)
+function getPerfilSource(input) {
+  if (!input) return [];
 
-  const isReqLike = !!(input && (input.usuario || input.user || input.auth));
+  const isReqLike = !!(input.usuario || input.user || input.auth);
 
-  const req = isReqLike ? input : { user: input };
-
-  // ✅ fontes possíveis (req.usuario / req.user / req.auth / user direto)
-  const candidato =
-    req?.usuario?.perfis ??
-    req?.usuario?.perfil ??
-    req?.usuario?.roles ??
-    req?.user?.perfis ??
-    req?.user?.perfil ??
-    req?.user?.roles ??
-    req?.auth?.perfis ??
-    req?.auth?.perfil ??
-    req?.auth?.roles ??
-    // ✅ se alguém passar { usuario: userDireto } mas sem .perfil/.perfis no nível certo:
-    req?.usuario ??
-    req?.user ??
-    req?.auth ??
-    [];
-
-  // se candidato virou objeto user direto, tenta ler perfil/perfis dele
-  if (candidato && typeof candidato === "object" && !Array.isArray(candidato)) {
-    const obj = candidato;
-    const cand2 = obj?.perfis ?? obj?.perfil ?? obj?.roles ?? [];
-    return toArrayLower(cand2);
+  if (isReqLike) {
+    return (
+      input?.usuario?.perfis ??
+      input?.usuario?.perfil ??
+      input?.usuario?.roles ??
+      input?.user?.perfis ??
+      input?.user?.perfil ??
+      input?.user?.roles ??
+      input?.auth?.perfis ??
+      input?.auth?.perfil ??
+      input?.auth?.roles ??
+      []
+    );
   }
 
-  return toArrayLower(candidato);
+  return (
+    input?.perfis ??
+    input?.perfil ??
+    input?.roles ??
+    input?.role ??
+    []
+  );
 }
 
-/** Helper: verifica se req tem pelo menos um dos perfis */
-function hasPerfil(req, ...perfis) {
-  const userRoles = extrairPerfis(req);
+/* =========================
+   Perfil completo
+========================= */
+function isPerfilIncompleto(usuario) {
+  for (const campo of CAMPOS_OBRIGATORIOS_PERFIL) {
+    const valor = usuario?.[campo];
+
+    if (isEmptyValue(valor)) return true;
+
+    if (campo !== "data_nascimento") {
+      if (!isPositiveNumericId(valor)) return true;
+      continue;
+    }
+
+    if (typeof valor === "string") {
+      if (!isIsoDateOnly(valor)) return true;
+      continue;
+    }
+
+    if (valor instanceof Date) {
+      if (Number.isNaN(valor.getTime())) return true;
+      continue;
+    }
+
+    return true;
+  }
+
+  return false;
+}
+
+function camposFaltantesPerfil(usuario) {
+  return CAMPOS_OBRIGATORIOS_PERFIL.filter((campo) => {
+    const valor = usuario?.[campo];
+
+    if (isEmptyValue(valor)) return true;
+
+    if (campo !== "data_nascimento") {
+      return !isPositiveNumericId(valor);
+    }
+
+    if (typeof valor === "string") {
+      return !isIsoDateOnly(valor);
+    }
+
+    if (valor instanceof Date) {
+      return Number.isNaN(valor.getTime());
+    }
+
+    return true;
+  });
+}
+
+/* =========================
+   Perfis / roles
+========================= */
+function extrairPerfis(input) {
+  return toArrayLower(getPerfilSource(input));
+}
+
+function hasPerfil(input, ...perfis) {
+  const userRoles = extrairPerfis(input);
   const allowed = toArrayLower(perfis);
+
   if (!allowed.length) return true;
-  return allowed.some((p) => userRoles.includes(p));
+  return allowed.some((role) => userRoles.includes(role));
 }
 
-/**
- * Middleware genérico para restringir acesso com base em perfis permitidos.
- * Exemplo:
- *   router.get("/rota", authMiddleware, permitirPerfis("administrador", "instrutor"), controller);
- *
- * Nota: isso é equivalente ao authorizeRoles("...") — mantenho aqui por compatibilidade.
- */
+function hasTodosPerfis(input, ...perfis) {
+  const userRoles = extrairPerfis(input);
+  const allowed = toArrayLower(perfis);
+
+  if (!allowed.length) return true;
+  return allowed.every((role) => userRoles.includes(role));
+}
+
+function isAdminLike(input) {
+  return hasPerfil(input, "administrador", "admin");
+}
+
+/* =========================
+   Middleware
+========================= */
 function permitirPerfis(...perfisPermitidos) {
   const allowed = toArrayLower(perfisPermitidos);
 
@@ -135,8 +210,14 @@ function permitirPerfis(...perfisPermitidos) {
       if (!allowed.length) return next();
 
       const autorizado = hasPerfil(req, ...allowed);
+
       if (!autorizado) {
-        return res.status(403).json({ erro: "Acesso negado." });
+        return res.status(403).json({
+          erro: "Acesso negado.",
+          detalhes: {
+            necessario: allowed,
+          },
+        });
       }
 
       return next();
@@ -148,11 +229,18 @@ function permitirPerfis(...perfisPermitidos) {
 }
 
 module.exports = {
+  CAMPOS_OBRIGATORIOS_PERFIL,
+
   isPerfilIncompleto,
+  camposFaltantesPerfil,
+
   extrairPerfis,
+  hasPerfil,
+  hasTodosPerfis,
+  isAdminLike,
   permitirPerfis,
 
-  // extras premium (não quebram nada)
-  hasPerfil,
   toArrayLower,
+  normalizeRole,
+  isIsoDateOnly,
 };

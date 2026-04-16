@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-// 📁 src/routes/trabalhoRoute.js — PREMIUM/UNIFICADO (singular + aliases + mounts por prefixo)
+// ✅ src/routes/trabalhoRoute.js — PREMIUM/UNIFICADO (singular + aliases + mounts por prefixo)
 // Observação importante:
 // - Este router deve ser montado no index como:
 //   router.use("/trabalho", trabalhoRoute);
@@ -22,48 +22,90 @@ const injectDb = require("../middlewares/injectDb");
 /* ───────────────── Auth resiliente ───────────────── */
 const _auth = require("../auth/authMiddleware");
 const requireAuth =
-  typeof _auth === "function" ? _auth : _auth?.default || _auth?.authMiddleware || _auth?.auth;
+  typeof _auth === "function"
+    ? _auth
+    : _auth?.default || _auth?.authMiddleware || _auth?.auth;
 
 if (typeof requireAuth !== "function") {
   console.error("[trabalhoRoute] authMiddleware inválido:", _auth);
-  throw new Error("authMiddleware não é função (verifique exports em src/auth/authMiddleware.js)");
+  throw new Error(
+    "authMiddleware não é função (verifique exports em src/auth/authMiddleware.js)"
+  );
 }
 
 const _roles = require("../middlewares/authorize");
 const authorizeRoles =
-  typeof _roles === "function" ? _roles : _roles?.default || _roles?.authorizeRoles || _roles?.authorizeRole;
+  typeof _roles === "function"
+    ? _roles
+    : _roles?.default ||
+      _roles?.authorizeRoles ||
+      _roles?.authorizeRole ||
+      _roles?.authorize?.any ||
+      _roles?.authorize;
 
 if (typeof authorizeRoles !== "function") {
   console.error("[trabalhoRoute] authorizeRoles inválido:", _roles);
-  throw new Error("authorizeRoles não exportado corretamente em src/middlewares/authorize.js");
+  throw new Error(
+    "authorizeRoles não exportado corretamente em src/middlewares/authorize.js"
+  );
 }
 
 const requireAdmin = [requireAuth, authorizeRoles("administrador")];
-const requireAdminOrInstrutor = [requireAuth, authorizeRoles("administrador", "instrutor")];
 
 /* ───────────────── Controllers ───────────────── */
-const ctrl = require("../controllers/trabalhoController");
-const adminCtrl = require("../controllers/submissaoController");
+const trabalhoCtrl = require("../controllers/trabalhoController");
+const submissaoCtrl = require("../controllers/submissaoController");
 
 /* ───────────────── Helpers ───────────────── */
 const asyncHandler =
-  (fn) =>
+  (fn, name = "handler") =>
   (req, res, next) =>
-    Promise.resolve(fn(req, res, next)).catch(next);
+    Promise.resolve()
+      .then(() => {
+        if (typeof fn !== "function") {
+          const err = new Error(`Handler não implementado (${name}).`);
+          err.status = 501;
+          throw err;
+        }
+        return fn(req, res, next);
+      })
+      .catch(next);
 
 function validate(req, res, next) {
   const errors = validationResult(req);
   if (errors.isEmpty()) return next();
+
   return res.status(400).json({
     erro: "Parâmetros inválidos.",
-    detalhes: errors.array().map((e) => ({ campo: e.path, msg: e.msg })),
+    detalhes: errors.array().map((e) => ({
+      campo: e.path || e.param,
+      msg: e.msg,
+    })),
     requestId: res.getHeader?.("X-Request-Id"),
   });
 }
 
-// ID validator central (mantém padrão)
 const vId = [param("id").isInt({ min: 1 }).withMessage("ID inválido.").toInt()];
-const vChamadaId = [param("chamadaId").isInt({ min: 1 }).withMessage("chamadaId inválido.").toInt()];
+const vChamadaId = [
+  param("chamadaId").isInt({ min: 1 }).withMessage("chamadaId inválido.").toInt(),
+];
+
+function pickFn(obj, names = []) {
+  for (const n of names) {
+    if (typeof obj?.[n] === "function") return obj[n];
+  }
+  return null;
+}
+
+const listarAvaliadoresFn = pickFn(submissaoCtrl, [
+  "listarAvaliadoresDaSubmissao",
+  "listarAvaliadoresFlex",
+]);
+
+const atribuirAvaliadoresFn = pickFn(submissaoCtrl, [
+  "atribuirAvaliadores",
+  "incluirAvaliadores",
+]);
 
 /* ───────────────── TMP upload ───────────────── */
 const TMP_DIR = path.join(process.cwd(), "uploads", "tmp");
@@ -77,22 +119,23 @@ function ensureTmpDir() {
 }
 ensureTmpDir();
 
-// upload premium: limite + filtro
 const upload = multer({
   dest: TMP_DIR,
   limits: {
-    fileSize: 25 * 1024 * 1024, // 25MB
+    fileSize: 25 * 1024 * 1024,
     files: 1,
   },
   fileFilter: (_req, file, cb) => {
     const ok =
-      /^image\/(png|jpe?g|gif|webp)$/i.test(file.mimetype) || /^application\/pdf$/i.test(file.mimetype);
+      /^image\/(png|jpe?g|gif|webp)$/i.test(file.mimetype) ||
+      /^application\/pdf$/i.test(file.mimetype);
 
     if (!ok) {
       const err = new Error("Arquivo inválido. Envie PNG/JPG/GIF/WEBP ou PDF.");
       err.status = 400;
       return cb(err);
     }
+
     return cb(null, true);
   },
 });
@@ -107,6 +150,7 @@ function multerErrorHandler(err, _req, res, next) {
     if (err.code === "LIMIT_FILE_SIZE") {
       return res.status(413).json({ erro: "Arquivo muito grande (limite 25MB)." });
     }
+
     return res.status(400).json({ erro: `Erro no upload (${err.code}).` });
   }
 
@@ -114,59 +158,109 @@ function multerErrorHandler(err, _req, res, next) {
   return res.status(status).json({ erro: err.message || "Erro no upload." });
 }
 
-/* ✅ injeta DB (se existir) */
+/* ✅ injeta DB */
 router.use(injectDb);
+
+// ✅ sem cache
+router.use((_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  next();
+});
 
 /* ─────────────────────────── ROTAS DE USUÁRIO ─────────────────────────── */
 
-/**
- * ✅ Minhas submissões (usuário)
- * O frontend recente chama: GET /api/submissao/minhas (via fallback do index)
- * Mas o módulo "trabalhos" também pode oferecer:
- * - /api/trabalhos/submissao/minhas
- * - /api/trabalhos/minhas-submissoes (alias)
- *
- * ⚠️ IMPORTANTE: aqui não prefixamos com "/trabalhos" nem "/api".
- */
-router.get("/submissao/minhas", requireAuth, asyncHandler(ctrl.minhassubmissao));
-router.get("/minhas-submissoes", requireAuth, asyncHandler(ctrl.minhassubmissao)); // alias leve
+// Minhas submissões
+router.get(
+  "/submissao/minhas",
+  requireAuth,
+  asyncHandler(trabalhoCtrl.minhassubmissao, "trabalhoCtrl.minhassubmissao")
+);
 
-/**
- * 💾 Repositório de trabalhos avaliados (sem notas, com banner)
- * Front chama: GET /api/trabalhos/repositorio[?chamadaId=...]
- */
-router.get("/repositorio", requireAuth, asyncHandler(ctrl.listarRepositorioTrabalhos));
-router.get("/repository", requireAuth, asyncHandler(ctrl.listarRepositorioTrabalhos)); // alias
+router.get(
+  "/minhas-submissoes",
+  requireAuth,
+  asyncHandler(trabalhoCtrl.minhassubmissao, "trabalhoCtrl.minhassubmissao")
+);
 
-/**
- * CRUD submissões (usuário)
- * Atenção: seu route antigo tinha um path estranho `:chamadaId(\\d+)` "colado".
- * Corrigido para o padrão: /chamadas/:chamadaId/submissao
- */
+// Repositório
+router.get(
+  "/repositorio",
+  requireAuth,
+  asyncHandler(
+    trabalhoCtrl.listarRepositorioTrabalhos,
+    "trabalhoCtrl.listarRepositorioTrabalhos"
+  )
+);
+
+router.get(
+  "/repository",
+  requireAuth,
+  asyncHandler(
+    trabalhoCtrl.listarRepositorioTrabalhos,
+    "trabalhoCtrl.listarRepositorioTrabalhos"
+  )
+);
+
+// Criar submissão
 router.post(
   "/chamadas/:chamadaId/submissao",
   requireAuth,
   vChamadaId,
   validate,
-  asyncHandler(ctrl.criarSubmissao)
+  asyncHandler(trabalhoCtrl.criarSubmissao, "trabalhoCtrl.criarSubmissao")
 );
 
-router.get("/submissao/:id", requireAuth, vId, validate, asyncHandler(ctrl.obterSubmissao));
-router.put("/submissao/:id", requireAuth, vId, validate, asyncHandler(ctrl.atualizarSubmissao));
-router.delete("/submissao/:id", requireAuth, vId, validate, asyncHandler(ctrl.removerSubmissao));
+// CRUD submissão
+router.get(
+  "/submissao/:id",
+  requireAuth,
+  vId,
+  validate,
+  asyncHandler(trabalhoCtrl.obterSubmissao, "trabalhoCtrl.obterSubmissao")
+);
 
-// Downloads (usuário autenticado)
-router.get("/submissao/:id/poster", requireAuth, vId, validate, asyncHandler(ctrl.baixarPoster));
-router.get("/submissao/:id/banner", requireAuth, vId, validate, asyncHandler(ctrl.baixarBanner));
+router.put(
+  "/submissao/:id",
+  requireAuth,
+  vId,
+  validate,
+  asyncHandler(trabalhoCtrl.atualizarSubmissao, "trabalhoCtrl.atualizarSubmissao")
+);
 
-// Uploads (usuário autenticado)
+router.delete(
+  "/submissao/:id",
+  requireAuth,
+  vId,
+  validate,
+  asyncHandler(trabalhoCtrl.removerSubmissao, "trabalhoCtrl.removerSubmissao")
+);
+
+// Downloads
+router.get(
+  "/submissao/:id/poster",
+  requireAuth,
+  vId,
+  validate,
+  asyncHandler(trabalhoCtrl.baixarPoster, "trabalhoCtrl.baixarPoster")
+);
+
+router.get(
+  "/submissao/:id/banner",
+  requireAuth,
+  vId,
+  validate,
+  asyncHandler(trabalhoCtrl.baixarBanner, "trabalhoCtrl.baixarBanner")
+);
+
+// Uploads
 router.post(
   "/submissao/:id/poster",
   requireAuth,
   vId,
   validate,
   upload.single("poster"),
-  asyncHandler(ctrl.atualizarPoster)
+  asyncHandler(trabalhoCtrl.atualizarPoster, "trabalhoCtrl.atualizarPoster")
 );
 
 router.post(
@@ -175,29 +269,39 @@ router.post(
   vId,
   validate,
   upload.single("banner"),
-  asyncHandler(ctrl.atualizarBanner)
+  asyncHandler(trabalhoCtrl.atualizarBanner, "trabalhoCtrl.atualizarBanner")
 );
 
 /* ─────────────────────────── ROTAS ADMIN ─────────────────────────── */
 
-// Listagens
-router.get("/admin/submissao", ...requireAdmin, asyncHandler(ctrl.listarsubmissaoAdminTodas));
+// Listagens admin
+router.get(
+  "/admin/submissao",
+  ...requireAdmin,
+  asyncHandler(
+    trabalhoCtrl.listarsubmissaoAdminTodas,
+    "trabalhoCtrl.listarsubmissaoAdminTodas"
+  )
+);
 
 router.get(
   "/admin/chamadas/:chamadaId/submissao",
   ...requireAdmin,
   vChamadaId,
   validate,
-  asyncHandler(ctrl.listarsubmissaoAdmin)
+  asyncHandler(trabalhoCtrl.listarsubmissaoAdmin, "trabalhoCtrl.listarsubmissaoAdmin")
 );
 
-// Avaliações / nota visível / avaliadores (admin)
+// Avaliações / nota visível / avaliadores
 router.get(
   "/admin/submissao/:id/avaliacao",
   ...requireAdmin,
   vId,
   validate,
-  asyncHandler(adminCtrl.listarAvaliacaoDaSubmissao)
+  asyncHandler(
+    submissaoCtrl.listarAvaliacaoDaSubmissao,
+    "submissaoCtrl.listarAvaliacaoDaSubmissao"
+  )
 );
 
 router.post(
@@ -205,16 +309,16 @@ router.post(
   ...requireAdmin,
   vId,
   validate,
-  asyncHandler(adminCtrl.definirNotaVisivel)
+  asyncHandler(submissaoCtrl.definirNotaVisivel, "submissaoCtrl.definirNotaVisivel")
 );
 
-// ✅ compat antigo (avaliadores)
+// Avaliadores
 router.get(
   "/admin/submissao/:id/avaliadores",
   ...requireAdmin,
   vId,
   validate,
-  asyncHandler(adminCtrl.listarAvaliadoresDaSubmissao)
+  asyncHandler(listarAvaliadoresFn, "submissaoCtrl.listarAvaliadores")
 );
 
 router.post(
@@ -222,16 +326,33 @@ router.post(
   ...requireAdmin,
   vId,
   validate,
-  asyncHandler(adminCtrl.atribuirAvaliadores)
+  asyncHandler(atribuirAvaliadoresFn, "submissaoCtrl.atribuirAvaliadores")
 );
 
-// Avaliações (admin/avaliador) — precisa estar logado (controller decide permissões)
+// compat singular
+router.get(
+  "/admin/submissao/:id/avaliador",
+  ...requireAdmin,
+  vId,
+  validate,
+  asyncHandler(listarAvaliadoresFn, "submissaoCtrl.listarAvaliadores")
+);
+
+router.post(
+  "/admin/submissao/:id/avaliador",
+  ...requireAdmin,
+  vId,
+  validate,
+  asyncHandler(atribuirAvaliadoresFn, "submissaoCtrl.atribuirAvaliadores")
+);
+
+// Avaliar escrita / oral
 router.post(
   "/admin/submissao/:id/avaliar",
   requireAuth,
   vId,
   validate,
-  asyncHandler(ctrl.avaliarEscrita)
+  asyncHandler(trabalhoCtrl.avaliarEscrita, "trabalhoCtrl.avaliarEscrita")
 );
 
 router.post(
@@ -239,16 +360,19 @@ router.post(
   requireAuth,
   vId,
   validate,
-  asyncHandler(ctrl.avaliarOral)
+  asyncHandler(trabalhoCtrl.avaliarOral, "trabalhoCtrl.avaliarOral")
 );
 
-// Consolidação e status final (admin-only)
+// Consolidação / status final
 router.post(
   "/admin/chamadas/:chamadaId/classificar",
   ...requireAdmin,
   vChamadaId,
   validate,
-  asyncHandler(ctrl.consolidarClassificacao)
+  asyncHandler(
+    trabalhoCtrl.consolidarClassificacao,
+    "trabalhoCtrl.consolidarClassificacao"
+  )
 );
 
 router.post(
@@ -256,20 +380,52 @@ router.post(
   ...requireAdmin,
   vId,
   validate,
-  asyncHandler(ctrl.definirStatusFinal)
+  asyncHandler(trabalhoCtrl.definirStatusFinal, "trabalhoCtrl.definirStatusFinal")
 );
 
 /* ─────────────────────────── PAINEL DO AVALIADOR ─────────────────────────── */
 
-router.get("/avaliador/minhas-contagens", requireAuth, asyncHandler(ctrl.contagemMinhasAvaliacao));
+router.get(
+  "/avaliador/minhas-contagens",
+  requireAuth,
+  asyncHandler(
+    trabalhoCtrl.contagemMinhasAvaliacao,
+    "trabalhoCtrl.contagemMinhasAvaliacao"
+  )
+);
 
-router.get("/avaliador/submissao", requireAuth, asyncHandler(ctrl.listarsubmissaoDoAvaliador));
+router.get(
+  "/avaliador/submissao",
+  requireAuth,
+  asyncHandler(
+    trabalhoCtrl.listarsubmissaoDoAvaliador,
+    "trabalhoCtrl.listarsubmissaoDoAvaliador"
+  )
+);
 
-router.get("/avaliador/submissao/:id", requireAuth, vId, validate, asyncHandler(ctrl.obterParaAvaliacao));
+router.get(
+  "/avaliador/submissao/:id",
+  requireAuth,
+  vId,
+  validate,
+  asyncHandler(trabalhoCtrl.obterParaAvaliacao, "trabalhoCtrl.obterParaAvaliacao")
+);
 
-router.post("/avaliador/submissao/:id/avaliar", requireAuth, vId, validate, asyncHandler(ctrl.avaliarEscrita));
+router.post(
+  "/avaliador/submissao/:id/avaliar",
+  requireAuth,
+  vId,
+  validate,
+  asyncHandler(trabalhoCtrl.avaliarEscrita, "trabalhoCtrl.avaliarEscrita")
+);
 
-router.post("/avaliador/submissao/:id/avaliar-oral", requireAuth, vId, validate, asyncHandler(ctrl.avaliarOral));
+router.post(
+  "/avaliador/submissao/:id/avaliar-oral",
+  requireAuth,
+  vId,
+  validate,
+  asyncHandler(trabalhoCtrl.avaliarOral, "trabalhoCtrl.avaliarOral")
+);
 
 /* ─────────────────────────── Error handler (multer) ─────────────────────────── */
 router.use(multerErrorHandler);

@@ -1,5 +1,7 @@
-// 📁 src/routes/loockupsPublicRoute.js — PREMIUM (leve, cache-aware, resiliente)
+// 📁 src/routes/lookupsPublicRoute.js — PREMIUM (leve, cache-aware, resiliente)
 /* eslint-disable no-console */
+"use strict";
+
 const express = require("express");
 const router = express.Router();
 
@@ -22,14 +24,18 @@ const requiredFns = [
 
 for (const fn of requiredFns) {
   if (typeof ctrl?.[fn] !== "function") {
-    console.error("[loockupsPublicRoute] Controller inválido:", fn, lookupsCtrl);
-    throw new Error(`lookupsPublicController inválido (função ausente: ${fn})`);
+    console.error("[lookupsPublicRoute] Controller inválido:", fn, lookupsCtrl);
+    throw new Error(
+      `lookupsPublicController inválido (função ausente: ${fn})`
+    );
   }
 }
 
 /* ───────────────── Helpers premium ───────────────── */
-const routeTag = (tag) => (req, res, next) => {
-  res.set("X-Route-Handler", tag);
+const routeTag = (tag) => (_req, res, next) => {
+  try {
+    res.set("X-Route-Handler", tag);
+  } catch {}
   return next();
 };
 
@@ -49,70 +55,129 @@ const handle =
  * ➜ dados mudam pouco, ótimo para performance do app
  * ➜ se quiser zerar cache, troque por `no-store`
  */
-const withLookupCache = (req, res, next) => {
-  res.set("Cache-Control", "public, max-age=600, stale-while-revalidate=600");
+const withLookupCache = (_req, res, next) => {
+  try {
+    res.set("Cache-Control", "public, max-age=600, stale-while-revalidate=600");
+    res.set("Pragma", "public");
+  } catch {}
   return next();
 };
+
+const headOk = (_req, res) => res.sendStatus(204);
 
 /* ────────────────────────────────────────────────
    🌐 Lookups públicos (SEM auth)
    Importante: nenhuma dessas rotas passa por middleware de auth
-   ──────────────────────────────────────────────── */
+──────────────────────────────────────────────── */
 
 // 🧑‍💼 Cargos
 router.get(
   "/cargos",
-  routeTag("loockupsPublicRoute:GET /cargos"),
+  routeTag("lookupsPublicRoute:GET /cargos"),
   withLookupCache,
   handle(ctrl.listCargos)
+);
+router.head(
+  "/cargos",
+  routeTag("lookupsPublicRoute:HEAD /cargos"),
+  withLookupCache,
+  headOk
 );
 
 // 🏢 Unidades
 router.get(
   "/unidades",
-  routeTag("loockupsPublicRoute:GET /unidades"),
+  routeTag("lookupsPublicRoute:GET /unidades"),
   withLookupCache,
   handle(ctrl.listUnidades)
+);
+router.head(
+  "/unidades",
+  routeTag("lookupsPublicRoute:HEAD /unidades"),
+  withLookupCache,
+  headOk
 );
 
 // ⚧️ Gêneros
 router.get(
   "/generos",
-  routeTag("loockupsPublicRoute:GET /generos"),
+  routeTag("lookupsPublicRoute:GET /generos"),
   withLookupCache,
   handle(ctrl.listGeneros)
+);
+router.head(
+  "/generos",
+  routeTag("lookupsPublicRoute:HEAD /generos"),
+  withLookupCache,
+  headOk
 );
 
 // 🏳️‍🌈 Orientações sexuais
 router.get(
   "/orientacao-sexuais",
-  routeTag("loockupsPublicRoute:GET /orientacao-sexuais"),
+  routeTag("lookupsPublicRoute:GET /orientacao-sexuais"),
   withLookupCache,
   handle(ctrl.listOrientacaoSexuais)
+);
+router.get(
+  "/orientacoes-sexuais",
+  routeTag("lookupsPublicRoute:GET /orientacoes-sexuais"),
+  withLookupCache,
+  handle(ctrl.listOrientacaoSexuais)
+);
+router.head(
+  "/orientacao-sexuais",
+  routeTag("lookupsPublicRoute:HEAD /orientacao-sexuais"),
+  withLookupCache,
+  headOk
+);
+router.head(
+  "/orientacoes-sexuais",
+  routeTag("lookupsPublicRoute:HEAD /orientacoes-sexuais"),
+  withLookupCache,
+  headOk
 );
 
 // 🎨 Cores / Raças
 router.get(
   "/cores-racas",
-  routeTag("loockupsPublicRoute:GET /cores-racas"),
+  routeTag("lookupsPublicRoute:GET /cores-racas"),
   withLookupCache,
   handle(ctrl.listCoresRacas)
+);
+router.head(
+  "/cores-racas",
+  routeTag("lookupsPublicRoute:HEAD /cores-racas"),
+  withLookupCache,
+  headOk
 );
 
 // 🎓 Escolaridades
 router.get(
   "/escolaridades",
-  routeTag("loockupsPublicRoute:GET /escolaridades"),
+  routeTag("lookupsPublicRoute:GET /escolaridades"),
   withLookupCache,
   handle(ctrl.listEscolaridades)
+);
+router.head(
+  "/escolaridades",
+  routeTag("lookupsPublicRoute:HEAD /escolaridades"),
+  withLookupCache,
+  headOk
 );
 
 // ♿ Deficiências
 router.get(
   "/deficiencias",
-  routeTag("loockupsPublicRoute:GET /deficiencias"),
+  routeTag("lookupsPublicRoute:GET /deficiencias"),
   withLookupCache,
   handle(ctrl.listDeficiencias)
+);
+router.head(
+  "/deficiencias",
+  routeTag("lookupsPublicRoute:HEAD /deficiencias"),
+  withLookupCache,
+  headOk
 );
 
 module.exports = router;

@@ -1,14 +1,16 @@
-// ✅ src/theme/escolaTheme.js — PREMIUM (single source of truth + broadcast)
+// ✅ src/theme/escolaTheme.js — PREMIUM++
 // - Tailwind darkMode: "class" (fonte única: <html class="dark">)
-// - Sem F5: emite evento "escola-theme-change" (mesma aba)
-// - Sincroniza entre abas via localStorage (storage event é automático)
-// - Migra chave legada "theme" -> "escola_theme" (opcional)
-// - Idempotente: evita reaplicar/repintar à toa
+// - Broadcast na mesma aba via CustomEvent
+// - Sincroniza entre abas via localStorage + helper oficial
+// - Migração real da chave legada "theme"
+// - Idempotente e SSR-safe
+// - Boot helper oficial para main.jsx
 
 export const ESCOLA_THEME_KEY = "escola_theme"; // "light" | "dark" | "system"
-export const ESCOLA_THEME_EVENT = "escola-theme-change"; // CustomEvent
+export const ESCOLA_THEME_EVENT = "escola-theme-change";
 
 const VALID = new Set(["light", "dark", "system"]);
+
 function normalizeTheme(v) {
   const t = String(v || "").toLowerCase();
   return VALID.has(t) ? t : "system";
@@ -20,6 +22,7 @@ function normalizeTheme(v) {
 function safeWindow() {
   return typeof window !== "undefined" ? window : undefined;
 }
+
 function safeDocument() {
   return typeof document !== "undefined" ? document : undefined;
 }
@@ -30,6 +33,7 @@ function safeDocument() {
 export function getSystemTheme() {
   const win = safeWindow();
   if (!win || !win.matchMedia) return "light";
+
   try {
     return win.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   } catch {
@@ -47,7 +51,8 @@ export function getEffectiveTheme(theme) {
 ────────────────────────────────────────────── */
 export function getStoredTheme() {
   try {
-    return localStorage.getItem(ESCOLA_THEME_KEY);
+    const raw = localStorage.getItem(ESCOLA_THEME_KEY);
+    return raw ? normalizeTheme(raw) : null;
   } catch {
     return null;
   }
@@ -61,20 +66,42 @@ export function setStoredTheme(value) {
   }
 }
 
+export function removeStoredTheme() {
+  try {
+    localStorage.removeItem(ESCOLA_THEME_KEY);
+  } catch {
+    /* noop */
+  }
+}
+
 /**
- * Premium: lê tema com MIGRAÇÃO do legado "theme" (se existir).
+ * Lê tema com migração da chave legada.
  * Use isso no boot do main.jsx.
  */
-export function readStoredThemeWithMigration({ legacyKey = "theme", removeLegacy = false } = {}) {
-  const current = normalizeTheme(getStoredTheme());
-  if (current) return current;
+export function readStoredThemeWithMigration({
+  legacyKey = "theme",
+  removeLegacy = false,
+} = {}) {
+  const currentRaw = (() => {
+    try {
+      return localStorage.getItem(ESCOLA_THEME_KEY);
+    } catch {
+      return null;
+    }
+  })();
+
+  if (currentRaw && VALID.has(String(currentRaw).toLowerCase())) {
+    return normalizeTheme(currentRaw);
+  }
 
   try {
     const legacy = localStorage.getItem(legacyKey);
-    if (legacy === "light" || legacy === "dark" || legacy === "system") {
-      localStorage.setItem(ESCOLA_THEME_KEY, legacy);
+
+    if (legacy && VALID.has(String(legacy).toLowerCase())) {
+      const normalized = normalizeTheme(legacy);
+      localStorage.setItem(ESCOLA_THEME_KEY, normalized);
       if (removeLegacy) localStorage.removeItem(legacyKey);
-      return legacy;
+      return normalized;
     }
   } catch {
     /* noop */
@@ -89,17 +116,21 @@ export function readStoredThemeWithMigration({ legacyKey = "theme", removeLegacy
 function getDomAppliedTheme() {
   const doc = safeDocument();
   if (!doc) return null;
+
   const root = doc.documentElement;
-  const data = root.getAttribute("data-theme"); // "dark"|"light"
+  const data = root.getAttribute("data-theme");
+
   if (data === "dark" || data === "light") return data;
-  return root.classList.contains("dark") ? "dark" : "light";
+  if (root.classList.contains("dark")) return "dark";
+  if (root.classList.contains("light")) return "light";
+
+  return null;
 }
 
 function setBodyBgFallback(effective) {
   const doc = safeDocument();
   if (!doc?.body) return;
 
-  // evita "flash" em transições/hidratação
   doc.body.style.backgroundColor = effective === "dark" ? "#0b1220" : "#ffffff";
 }
 
@@ -109,20 +140,23 @@ export function applyThemeToHtml(theme) {
 
   const effective = getEffectiveTheme(theme);
   const already = getDomAppliedTheme();
-
-  // ✅ idempotente: não reaplica se já estiver igual
-  if (already === effective) {
-    // ainda assim garante color-scheme consistente (barato)
-    doc.documentElement.style.colorScheme = effective;
-    return;
-  }
-
   const root = doc.documentElement;
-  root.classList.toggle("dark", effective === "dark");
-  root.setAttribute("data-theme", effective);
+
+  // Sempre garantir color-scheme
   root.style.colorScheme = effective;
 
+  // Idempotência real
+  if (already === effective) {
+    setBodyBgFallback(effective);
+    return effective;
+  }
+
+  root.classList.toggle("dark", effective === "dark");
+  root.classList.toggle("light", effective === "light");
+  root.setAttribute("data-theme", effective);
+
   setBodyBgFallback(effective);
+  return effective;
 }
 
 /* ──────────────────────────────────────────────
@@ -132,12 +166,18 @@ export function emitThemeChange({ theme, effective, source = "engine" } = {}) {
   const win = safeWindow();
   if (!win) return;
 
+  const normalizedTheme = normalizeTheme(theme);
+  const normalizedEffective =
+    effective === "dark" || effective === "light"
+      ? effective
+      : getEffectiveTheme(normalizedTheme);
+
   try {
     win.dispatchEvent(
       new CustomEvent(ESCOLA_THEME_EVENT, {
         detail: {
-          theme: normalizeTheme(theme),
-          effective: effective === "dark" || effective === "light" ? effective : getEffectiveTheme(theme),
+          theme: normalizedTheme,
+          effective: normalizedEffective,
           source,
           ts: Date.now(),
         },
@@ -152,18 +192,18 @@ export function emitThemeChange({ theme, effective, source = "engine" } = {}) {
  * Setter oficial do motor:
  * - persiste
  * - aplica no DOM
- * - emite evento p/ UI reagir sem F5
+ * - emite evento para mesma aba
  */
 export function setThemeAndBroadcast(nextTheme, { source = "engine" } = {}) {
-  const t = normalizeTheme(nextTheme);
-  setStoredTheme(t);
-  applyThemeToHtml(t);
-  emitThemeChange({ theme: t, effective: getEffectiveTheme(t), source });
-  return t;
+  const theme = normalizeTheme(nextTheme);
+  setStoredTheme(theme);
+  const effective = applyThemeToHtml(theme);
+  emitThemeChange({ theme, effective, source });
+  return theme;
 }
 
 /* ──────────────────────────────────────────────
-   System watcher (retorna cleanup)
+   Watcher do sistema
 ────────────────────────────────────────────── */
 export function watchSystemTheme(onChange) {
   const win = safeWindow();
@@ -188,7 +228,7 @@ export function watchSystemTheme(onChange) {
 }
 
 /**
- * Premium: instala watcher do SO somente se o tema salvo for "system".
+ * Instala watcher do SO somente se o tema salvo for "system".
  * - Atualiza DOM
  * - Emite evento
  */
@@ -197,8 +237,57 @@ export function installSystemWatcherIfNeeded({ source = "system" } = {}) {
   if (saved !== "system") return () => {};
 
   return watchSystemTheme(() => {
-    // reaplica o efetivo do sistema
-    applyThemeToHtml("system");
-    emitThemeChange({ theme: "system", effective: getEffectiveTheme("system"), source });
+    const effective = applyThemeToHtml("system");
+    emitThemeChange({
+      theme: "system",
+      effective,
+      source,
+    });
   });
+}
+
+/* ──────────────────────────────────────────────
+   Sync entre abas
+────────────────────────────────────────────── */
+export function listenThemeStorageSync(onThemeChange) {
+  const win = safeWindow();
+  if (!win) return () => {};
+
+  const handler = (e) => {
+    if (e.key !== ESCOLA_THEME_KEY) return;
+
+    const theme = normalizeTheme(e.newValue || "system");
+    const effective = applyThemeToHtml(theme);
+
+    try {
+      onThemeChange?.(theme, effective, "storage");
+    } catch {
+      /* noop */
+    }
+
+    emitThemeChange({
+      theme,
+      effective,
+      source: "storage",
+    });
+  };
+
+  win.addEventListener("storage", handler);
+  return () => win.removeEventListener("storage", handler);
+}
+
+/* ──────────────────────────────────────────────
+   Boot helper oficial
+────────────────────────────────────────────── */
+/**
+ * Uso sugerido no main.jsx:
+ *
+ * const theme = bootEscolaTheme();
+ * const stopSystem = installSystemWatcherIfNeeded();
+ * const stopStorage = listenThemeStorageSync();
+ */
+export function bootEscolaTheme(options = {}) {
+  const theme = readStoredThemeWithMigration(options);
+  applyThemeToHtml(theme);
+  return theme;
 }

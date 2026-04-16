@@ -24,7 +24,7 @@ const {
   notificarClassificacaoDaChamada,
 } = require("./notificacaoController");
 
-// ⬇️ helpers de autorização (admin/avaliador)
+// helpers de autorização (admin/avaliador)
 const {
   canUserReviewOrView,
   isAdmin,
@@ -41,6 +41,7 @@ const log = (...a) => DBG && console.log("[TRABALHOS]", ...a);
 function isYYYYMM(s) {
   return typeof s === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(s);
 }
+
 function assert(cond, msg) {
   if (!cond) {
     const e = new Error(msg);
@@ -48,14 +49,17 @@ function assert(cond, msg) {
     throw e;
   }
 }
+
 function withinLen(s, max) {
   return typeof s === "string" && String(s).trim().length <= max;
 }
+
 function hasRole(user, role) {
   if (!user) return false;
   const p = user.perfil;
   return Array.isArray(p) ? p.includes(role) : p === role;
 }
+
 function toIntOrNull(v) {
   const n = Number(v);
   return Number.isFinite(n) ? Math.trunc(n) : null;
@@ -90,8 +94,9 @@ function guessMimeByExt(filename = "") {
   if (ext === "webp") return "image/webp";
   if (ext === "pdf") return "application/pdf";
   if (ext === "ppt") return "application/vnd.ms-powerpoint";
-  if (ext === "pptx")
+  if (ext === "pptx") {
     return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  }
   return "application/octet-stream";
 }
 
@@ -120,14 +125,10 @@ function normalizeStoragePath(dbPath) {
   const isAbs = path.isAbsolute(raw);
 
   if (isAbs) {
-    const abs = path.normalize(raw);
-    return abs;
+    return path.normalize(raw);
   }
 
-  // remove prefixo "./" ou "/" apenas se for relativo
   const rel = raw.replace(/^\.?\//, "");
-
-  // remove prefixo "uploads/" se vier duplicado
   const relFromUploads = rel.replace(/^uploads\//i, "");
 
   const candidates = [
@@ -140,7 +141,6 @@ function normalizeStoragePath(dbPath) {
     try {
       const abs = path.normalize(cand);
 
-      // hardening básico: impedir traversal saindo das bases esperadas
       const ok =
         abs.startsWith(path.normalize(UPLOADS_DIR)) ||
         abs.startsWith(path.normalize(path.join(process.cwd(), "uploads"))) ||
@@ -164,14 +164,12 @@ function normalizeStoragePath(dbPath) {
 function toUploadsRelative(absPath, subdir) {
   const abs = path.normalize(absPath);
 
-  const relFromUploads = path
-    .relative(UPLOADS_DIR, abs)
-    .replace(/\\/g, "/");
+  const relFromUploads = path.relative(UPLOADS_DIR, abs).replace(/\\/g, "/");
 
-  // se não dá pra relativizar (fora do UPLOADS_DIR), cai em fallback seguro
   if (!relFromUploads || relFromUploads.startsWith("..")) {
     return `uploads/${subdir}/${path.basename(abs)}`;
   }
+
   return `uploads/${relFromUploads}`;
 }
 
@@ -199,7 +197,6 @@ async function moveUploadedToFinal({ tmpPath, originalName, subdir }) {
 
 /**
  * Verifica se tabela/coluna existe para suporte a BLOB opcional.
- * (Evita quebrar em bancos que não têm coluna "arquivo")
  */
 async function tableHasColumn(table, column) {
   try {
@@ -215,7 +212,6 @@ async function tableHasColumn(table, column) {
     );
     return !!row;
   } catch (e) {
-    // se não der permissão pra information_schema, assume que não tem (modo seguro)
     log("tableHasColumn fallback:", e?.message);
     return false;
   }
@@ -230,11 +226,13 @@ async function getChamadaValidacao(chamadaId) {
     `,
     [chamadaId]
   );
+
   if (!c) {
     const e = new Error("Chamada inexistente.");
     e.status = 404;
     throw e;
   }
+
   return c;
 }
 
@@ -257,38 +255,48 @@ function normalizarStatusEntrada(status) {
 
 function podeExcluirOuEditarPeloAutor(sub, ch) {
   if (!ch.dentro_prazo) return { ok: false, msg: "Prazo encerrado para alterações." };
+
   const bloqueados = new Set(["em_avaliacao", "aprovado_exposicao", "aprovado_oral", "reprovado"]);
   if (bloqueados.has(String(sub.status || "").toLowerCase())) {
     return { ok: false, msg: "Submissão em avaliação ou finalizada." };
   }
+
   return { ok: true };
 }
 
 /* ──────────────────────────────────────────────────────────────
-   Normalização 0–10 (mantida do seu código)
+   Normalização 0–10
 ────────────────────────────────────────────────────────────── */
-function clamp01(x) { return Math.max(0, Math.min(1, x)); }
+function clamp01(x) {
+  return Math.max(0, Math.min(1, x));
+}
+
 function nota10Normalizada({ itens, criterios }) {
   const byId = new Map(criterios.map((c) => [c.id, c]));
-  let num = 0, den = 0;
+  let num = 0;
+  let den = 0;
+
   for (const it of itens) {
     const c = byId.get(it.criterio_id);
     if (!c) continue;
+
     const min = Number(c.escala_min ?? 0);
     const max = Number(c.escala_max ?? 10);
     const w = Number.isFinite(c.peso) ? Number(c.peso) : 1;
     const r = Number(it.nota);
+
     if (!Number.isFinite(r) || max <= min) continue;
+
     const score = clamp01((r - min) / (max - min));
     num += w * score;
     den += w;
   }
+
   if (den === 0) return null;
   return Number((10 * (num / den)).toFixed(1));
 }
 
 async function atualizarNotasPersistidas50_50(subId) {
-  // ===== ESCRITA =====
   try {
     const criteriosE = await db.any(
       `
@@ -343,7 +351,6 @@ async function atualizarNotasPersistidas50_50(subId) {
     console.error("[atualizarNotasPersistidas50_50][escrita][erro]", e?.message || e);
   }
 
-  // ===== ORAL =====
   try {
     const criteriosO = await db.any(
       `
@@ -398,7 +405,6 @@ async function atualizarNotasPersistidas50_50(subId) {
     console.error("[atualizarNotasPersistidas50_50][oral][erro]", e?.message || e);
   }
 
-  // ===== FINAL =====
   try {
     await db.none(
       `
@@ -427,6 +433,7 @@ async function atualizarNotasPersistidas50_50(subId) {
 function getAuthUser(req, res) {
   return res?.locals?.user ?? req.user ?? null;
 }
+
 function getAuthUserId(req, res) {
   const u = getAuthUser(req, res);
   const id = toIntOrNull(u?.id);
@@ -434,7 +441,24 @@ function getAuthUserId(req, res) {
 }
 
 /* ──────────────────────────────────────────────────────────────
-   CRIAR SUBMISSÃO (autor)
+   Helper: resolve FK única do banner
+   - conceitualmente existe apenas BANNER
+   - fisicamente:
+     • usa banner_arquivo_id se existir
+     • senão usa poster_arquivo_id como legado
+────────────────────────────────────────────────────────────── */
+let _bannerFkCache = null;
+
+async function getBannerArquivoFkColumn() {
+  if (_bannerFkCache) return _bannerFkCache;
+
+  const hasBannerFk = await tableHasColumn("trabalhos_submissao", "banner_arquivo_id");
+  _bannerFkCache = hasBannerFk ? "banner_arquivo_id" : "poster_arquivo_id";
+  return _bannerFkCache;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   CRIAR SUBMISSÃO
 ────────────────────────────────────────────────────────────── */
 exports.criarSubmissao = async (req, res, next) => {
   try {
@@ -445,7 +469,7 @@ exports.criarSubmissao = async (req, res, next) => {
       throw e;
     }
 
-    const { user, userId } = getAuthUserId(req, res);
+    const { userId } = getAuthUserId(req, res);
     if (userId === null) {
       const e = new Error("Não autorizado.");
       e.status = 401;
@@ -559,7 +583,7 @@ exports.criarSubmissao = async (req, res, next) => {
 };
 
 /* ──────────────────────────────────────────────────────────────
-   ATUALIZAR SUBMISSÃO (autor) — PUT /submissao/:id
+   ATUALIZAR SUBMISSÃO
 ────────────────────────────────────────────────────────────── */
 exports.atualizarSubmissao = async (req, res, next) => {
   try {
@@ -678,6 +702,7 @@ exports.atualizarSubmissao = async (req, res, next) => {
 
       assert(Array.isArray(coautores) && coautores.length <= meta.max_coautores, `Máximo de ${meta.max_coautores} coautores.`);
       await t.none(`DELETE FROM trabalhos_coautores WHERE submissao_id=$1`, [id]);
+
       for (const c of coautores) {
         if (!c?.nome) continue;
         await t.none(
@@ -705,10 +730,10 @@ exports.atualizarSubmissao = async (req, res, next) => {
   }
 };
 
-// gate específico para EXCLUSÃO
 function podeExcluirPeloAutor(sub, user) {
   const ehDono = String(sub.usuario_id) === String(user.id);
   const ehAdmin = hasRole(user, "administrador");
+
   if (!ehDono && !ehAdmin) return { ok: false, status: 403, msg: "Sem permissão." };
 
   const status = String(sub.status || "").toLowerCase();
@@ -716,11 +741,12 @@ function podeExcluirPeloAutor(sub, user) {
   if (!permitido && !ehAdmin) {
     return { ok: false, status: 400, msg: "Somente rascunho ou submetido podem ser excluídos." };
   }
+
   return { ok: true };
 }
 
 /* ──────────────────────────────────────────────────────────────
-   EXCLUIR SUBMISSÃO (autor) — DELETE /submissao/:id
+   EXCLUIR SUBMISSÃO
 ────────────────────────────────────────────────────────────── */
 exports.removerSubmissao = async (req, res, next) => {
   try {
@@ -761,7 +787,6 @@ exports.removerSubmissao = async (req, res, next) => {
       throw e;
     }
 
-    // apaga coautores/arquivos e a submissão
     await db.tx(async (t) => {
       await t.none(`DELETE FROM trabalhos_coautores WHERE submissao_id=$1`, [id]);
       await t.none(`DELETE FROM trabalhos_arquivos  WHERE submissao_id=$1`, [id]);
@@ -775,7 +800,7 @@ exports.removerSubmissao = async (req, res, next) => {
 };
 
 /* ──────────────────────────────────────────────────────────────
-   Upload helpers: inserir arquivo no DB (DISCO + BLOB opcional)
+   Upload helper: inserir arquivo no DB (DISCO + BLOB opcional)
 ────────────────────────────────────────────────────────────── */
 async function inserirArquivoSubmissao({
   submissaoId,
@@ -787,13 +812,12 @@ async function inserirArquivoSubmissao({
   const stat = await fsp.stat(absFinal);
   const size = stat.size;
 
-  // hash do arquivo (stream é melhor, mas aqui está ok e simples)
   const fileBuf = await fsp.readFile(absFinal);
   const hash = crypto.createHash("sha256").update(fileBuf).digest("hex");
 
   const hasBlob = await tableHasColumn("trabalhos_arquivos", "arquivo");
   const hasBytes = await tableHasColumn("trabalhos_arquivos", "tamanho_bytes");
-  const hasSizeAlt = await tableHasColumn("trabalhos_arquivos", "tamanho"); // compat
+  const hasSizeAlt = await tableHasColumn("trabalhos_arquivos", "tamanho");
 
   const cols = ["submissao_id", "caminho", "nome_original", "mime_type", "hash_sha256"];
   const vals = ["$1", "$2", "$3", "$4", "$5"];
@@ -826,15 +850,19 @@ async function inserirArquivoSubmissao({
 }
 
 /* ──────────────────────────────────────────────────────────────
-   PÔSTER — upload + download inline
+   BANNER ÚNICO — upload + download inline
+   OBS:
+   - conceitualmente é só BANNER
+   - se não houver banner_arquivo_id no banco, usa poster_arquivo_id como legado
 ────────────────────────────────────────────────────────────── */
-exports.atualizarPoster = async (req, res, next) => {
+exports.atualizarBanner = async (req, res, next) => {
   let tmp = null;
+
   try {
     const { user: authUser, userId } = getAuthUserId(req, res);
     if (userId === null) return res.status(401).json({ erro: "Usuário não autenticado." });
 
-    assert(req.file, "Envie o arquivo .ppt/.pptx no campo 'poster'.");
+    assert(req.file, "Envie o arquivo do banner no campo correto.");
     tmp = req.file.path;
 
     const subId = toIntOrNull(req.params.id);
@@ -843,7 +871,7 @@ exports.atualizarPoster = async (req, res, next) => {
     const sub = await db.oneOrNone(
       `
       SELECT s.id, s.usuario_id, s.titulo AS trabalho_titulo,
-             c.id AS chamada_id, c.titulo AS chamada_titulo, c.aceita_poster,
+             c.id AS chamada_id, c.titulo AS chamada_titulo,
              (${TZ_SQL} <= c.prazo_final_br) AS dentro_prazo,
              s.status
         FROM trabalhos_submissoes s
@@ -856,170 +884,19 @@ exports.atualizarPoster = async (req, res, next) => {
 
     const ehAdmin = Array.isArray(authUser?.perfil) && authUser.perfil.includes("administrador");
     const ehAutor = String(sub.usuario_id) === String(userId);
-    if (!ehAdmin && !ehAutor) {
-      return res.status(403).json({ erro: "Você não tem permissão para enviar o pôster desta submissão." });
-    }
 
-    assert(sub.aceita_poster, "Esta chamada não aceita envio de pôster.");
-    assert(sub.dentro_prazo, "Prazo encerrado para alterações.");
-
-    const okMime =
-      /powerpoint|presentation/i.test(req.file.mimetype) ||
-      /\.(pptx?)$/i.test(req.file.originalname || "");
-    assert(okMime, "Formato inválido. Envie .ppt ou .pptx.");
-
-    // move do tmp -> final (evita arquivo “sumir”)
-    const moved = await moveUploadedToFinal({
-      tmpPath: req.file.path,
-      originalName: req.file.originalname,
-      subdir: "posters",
-    });
-
-    const mime = req.file.mimetype || guessMimeByExt(req.file.originalname);
-
-    const arq = await inserirArquivoSubmissao({
-      submissaoId: sub.id,
-      relPathDb: moved.relDb,
-      absFinal: moved.absFinal,
-      originalName: req.file.originalname,
-      mimetype: mime,
-    });
-
-    await db.none(
-      `UPDATE trabalhos_submissao SET poster_arquivo_id=$1, atualizado_em=NOW() WHERE id=$2`,
-      [arq.id, sub.id]
-    );
-
-    await notificarPosterAtualizado({
-      usuario_id: userId,
-      chamada_titulo: sub.chamada_titulo,
-      trabalho_titulo: sub.trabalho_titulo,
-      arquivo_nome: req.file.originalname,
-    });
-
-    res.json({
-      ok: true,
-      arquivo_id: arq.id,
-      stored_blob: arq.stored_blob,
-      caminho: moved.relDb,
-    });
-  } catch (err) {
-    next(err);
-  } finally {
-    // se algo falhar antes do rename, remove tmp
-    await safeUnlink(tmp);
-  }
-};
-
-exports.baixarPoster = async (req, res, next) => {
-  try {
-    const subId = toIntOrNull(req.params.id);
-    if (subId === null) return res.status(400).json({ erro: "id inválido." });
-
-    const { userId } = getAuthUserId(req, res);
-    if (userId === null) return res.status(401).json({ erro: "Não autorizado." });
-
-    const ehAdministrador = await isAdmin(userId);
-    let permitido = ehAdministrador || (await canUserReviewOrView(userId, subId));
-    if (!permitido) {
-      const dono = await db.oneOrNone(`SELECT usuario_id FROM trabalhos_submissoes WHERE id=$1`, [subId]);
-      permitido = String(dono?.usuario_id) === String(userId);
-    }
-    if (!permitido) return res.status(403).json({ erro: "Acesso negado." });
-
-    const row = await db.oneOrNone(
-      `
-      SELECT a.id, a.caminho, a.nome_original, a.mime_type, a.arquivo
-        FROM trabalhos_submissoes s
-        LEFT JOIN trabalhos_arquivos a ON a.id = s.poster_arquivo_id
-       WHERE s.id=$1
-      `,
-      [subId]
-    );
-
-    if (!row) return res.status(404).json({ erro: "Pôster não encontrado." });
-
-    const filename = row.nome_original || "poster.pptx";
-    const mime = row.mime_type || guessMimeByExt(filename);
-
-    logDownload("poster:meta", {
-      subId,
-      caminhoDB: row.caminho || null,
-      mime,
-      temBlob: !!row.arquivo,
-    });
-
-    res.setHeader("Content-Disposition", `inline; filename="${sanitizeFilename(filename)}"`);
-    res.setHeader("Content-Type", mime);
-
-    // 1) Preferir BLOB se existir
-    if (row.arquivo && row.arquivo.length) {
-      return res.end(row.arquivo);
-    }
-
-    // 2) Senão, tenta disco
-    const abs = normalizeStoragePath(row.caminho);
-    logDownload("poster:fs-check", { subId, caminhoResolvido: abs, exists: !!abs && fs.existsSync(abs) });
-
-    if (abs && fs.existsSync(abs)) return fs.createReadStream(abs).pipe(res);
-
-    return res.status(410).json({
-      erro: "Arquivo do pôster não está disponível no momento.",
-      acao_sugerida: "Envie novamente o arquivo do pôster.",
-    });
-  } catch (err) {
-    next(err);
-  }
-};
-
-/* ──────────────────────────────────────────────────────────────
-   BANNER — com banner_arquivo_id (se existir), fallback no poster_arquivo_id
-────────────────────────────────────────────────────────────── */
-async function getBannerArquivoJoinClause() {
-  // Se existe coluna banner_arquivo_id, usa ela; senão, usa poster_arquivo_id
-  const hasBannerFk = await tableHasColumn("trabalhos_submissao", "banner_arquivo_id");
-  return hasBannerFk ? "s.banner_arquivo_id" : "s.poster_arquivo_id";
-}
-
-exports.atualizarBanner = async (req, res, next) => {
-  let tmp = null;
-  try {
-    const { user: authUser, userId } = getAuthUserId(req, res);
-    if (userId === null) return res.status(401).json({ erro: "Usuário não autenticado." });
-
-    assert(req.file, "Envie o arquivo do banner no campo 'banner'.");
-    tmp = req.file.path;
-
-    const subId = toIntOrNull(req.params.id);
-    assert(subId !== null, "Submissão inválida.");
-
-    const sub = await db.oneOrNone(
-      `
-      SELECT s.id, s.usuario_id, s.titulo AS trabalho_titulo,
-             c.id AS chamada_id, c.titulo AS chamada_titulo,
-             (${TZ_SQL} <= c.prazo_final_br) AS dentro_prazo
-        FROM trabalhos_submissoes s
-        JOIN trabalhos_chamadas c ON c.id = s.chamada_id
-       WHERE s.id=$1
-      `,
-      [subId]
-    );
-    assert(sub, "Submissão não encontrada.");
-
-    const ehAdmin = Array.isArray(authUser?.perfil) && authUser.perfil.includes("administrador");
-    const ehAutor = String(sub.usuario_id) === String(userId);
     if (!ehAdmin && !ehAutor) {
       return res.status(403).json({ erro: "Você não tem permissão para enviar o banner desta submissão." });
     }
 
     assert(sub.dentro_prazo, "Prazo encerrado para alterações.");
 
-    // aceita imagem, PDF e PPT/PPTX
     const okMime =
       /^image\//i.test(req.file.mimetype) ||
       /^application\/pdf$/i.test(req.file.mimetype) ||
       /powerpoint|presentation/i.test(req.file.mimetype) ||
       /\.(png|jpe?g|gif|webp|pdf|pptx?)$/i.test(req.file.originalname || "");
+
     assert(okMime, "Formato inválido. Envie PNG/JPG/GIF/WEBP, PDF, PPT ou PPTX.");
 
     const moved = await moveUploadedToFinal({
@@ -1038,26 +915,29 @@ exports.atualizarBanner = async (req, res, next) => {
       mimetype: mime,
     });
 
-    const hasBannerFk = await tableHasColumn("trabalhos_submissao", "banner_arquivo_id");
-    if (hasBannerFk) {
-      await db.none(
-        `UPDATE trabalhos_submissao SET banner_arquivo_id=$1, atualizado_em=NOW() WHERE id=$2`,
-        [arq.id, sub.id]
-      );
-    } else {
-      // compat: enquanto não existir banner_arquivo_id, espelha no poster_arquivo_id
-      await db.none(
-        `UPDATE trabalhos_submissao SET poster_arquivo_id=$1, atualizado_em=NOW() WHERE id=$2`,
-        [arq.id, sub.id]
-      );
-    }
+    const fk = await getBannerArquivoFkColumn();
+
+    await db.none(
+      `UPDATE trabalhos_submissao SET ${fk}=$1, atualizado_em=NOW() WHERE id=$2`,
+      [arq.id, sub.id]
+    );
+
+    // Mantive a função antiga por compatibilidade de código existente,
+    // mas semanticamente ela está notificando atualização do banner único.
+    await notificarPosterAtualizado({
+      usuario_id: userId,
+      chamada_titulo: sub.chamada_titulo,
+      trabalho_titulo: sub.trabalho_titulo,
+      arquivo_nome: req.file.originalname,
+    });
 
     res.json({
       ok: true,
       arquivo_id: arq.id,
       stored_blob: arq.stored_blob,
       caminho: moved.relDb,
-      usando_banner_arquivo_id: hasBannerFk,
+      fk_utilizada: fk,
+      conceito: "banner",
     });
   } catch (err) {
     next(err);
@@ -1074,16 +954,15 @@ exports.baixarBanner = async (req, res, next) => {
     const { userId } = getAuthUserId(req, res);
     if (userId === null) return res.status(401).json({ erro: "Não autorizado." });
 
-    // repositório: qualquer logado pode baixar
     logDownload("banner:auth", { subId, userId });
 
-    const fk = await getBannerArquivoJoinClause();
+    const fk = await getBannerArquivoFkColumn();
 
     const row = await db.oneOrNone(
       `
       SELECT a.id, a.caminho, a.nome_original, a.mime_type, a.arquivo
         FROM trabalhos_submissoes s
-        LEFT JOIN trabalhos_arquivos a ON a.id = ${fk}
+        LEFT JOIN trabalhos_arquivos a ON a.id = s.${fk}
        WHERE s.id=$1
       `,
       [subId]
@@ -1130,21 +1009,28 @@ exports.minhassubmissao = async (req, res, next) => {
       throw e;
     }
 
+    const fk = await getBannerArquivoFkColumn();
+
     const rows = await db.any(
       `
-      SELECT s.*, a.nome_original AS poster_nome,
+      SELECT s.*, a.nome_original AS banner_nome,
              c.titulo AS chamada_titulo, c.prazo_final_br,
              (${TZ_SQL} <= c.prazo_final_br) AS dentro_prazo
       FROM trabalhos_submissoes s
       JOIN trabalhos_chamadas c ON c.id = s.chamada_id
-      LEFT JOIN trabalhos_arquivos a ON a.id = s.poster_arquivo_id
+      LEFT JOIN trabalhos_arquivos a ON a.id = s.${fk}
       WHERE s.usuario_id=$1
       ORDER BY s.criado_em DESC
       `,
       [userId]
     );
 
-    res.json(rows);
+    const payload = rows.map((r) => ({
+      ...r,
+      banner_url: r.banner_nome ? `/api/trabalhos/submissao/${r.id}/banner` : null,
+    }));
+
+    res.json(payload);
   } catch (err) {
     next(err);
   }
@@ -1169,30 +1055,34 @@ exports.obterSubmissao = async (req, res, next) => {
       throw e;
     }
 
+    const fk = await getBannerArquivoFkColumn();
+
     const s = await db.oneOrNone(
       `
       SELECT s.*,
-             pa.nome_original AS poster_nome, pa.caminho AS poster_caminho,
-             /* banner fica pelo endpoint */
-             c.titulo AS chamada_titulo, c.max_coautores,
+             ba.nome_original AS banner_nome,
+             ba.caminho AS banner_caminho,
+             c.titulo AS chamada_titulo,
+             c.max_coautores,
              (${TZ_SQL} <= c.prazo_final_br) AS dentro_prazo
       FROM trabalhos_submissoes s
       JOIN trabalhos_chamadas c ON c.id = s.chamada_id
-      LEFT JOIN trabalhos_arquivos pa ON pa.id = s.poster_arquivo_id
+      LEFT JOIN trabalhos_arquivos ba ON ba.id = s.${fk}
       WHERE s.id=$1
       `,
       [subId]
     );
+
     if (!s) {
       const e = new Error("Submissão não encontrada.");
       e.status = 404;
       throw e;
     }
 
-    // Permissão: admin, autor OU avaliador atribuído
     const ehAdmin = await isAdmin(userId);
     const ehAutor = String(s.usuario_id) === String(userId);
     const ehAvaliadorVinculado = await canUserReviewOrView(userId, subId);
+
     if (!ehAdmin && !ehAutor && !ehAvaliadorVinculado) {
       const e = new Error("Sem permissão.");
       e.status = 403;
@@ -1212,8 +1102,7 @@ exports.obterSubmissao = async (req, res, next) => {
     res.json({
       ...s,
       coautores,
-      poster_url: s.poster_caminho ? `/api/trabalhos/submissao/${s.id}/poster` : null,
-      banner_url: `/api/trabalhos/submissao/${s.id}/banner`,
+      banner_url: s.banner_caminho ? `/api/trabalhos/submissao/${s.id}/banner` : null,
     });
   } catch (err) {
     next(err);
@@ -1221,11 +1110,11 @@ exports.obterSubmissao = async (req, res, next) => {
 };
 
 /* ──────────────────────────────────────────────────────────────
-   ADMIN: listar por chamada / listar todas (mantido do seu código,
-   só preservando e deixando como estava)
+   ADMIN: listar por chamada / listar todas
 ────────────────────────────────────────────────────────────── */
 exports.listarsubmissaoAdmin = async (req, res, next) => {
   const t0 = Date.now();
+
   try {
     const chamadaId = toIntOrNull(req.params.chamadaId);
     if (chamadaId === null) {
@@ -1295,7 +1184,6 @@ exports.listarsubmissaoAdmin = async (req, res, next) => {
       );
     } catch (errSelect) {
       if (errSelect?.code === "42703") {
-        // fallback sem colunas novas
         rows = await db.any(
           `
           WITH base AS (
@@ -1362,6 +1250,7 @@ exports.listarsubmissaoAdmin = async (req, res, next) => {
 
 exports.listarsubmissaoAdminTodas = async (_req, res, next) => {
   const t0 = Date.now();
+
   try {
     let rows;
     try {
@@ -1473,13 +1362,15 @@ exports.listarsubmissaoAdminTodas = async (_req, res, next) => {
 };
 
 /* ──────────────────────────────────────────────────────────────
-   AVALIAÇÕES — mantidas, apenas garantindo persist 50/50
+   AVALIAÇÕES
 ────────────────────────────────────────────────────────────── */
 exports.avaliarEscrita = async (req, res, next) => {
   const t0 = Date.now();
+
   try {
     const { itens = [] } = req.body;
     const subId = toIntOrNull(req.params.id);
+
     assert(subId !== null, "id inválido.");
     assert(Array.isArray(itens) && itens.length, "Envie itens para avaliação.");
 
@@ -1488,6 +1379,7 @@ exports.avaliarEscrita = async (req, res, next) => {
 
     const isAdm = await isAdmin(userId);
     const canView = await canUserReviewOrView(userId, subId);
+
     if (!(isAdm || canView)) {
       return res.status(403).json({ erro: "Apenas avaliadores atribuídos ou administradores podem avaliar." });
     }
@@ -1500,11 +1392,13 @@ exports.avaliarEscrita = async (req, res, next) => {
       `,
       [subId]
     );
+
     const byId = new Map(lims.map((x) => [x.id, x]));
 
     for (const it of itens) {
       const lim = byId.get(it.criterio_id);
       assert(lim, "Critério inválido.");
+
       const nota = parseInt(it.nota, 10);
       assert(
         Number.isInteger(nota) && nota >= lim.escala_min && nota <= lim.escala_max,
@@ -1527,10 +1421,10 @@ exports.avaliarEscrita = async (req, res, next) => {
       [subId]
     );
 
-    // ✅ persistência 50/50
     await atualizarNotasPersistidas50_50(subId);
-    // ✅ manter também materializada antiga se você ainda usa em algum lugar
-    try { await atualizarNotaMediaMaterializada(subId); } catch {}
+    try {
+      await atualizarNotaMediaMaterializada(subId);
+    } catch {}
 
     console.log("[avaliarEscrita][OK]", { subId, userId, ms: Date.now() - t0 });
     res.json({ ok: true });
@@ -1542,9 +1436,11 @@ exports.avaliarEscrita = async (req, res, next) => {
 
 exports.avaliarOral = async (req, res, next) => {
   const t0 = Date.now();
+
   try {
     const { itens = [] } = req.body;
     const subId = toIntOrNull(req.params.id);
+
     assert(subId !== null, "id inválido.");
     assert(Array.isArray(itens) && itens.length, "Envie itens para avaliação oral.");
 
@@ -1553,6 +1449,7 @@ exports.avaliarOral = async (req, res, next) => {
 
     const isAdm = await isAdmin(userId);
     const canView = await canUserReviewOrView(userId, subId);
+
     if (!(isAdm || canView)) {
       return res.status(403).json({ erro: "Apenas avaliadores atribuídos ou administradores podem avaliar." });
     }
@@ -1565,11 +1462,13 @@ exports.avaliarOral = async (req, res, next) => {
       `,
       [subId]
     );
+
     const byId = new Map(lims.map((x) => [x.id, x]));
 
     for (const it of itens) {
       const criterioId = toIntOrNull(it?.criterio_id ?? it?.criterio_oral_id);
       assert(Number.isFinite(criterioId), "Critério oral inválido.");
+
       const lim = byId.get(criterioId);
       assert(lim, "Critério oral inválido.");
 
@@ -1592,7 +1491,9 @@ exports.avaliarOral = async (req, res, next) => {
     }
 
     await atualizarNotasPersistidas50_50(subId);
-    try { await atualizarNotaMediaMaterializada(subId); } catch {}
+    try {
+      await atualizarNotaMediaMaterializada(subId);
+    } catch {}
 
     console.log("[avaliarOral][OK]", { subId, userId, ms: Date.now() - t0 });
     res.json({ ok: true });
@@ -1603,10 +1504,11 @@ exports.avaliarOral = async (req, res, next) => {
 };
 
 /* ──────────────────────────────────────────────────────────────
-   CONSOLIDAÇÃO / STATUS FINAL (mantido do seu código)
+   CONSOLIDAÇÃO / STATUS FINAL
 ────────────────────────────────────────────────────────────── */
 exports.consolidarClassificacao = async (req, res, next) => {
   const t0 = Date.now();
+
   try {
     const chamadaId = toIntOrNull(req.params.chamadaId);
     assert(chamadaId !== null, "chamadaId inválido.");
@@ -1630,6 +1532,7 @@ exports.consolidarClassificacao = async (req, res, next) => {
 
     const linhas = await db.any(`SELECT id FROM trabalhos_chamada_linhas WHERE chamada_id=$1`, [chamadaId]);
     const aprovadosOral = [];
+
     for (const l of linhas) {
       const rows = await db.any(
         `
@@ -1668,6 +1571,7 @@ exports.consolidarClassificacao = async (req, res, next) => {
 
 exports.definirStatusFinal = async (req, res, next) => {
   const t0 = Date.now();
+
   try {
     const id = toIntOrNull(req.params.id);
     assert(id !== null, "id inválido.");
@@ -1789,7 +1693,6 @@ exports.definirStatusFinal = async (req, res, next) => {
 
 /* ──────────────────────────────────────────────────────────────
    PAINEL DO AVALIADOR / CONTAGENS / REPOSITÓRIO
-   (mantido e com banner_url seguro)
 ────────────────────────────────────────────────────────────── */
 exports.contagemMinhasAvaliacao = async (req, res, next) => {
   try {
@@ -1846,6 +1749,7 @@ exports.contagemMinhasAvaliacao = async (req, res, next) => {
 
 exports.listarRepositorioTrabalhos = async (req, res, next) => {
   const t0 = Date.now();
+
   try {
     const { userId: uid } = getAuthUserId(req, res);
     if (uid === null) {
@@ -1904,7 +1808,6 @@ exports.listarRepositorioTrabalhos = async (req, res, next) => {
       params
     );
 
-    // banner_url seguro por endpoint (não expõe caminho em disco)
     const payload = rows.map((r) => ({
       ...r,
       banner_url: `/api/trabalhos/submissao/${r.id}/banner`,
@@ -1926,10 +1829,10 @@ exports.listarRepositorioTrabalhos = async (req, res, next) => {
 
 /* ──────────────────────────────────────────────────────────────
    AVALIADOR — listar submissões atribuídas
-   GET /api/trabalhos/avaliador/submissao
 ────────────────────────────────────────────────────────────── */
 exports.listarsubmissaoDoAvaliador = async (req, res, next) => {
   const t0 = Date.now();
+
   try {
     const { userId: uid } = getAuthUserId(req, res);
     if (!Number.isFinite(uid)) return res.status(401).json({ erro: "Não autorizado." });
@@ -1947,8 +1850,6 @@ exports.listarsubmissaoDoAvaliador = async (req, res, next) => {
         s.chamada_id,
         c.titulo AS chamada_titulo,
         tsa.tipo,
-
-        -- “já avaliado” depende do tipo
         CASE
           WHEN tsa.tipo = 'oral' THEN EXISTS (
             SELECT 1
@@ -1963,7 +1864,6 @@ exports.listarsubmissaoDoAvaliador = async (req, res, next) => {
               AND tae.avaliador_id = $1
           )
         END AS ja_avaliado
-
       FROM trabalhos_submissoes_avaliadores tsa
       JOIN trabalhos_submissao s ON s.id = tsa.submissao_id
       JOIN trabalhos_chamadas   c ON c.id = s.chamada_id
@@ -1983,13 +1883,12 @@ exports.listarsubmissaoDoAvaliador = async (req, res, next) => {
   }
 };
 
-
 /* ──────────────────────────────────────────────────────────────
-   AVALIADOR — obter submissão para avaliar (texto + critérios + itens já salvos)
-   GET /api/trabalhos/avaliador/submissao/:id?tipo=oral|escrita
+   AVALIADOR — obter submissão para avaliar
 ────────────────────────────────────────────────────────────── */
 exports.obterParaAvaliacao = async (req, res, next) => {
   const t0 = Date.now();
+
   try {
     const { user: authUser, userId: uid } = getAuthUserId(req, res);
     assert(uid !== null, "Não autorizado.");
@@ -1998,9 +1897,8 @@ exports.obterParaAvaliacao = async (req, res, next) => {
     assert(sid !== null, "id inválido.");
 
     const tipoReq = String(req.query?.tipo || "").toLowerCase();
-    const TIPO = (tipoReq === "oral" || tipoReq === "escrita") ? tipoReq : "escrita";
+    const TIPO = tipoReq === "oral" || tipoReq === "escrita" ? tipoReq : "escrita";
 
-    // admin ou designado (no tipo, se fornecido)
     const isAdminUser = Array.isArray(authUser?.perfil) && authUser.perfil.includes("administrador");
 
     const designado = await db.oneOrNone(
@@ -2022,6 +1920,8 @@ exports.obterParaAvaliacao = async (req, res, next) => {
       throw e;
     }
 
+    const fk = await getBannerArquivoFkColumn();
+
     const s = await db.oneOrNone(
       `
       SELECT
@@ -2034,9 +1934,7 @@ exports.obterParaAvaliacao = async (req, res, next) => {
         tcl.nome AS linha_tematica_nome,
         s.chamada_id,
         c.titulo AS chamada_titulo,
-        a.nome_original AS poster_nome,
-
-        -- textos
+        a.nome_original AS banner_nome,
         s.introducao,
         s.objetivos,
         s.metodo,
@@ -2046,7 +1944,7 @@ exports.obterParaAvaliacao = async (req, res, next) => {
       FROM trabalhos_submissoes s
       JOIN trabalhos_chamadas c ON c.id = s.chamada_id
       LEFT JOIN trabalhos_chamada_linhas tcl ON tcl.id = s.linha_tematica_id
-      LEFT JOIN trabalhos_arquivos a ON a.id = s.poster_arquivo_id
+      LEFT JOIN trabalhos_arquivos a ON a.id = s.${fk}
       WHERE s.id=$1
       `,
       [sid]
@@ -2135,10 +2033,8 @@ exports.obterParaAvaliacao = async (req, res, next) => {
         linha_tematica_nome: s.linha_tematica_nome,
         chamada_id: s.chamada_id,
         chamada_titulo: s.chamada_titulo,
-
-        poster_nome: s.poster_nome,
-        poster_url: `/api/trabalhos/submissao/${s.id}/poster`,
-
+        banner_nome: s.banner_nome,
+        banner_url: `/api/trabalhos/submissao/${s.id}/banner`,
         introducao: s.introducao,
         objetivos: s.objetivos,
         metodo: s.metodo,
@@ -2156,3 +2052,10 @@ exports.obterParaAvaliacao = async (req, res, next) => {
   }
 };
 
+/* ──────────────────────────────────────────────────────────────
+   Aliases de compatibilidade
+   - O sistema agora trata tudo como BANNER
+   - Mas estes aliases evitam quebrar rotas/uso legado
+────────────────────────────────────────────────────────────── */
+exports.atualizarPoster = exports.atualizarBanner;
+exports.baixarPoster = exports.baixarBanner;

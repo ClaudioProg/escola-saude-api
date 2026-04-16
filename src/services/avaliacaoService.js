@@ -1,112 +1,154 @@
-// 📁 src/services/avaliacaoService.js — PREMIUM+++
-// - Date-only safe
-// - Compat com inscricoes/inscricao
-// - Compat com avaliacoes
-// - Fim real da turma via datas_turma > turmas
-// - Frequência geral >= 75% sem inflar encontros por intervalo corrido
-// - Integração preparada com questionário obrigatório
-// - Logs estratégicos
-// - Retorno enriquecido para auditoria
-
 /* eslint-disable no-console */
+"use strict";
 
-const dbFallback = require("../db");
+// ✅ src/services/avaliacaoService.js — PREMIUM/UNIFICADO
+// - date-only safe
+// - compat DB (query / db.query)
+// - compat inscricoes / inscricao
+// - compat avaliacoes / avaliacao
+// - fim real da turma via datas_turma > turmas
+// - frequência geral >= 75% sem inflar encontros por intervalo corrido
+// - integração preparada com questionário obrigatório
+// - logs estratégicos
+// - retorno enriquecido para auditoria
+
+const dbModule = require("../db");
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 const TZ = "America/Sao_Paulo";
 
-/* ------------------------------------------------------------------ */
-/* Compat DB                                                          */
-/* ------------------------------------------------------------------ */
-const pool = dbFallback.pool || dbFallback.Pool || dbFallback.pool?.pool || dbFallback;
+/* ───────────────── DB compat resiliente ───────────────── */
+const db = dbModule?.db ?? dbModule;
+
 const query =
-  dbFallback.query ||
-  (typeof dbFallback === "function" ? dbFallback : null) ||
-  (pool?.query ? pool.query.bind(pool) : null) ||
-  (dbFallback?.db?.query ? dbFallback.db.query.bind(dbFallback.db) : null);
+  dbModule?.query ||
+  db?.query?.bind?.(db) ||
+  (typeof db?.query === "function" ? db.query.bind(db) : null);
 
 if (typeof query !== "function") {
-  console.error("[avaliacaoService] DB inválido:", Object.keys(dbFallback || {}));
+  console.error("[avaliacaoService] DB inválido:", Object.keys(dbModule || {}));
   throw new Error("DB inválido em avaliacaoService.js (query ausente)");
 }
 
-/* ------------------------------------------------------------------ */
-/* Logs                                                               */
-/* ------------------------------------------------------------------ */
-function logInfo(msg, extra) {
-  if (IS_DEV) console.log("[avaliacaoService]", msg, extra || "");
+/* ───────────────── Cache leve de schema ───────────────── */
+const SCHEMA_CACHE = {
+  tables: new Map(),
+};
+
+async function tableExists(conn, tableName) {
+  const key = String(tableName || "").trim().toLowerCase();
+  if (!key) return false;
+
+  if (SCHEMA_CACHE.tables.has(key)) {
+    return SCHEMA_CACHE.tables.get(key);
+  }
+
+  try {
+    const r = await conn.query(
+      `
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = $1
+      ) AS ok
+      `,
+      [key]
+    );
+
+    const ok = r?.rows?.[0]?.ok === true;
+    SCHEMA_CACHE.tables.set(key, ok);
+    return ok;
+  } catch (err) {
+    logWarn("Falha ao consultar information_schema; tentando fallback direto", {
+      tableName: key,
+      message: err?.message,
+    });
+
+    try {
+      await conn.query(`SELECT 1 FROM ${key} LIMIT 1`);
+      SCHEMA_CACHE.tables.set(key, true);
+      return true;
+    } catch {
+      SCHEMA_CACHE.tables.set(key, false);
+      return false;
+    }
+  }
 }
+
+/* ───────────────── Logs ───────────────── */
+function logInfo(msg, extra) {
+  if (IS_DEV) {
+    console.log("[avaliacaoService]", msg, extra || "");
+  }
+}
+
 function logWarn(msg, extra) {
   console.warn("[avaliacaoService][WARN]", msg, extra || "");
 }
-function logError(msg, err) {
-  console.error("[avaliacaoService][ERR]", msg, err?.stack || err?.message || err);
+
+function logError(msg, err, extra) {
+  console.error("[avaliacaoService][ERR]", msg, {
+    message: err?.message || err,
+    code: err?.code,
+    stack: err?.stack,
+    ...(extra || {}),
+  });
 }
 
-/* ------------------------------------------------------------------ */
-/* Helpers                                                            */
-/* ------------------------------------------------------------------ */
+/* ───────────────── Helpers ───────────────── */
 function toIntId(v) {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
 }
 
-async function resolveInscricaoTable(db) {
-  try {
-    await db.query(`SELECT 1 FROM inscricoes LIMIT 1`);
-    return "inscricoes";
-  } catch {
-    return "inscricao";
-  }
+function toNumOrNull(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
-async function resolveAvaliacoesTable(db) {
-  try {
-    await db.query(`SELECT 1 FROM avaliacoes LIMIT 1`);
-    return "avaliacoes";
-  } catch {
-    return null;
-  }
+async function resolveInscricaoTable(conn) {
+  if (await tableExists(conn, "inscricoes")) return "inscricoes";
+  if (await tableExists(conn, "inscricao")) return "inscricao";
+  return null;
 }
 
-async function resolveQuestionarioTables(db) {
-  try {
-    await db.query(`SELECT 1 FROM questionarios_evento LIMIT 1`);
-    await db.query(`SELECT 1 FROM tentativas_questionario LIMIT 1`);
-    return {
-      hasQuestionariosEvento: true,
-      hasTentativasQuestionario: true,
-    };
-  } catch {
-    return {
-      hasQuestionariosEvento: false,
-      hasTentativasQuestionario: false,
-    };
-  }
+async function resolveAvaliacoesTable(conn) {
+  if (await tableExists(conn, "avaliacoes")) return "avaliacoes";
+  if (await tableExists(conn, "avaliacao")) return "avaliacao";
+  return null;
 }
 
-async function nowSP(db) {
-  const result = await db.query(
+async function resolveQuestionarioTables(conn) {
+  const hasQuestionariosEvento = await tableExists(conn, "questionarios_evento");
+  const hasTentativasQuestionario = await tableExists(conn, "tentativas_questionario");
+
+  return {
+    hasQuestionariosEvento,
+    hasTentativasQuestionario,
+  };
+}
+
+async function nowSP(conn) {
+  const result = await conn.query(
     `SELECT to_char((NOW() AT TIME ZONE '${TZ}'), 'YYYY-MM-DD HH24:MI:SS') AS agora_sp`
   );
   return result?.rows?.[0]?.agora_sp || null;
 }
 
-/* ------------------------------------------------------------------ */
-/* Questionário obrigatório por evento                                */
-/* ------------------------------------------------------------------ */
-async function carregarMapaQuestionariosPorEvento(db, eventoIds = []) {
+/* ───────────────── Questionário obrigatório por evento ───────────────── */
+async function carregarMapaQuestionariosPorEvento(conn, eventoIds = []) {
   const ids = Array.isArray(eventoIds)
-    ? eventoIds.map(Number).filter(Number.isFinite)
+    ? [...new Set(eventoIds.map(Number).filter(Number.isFinite))]
     : [];
 
   if (!ids.length) return new Map();
 
-  const qt = await resolveQuestionarioTables(db);
+  const qt = await resolveQuestionarioTables(conn);
   if (!qt.hasQuestionariosEvento) return new Map();
 
   try {
-    const result = await db.query(
+    const result = await conn.query(
       `
       SELECT
         q.id,
@@ -125,20 +167,19 @@ async function carregarMapaQuestionariosPorEvento(db, eventoIds = []) {
     const mapa = new Map();
 
     for (const row of rows) {
-      const eventoId = Number(row.evento_id);
-      if (!Number.isFinite(eventoId)) continue;
-
-      // prioriza questionário publicado obrigatório
-      const atual = mapa.get(eventoId);
+      const eventoId = toIntId(row.evento_id);
+      if (!eventoId) continue;
 
       const candidato = {
-        id: Number(row.id),
+        id: toIntId(row.id),
         evento_id: eventoId,
         obrigatorio: row.obrigatorio === true,
-        status: String(row.status || ""),
-        min_nota: row.min_nota != null ? Number(row.min_nota) : null,
-        tentativas_max: row.tentativas_max != null ? Number(row.tentativas_max) : null,
+        status: String(row.status || "").trim().toLowerCase(),
+        min_nota: row.min_nota != null ? toNumOrNull(row.min_nota) : null,
+        tentativas_max: row.tentativas_max != null ? toNumOrNull(row.tentativas_max) : null,
       };
+
+      const atual = mapa.get(eventoId);
 
       if (!atual) {
         mapa.set(eventoId, candidato);
@@ -147,8 +188,8 @@ async function carregarMapaQuestionariosPorEvento(db, eventoIds = []) {
 
       const score = (q) => {
         let s = 0;
-        if (q.status === "publicado") s += 10;
         if (q.obrigatorio === true) s += 100;
+        if (q.status === "publicado") s += 10;
         return s;
       };
 
@@ -159,26 +200,32 @@ async function carregarMapaQuestionariosPorEvento(db, eventoIds = []) {
 
     return mapa;
   } catch (err) {
-    logWarn("Falha ao carregar mapa de questionários por evento", err?.message || err);
+    logWarn("Falha ao carregar mapa de questionários por evento", {
+      message: err?.message,
+      eventoIds: ids,
+    });
     return new Map();
   }
 }
 
-async function carregarMapaTentativasAprovadas(db, usuarioId, questionarioIds = [], turmaIds = []) {
+async function carregarMapaTentativasAprovadas(conn, usuarioId, questionarioIds = [], turmaIds = []) {
+  const uid = toIntId(usuarioId);
+
   const qIds = Array.isArray(questionarioIds)
-    ? questionarioIds.map(Number).filter(Number.isFinite)
+    ? [...new Set(questionarioIds.map(Number).filter(Number.isFinite))]
     : [];
+
   const tIds = Array.isArray(turmaIds)
-    ? turmaIds.map(Number).filter(Number.isFinite)
+    ? [...new Set(turmaIds.map(Number).filter(Number.isFinite))]
     : [];
 
-  if (!usuarioId || !qIds.length || !tIds.length) return new Map();
+  if (!uid || !qIds.length || !tIds.length) return new Map();
 
-  const qt = await resolveQuestionarioTables(db);
+  const qt = await resolveQuestionarioTables(conn);
   if (!qt.hasTentativasQuestionario) return new Map();
 
   try {
-    const result = await db.query(
+    const result = await conn.query(
       `
       SELECT
         tq.id,
@@ -193,35 +240,41 @@ async function carregarMapaTentativasAprovadas(db, usuarioId, questionarioIds = 
         AND tq.turma_id = ANY($3::int[])
       ORDER BY tq.id DESC
       `,
-      [Number(usuarioId), qIds, tIds]
+      [uid, qIds, tIds]
     );
 
     const rows = result?.rows || [];
     const mapa = new Map();
 
     for (const row of rows) {
-      const key = `${Number(row.questionario_id)}|${Number(row.turma_id)}`;
+      const qid = toIntId(row.questionario_id);
+      const tid = toIntId(row.turma_id);
+      if (!qid || !tid) continue;
+
+      const key = `${qid}|${tid}`;
+
       if (!mapa.has(key)) {
         mapa.set(key, {
-          id: Number(row.id),
-          questionario_id: Number(row.questionario_id),
-          turma_id: Number(row.turma_id),
-          status: String(row.status || ""),
-          nota: row.nota != null ? Number(row.nota) : null,
+          id: toIntId(row.id),
+          questionario_id: qid,
+          turma_id: tid,
+          status: String(row.status || "").trim().toLowerCase(),
+          nota: row.nota != null ? toNumOrNull(row.nota) : null,
         });
       }
     }
 
     return mapa;
   } catch (err) {
-    logWarn("Falha ao carregar tentativas de questionário", err?.message || err);
+    logWarn("Falha ao carregar tentativas de questionário", {
+      message: err?.message,
+      usuarioId: uid,
+    });
     return new Map();
   }
 }
 
-/* ------------------------------------------------------------------ */
-/* Serviço principal                                                  */
-/* ------------------------------------------------------------------ */
+/* ───────────────── Serviço principal ───────────────── */
 /**
  * Lista turmas encerradas em que o usuário:
  * - está inscrito
@@ -231,8 +284,8 @@ async function carregarMapaTentativasAprovadas(db, usuarioId, questionarioIds = 
  * - se houver questionário obrigatório publicado, precisa estar aprovado
  *
  * IMPORTANTE:
- * - Não infla total de encontros usando todos os dias do intervalo
- * - Se a turma não tiver datas_turma, usa fallback conservador:
+ * - não infla total de encontros usando todos os dias do intervalo
+ * - se a turma não tiver datas_turma, usa fallback conservador:
  *   1 encontro se data_inicio/data_fim existirem
  *
  * Retorna rows:
@@ -255,16 +308,28 @@ async function carregarMapaTentativasAprovadas(db, usuarioId, questionarioIds = 
  * }
  */
 async function buscarAvaliacaoPendentes(usuario_id, opts = {}) {
-  const db = opts.db ?? { query };
-  const uid = toIntId(usuario_id);
+  const conn =
+    opts?.db?.query
+      ? opts.db
+      : { query };
 
+  const uid = toIntId(usuario_id);
   if (!uid) return [];
 
-  const inscrTable = await resolveInscricaoTable(db);
-  const avaliacoesTable = await resolveAvaliacoesTable(db);
+  const inscrTable = await resolveInscricaoTable(conn);
+  const avaliacoesTable = await resolveAvaliacoesTable(conn);
+
+  if (!inscrTable) {
+    logWarn("Tabela de inscrições não encontrada; retornando vazio.", {
+      usuario_id: uid,
+    });
+    return [];
+  }
 
   if (!avaliacoesTable) {
-    logWarn("Tabela de avaliações não encontrada; retornando vazio.", { usuario_id: uid });
+    logWarn("Tabela de avaliações não encontrada; retornando vazio.", {
+      usuario_id: uid,
+    });
     return [];
   }
 
@@ -275,13 +340,19 @@ async function buscarAvaliacaoPendentes(usuario_id, opts = {}) {
           t.id AS turma_id,
           COALESCE(
             (
-              SELECT (dt.data::date + COALESCE(dt.horario_fim::time, t.horario_fim::time, '23:59'::time))
+              SELECT (
+                dt.data::date +
+                COALESCE(dt.horario_fim::time, t.horario_fim::time, '23:59'::time)
+              )
               FROM datas_turma dt
               WHERE dt.turma_id = t.id
               ORDER BY dt.data DESC, COALESCE(dt.horario_fim, t.horario_fim) DESC
               LIMIT 1
             ),
-            (t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
+            (
+              t.data_fim::date +
+              COALESCE(t.horario_fim::time, '23:59'::time)
+            )
           ) AS fim_local
         FROM turmas t
       ),
@@ -293,12 +364,14 @@ async function buscarAvaliacaoPendentes(usuario_id, opts = {}) {
               SELECT 1
               FROM datas_turma dt
               WHERE dt.turma_id = t.id
-            ) THEN (
-              SELECT COUNT(*)::int
-              FROM datas_turma dt
-              WHERE dt.turma_id = t.id
             )
-            WHEN t.data_inicio IS NOT NULL AND t.data_fim IS NOT NULL THEN 1
+              THEN (
+                SELECT COUNT(*)::int
+                FROM datas_turma dt
+                WHERE dt.turma_id = t.id
+              )
+            WHEN t.data_inicio IS NOT NULL AND t.data_fim IS NOT NULL
+              THEN 1
             ELSE 0
           END AS total
         FROM turmas t
@@ -334,7 +407,7 @@ async function buscarAvaliacaoPendentes(usuario_id, opts = {}) {
         ON t.evento_id = e.id
       LEFT JOIN ${avaliacoesTable} a
         ON a.usuario_id = i.usuario_id
-       AND a.turma_id   = t.id
+       AND a.turma_id = t.id
       INNER JOIN fim_real fr
         ON fr.turma_id = t.id
       INNER JOIN total_encontros te
@@ -350,7 +423,7 @@ async function buscarAvaliacaoPendentes(usuario_id, opts = {}) {
       ORDER BY t.data_fim DESC, t.id DESC
     `;
 
-    const result = await db.query(sql, [uid]);
+    const result = await conn.query(sql, [uid]);
     const rows = result?.rows || [];
 
     if (!rows.length) {
@@ -362,31 +435,39 @@ async function buscarAvaliacaoPendentes(usuario_id, opts = {}) {
       return [];
     }
 
-    const eventoIds = rows.map((r) => Number(r.evento_id)).filter(Number.isFinite);
-    const turmaIds = rows.map((r) => Number(r.turma_id)).filter(Number.isFinite);
+    const eventoIds = rows.map((r) => toIntId(r.evento_id)).filter(Boolean);
+    const turmaIds = rows.map((r) => toIntId(r.turma_id)).filter(Boolean);
 
-    const mapaQuestionarios = await carregarMapaQuestionariosPorEvento(db, eventoIds);
+    const mapaQuestionarios = await carregarMapaQuestionariosPorEvento(conn, eventoIds);
 
     const questionarioIds = Array.from(
       new Set(
         Array.from(mapaQuestionarios.values())
-          .map((q) => Number(q.id))
-          .filter(Number.isFinite)
+          .map((q) => toIntId(q.id))
+          .filter(Boolean)
       )
     );
 
-    const mapaTentativas = await carregarMapaTentativasAprovadas(db, uid, questionarioIds, turmaIds);
+    const mapaTentativas = await carregarMapaTentativasAprovadas(
+      conn,
+      uid,
+      questionarioIds,
+      turmaIds
+    );
 
     const filtradas = rows
       .map((row) => {
-        const eventoId = Number(row.evento_id);
-        const turmaId = Number(row.turma_id);
+        const eventoId = toIntId(row.evento_id);
+        const turmaId = toIntId(row.turma_id);
         const qInfo = mapaQuestionarios.get(eventoId) || null;
 
         // sem questionário obrigatório publicado => avaliação liberada
         if (!qInfo || qInfo.status !== "publicado" || qInfo.obrigatorio !== true) {
           return {
             ...row,
+            total_encontros: Number(row.total_encontros || 0),
+            dias_presentes: Number(row.dias_presentes || 0),
+            percentual_frequencia: Number(row.percentual_frequencia || 0),
             questionario_obrigatorio: false,
             questionario_id: qInfo?.id ?? null,
             tentativa_id: null,
@@ -396,16 +477,24 @@ async function buscarAvaliacaoPendentes(usuario_id, opts = {}) {
           };
         }
 
-        const tentKey = `${Number(qInfo.id)}|${turmaId}`;
+        const tentKey = `${Number(qInfo.id)}|${Number(turmaId)}`;
         const tentativa = mapaTentativas.get(tentKey) || null;
 
         const minNota = qInfo.min_nota != null ? Number(qInfo.min_nota) : null;
         const nota = tentativa?.nota != null ? Number(tentativa.nota) : null;
         const enviada = tentativa?.status === "enviada";
-        const aprovado = enviada && minNota != null && nota != null ? nota >= minNota : false;
+        const aprovado =
+          enviada &&
+          minNota != null &&
+          nota != null
+            ? nota >= minNota
+            : false;
 
         return {
           ...row,
+          total_encontros: Number(row.total_encontros || 0),
+          dias_presentes: Number(row.dias_presentes || 0),
+          percentual_frequencia: Number(row.percentual_frequencia || 0),
           questionario_obrigatorio: true,
           questionario_id: qInfo.id,
           tentativa_id: tentativa?.id ?? null,
@@ -423,7 +512,7 @@ async function buscarAvaliacaoPendentes(usuario_id, opts = {}) {
       usuario_id: uid,
       inscrTable,
       avaliacoesTable,
-      agora_sp: await nowSP(db),
+      agora_sp: await nowSP(conn),
       total_base: rows.length,
       total_filtradas: filtradas.length,
       turmas: filtradas.map((r) => ({
@@ -443,9 +532,17 @@ async function buscarAvaliacaoPendentes(usuario_id, opts = {}) {
 
     return filtradas;
   } catch (err) {
-    logError("buscarAvaliacaoPendentes", err);
+    logError("buscarAvaliacaoPendentes", err, {
+      usuario_id: uid,
+      inscrTable,
+      avaliacoesTable,
+    });
     return [];
   }
 }
 
-module.exports = { buscarAvaliacaoPendentes };
+module.exports = {
+  buscarAvaliacaoPendentes,
+  resolveInscricaoTable,
+  resolveAvaliacoesTable,
+};

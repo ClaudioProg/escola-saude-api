@@ -8,15 +8,18 @@ const cookie = require("cookie");
 // ✅ compatível com:
 // module.exports = db
 // OU
-// module.exports = { db }
+// module.exports = { db, query, pool, ... }
 const dbModule = require("../db");
 const db = dbModule?.db ?? dbModule;
 
 const ADMIN_ROLES = ["administrador", "admin"];
+const IS_PROD = process.env.NODE_ENV === "production";
+const JWT_ISS = process.env.JWT_ISSUER || undefined;
+const JWT_AUD = process.env.JWT_AUDIENCE || undefined;
 
-/* =========================
-   Helpers
-========================= */
+/* ──────────────────────────────────────────────────────────────
+   Helpers gerais
+────────────────────────────────────────────────────────────── */
 function uniq(arr) {
   return [...new Set(arr)];
 }
@@ -40,14 +43,24 @@ function toArrayLower(value) {
 function hasAnyRole(userOrRoles, allowedRoles = []) {
   const roles = Array.isArray(userOrRoles)
     ? toArrayLower(userOrRoles)
-    : toArrayLower(userOrRoles?.perfil);
+    : toArrayLower(
+        userOrRoles?.perfis ??
+        userOrRoles?.perfil ??
+        userOrRoles?.roles ??
+        userOrRoles?.role
+      );
 
   const allowed = toArrayLower(allowedRoles);
   return allowed.some((role) => roles.includes(role));
 }
 
 function normalizeUser(raw) {
-  const id = Number(raw?.sub ?? raw?.id ?? raw?.userId ?? raw?.usuario_id);
+  const id = Number(
+    raw?.sub ??
+    raw?.id ??
+    raw?.userId ??
+    raw?.usuario_id
+  );
 
   if (!Number.isSafeInteger(id) || id <= 0) {
     return null;
@@ -89,7 +102,7 @@ function parseCookies(req) {
 
 function extractToken(req) {
   // 1) Authorization: Bearer <token>
-  const authorization = req.headers?.authorization || "";
+  const authorization = req.headers?.authorization || req.headers?.Authorization || "";
   const bearerMatch = authorization.match(/^Bearer\s+(.+)$/i);
 
   if (bearerMatch?.[1]?.trim()) {
@@ -99,7 +112,7 @@ function extractToken(req) {
     };
   }
 
-  // 2) Cookies (cookie-parser ou manual)
+  // 2) Cookies
   const cookies = parseCookies(req);
   const token =
     cookies.token ||
@@ -140,7 +153,11 @@ function verifyJwtToken(token) {
     throw err;
   }
 
-  return jwt.verify(token, jwtSecret);
+  const verifyOptions = {};
+  if (JWT_ISS) verifyOptions.issuer = JWT_ISS;
+  if (JWT_AUD) verifyOptions.audience = JWT_AUD;
+
+  return jwt.verify(token, jwtSecret, verifyOptions);
 }
 
 function attachUserContext(req, res, user) {
@@ -152,7 +169,7 @@ function attachUserContext(req, res, user) {
   // ✅ compat legado
   req.usuario = user;
 
-  // ✅ facilita middlewares/logs
+  // ✅ facilita middlewares / logs / controllers antigos
   req.userId = user.id;
 
   // ✅ contexto auth padronizado
@@ -184,8 +201,11 @@ function buildAuthErrorResponse(res, status, message, extra = {}) {
   });
 }
 
+/* ──────────────────────────────────────────────────────────────
+   Core de autenticação
+────────────────────────────────────────────────────────────── */
 function authenticateRequest(req, res) {
-  // ✅ Se outro middleware já setou req.user, apenas normaliza
+  // ✅ Se outro middleware já setou req.user, apenas normaliza e reaproveita
   if (req.user && (req.user.id || req.user.sub || req.user.userId || req.user.usuario_id)) {
     const normalizedFromReq = normalizeUser(req.user);
 
@@ -215,10 +235,12 @@ function authenticateRequest(req, res) {
   const { token, source } = extractToken(req);
 
   if (!token) {
-    console.warn(
-      "[authMiddleware] token ausente",
-      buildAuthLog(req, { tokenSource: source })
-    );
+    if (!IS_PROD) {
+      console.warn(
+        "[authMiddleware] token ausente",
+        buildAuthLog(req, { tokenSource: source })
+      );
+    }
 
     return {
       ok: false,
@@ -260,7 +282,8 @@ function authenticateRequest(req, res) {
   } catch (err) {
     const isExpired = err?.name === "TokenExpiredError";
     const isJwtError =
-      err?.name === "JsonWebTokenError" || err?.name === "NotBeforeError";
+      err?.name === "JsonWebTokenError" ||
+      err?.name === "NotBeforeError";
     const isSecretMissing = err?.code === "JWT_SECRET_MISSING";
 
     if (isSecretMissing) {
@@ -314,9 +337,9 @@ function authenticateRequest(req, res) {
   }
 }
 
-/* =========================
+/* ──────────────────────────────────────────────────────────────
    Middlewares
-========================= */
+────────────────────────────────────────────────────────────── */
 function authMiddleware(req, res, next) {
   const authResult = authenticateRequest(req, res);
 
@@ -359,11 +382,16 @@ function authAdmin(req, res, next) {
   return next();
 }
 
+/* ──────────────────────────────────────────────────────────────
+   Exports
+────────────────────────────────────────────────────────────── */
 module.exports = authMiddleware;
 module.exports.default = authMiddleware;
+
 module.exports.authMiddleware = authMiddleware;
 module.exports.authAny = authAny;
 module.exports.authAdmin = authAdmin;
+
 module.exports.hasAnyRole = hasAnyRole;
 module.exports.toArrayLower = toArrayLower;
 module.exports.normalizeUser = normalizeUser;

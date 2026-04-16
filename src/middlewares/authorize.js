@@ -34,26 +34,41 @@ function toArrayLower(value) {
   );
 }
 
+function getAuthUser(req) {
+  return req?.user || req?.usuario || req?.auth?.user || null;
+}
+
 function getUserRoles(req) {
+  const user = getAuthUser(req);
+
   return toArrayLower(
-    req?.user?.perfil ??
-    req?.user?.perfis ??
-    req?.user?.roles ??
-    req?.user?.role
+    user?.perfil ??
+    user?.perfis ??
+    user?.roles ??
+    user?.role ??
+    req?.auth?.perfil
   );
 }
 
+function getUserId(req) {
+  const user = getAuthUser(req);
+  return user?.id ?? req?.auth?.userId ?? null;
+}
+
 function buildAuthzLog(req, extra = {}) {
+  const user = getAuthUser(req);
+
   return {
     method: req.method,
     url: req.originalUrl,
     ip: req.ip,
-    userId: req.user?.id ?? null,
+    userId: getUserId(req),
     perfilBruto:
-      req.user?.perfil ??
-      req.user?.perfis ??
-      req.user?.roles ??
-      req.user?.role ??
+      user?.perfil ??
+      user?.perfis ??
+      user?.roles ??
+      user?.role ??
+      req?.auth?.perfil ??
       null,
     ...extra,
   };
@@ -70,8 +85,10 @@ function makeAuthorize({ mode = "any" } = {}) {
     const allowed = toArrayLower(rolesPermitidos);
 
     return (req, res, next) => {
-      // 🔐 Depende do authMiddleware ter populado req.user
-      if (!req.user) {
+      const user = getAuthUser(req);
+
+      // 🔐 depende do authMiddleware já ter autenticado
+      if (!user) {
         console.warn(
           "[authorize] acesso sem autenticação",
           buildAuthzLog(req, {
@@ -79,12 +96,15 @@ function makeAuthorize({ mode = "any" } = {}) {
             allowed,
           })
         );
-        return res.status(401).json({ erro: "Não autenticado." });
+        return res.status(401).json({
+          erro: "Não autenticado.",
+          autenticado: false,
+        });
       }
 
       const userRoles = getUserRoles(req);
 
-      // ✅ Sem roles exigidas => não bloqueia, mas loga para evitar configuração solta despercebida
+      // ✅ sem roles exigidas => libera, mas loga para não passar despercebido
       if (allowed.length === 0) {
         console.warn(
           "[authorize] middleware sem roles configuradas; acesso liberado",
@@ -110,8 +130,11 @@ function makeAuthorize({ mode = "any" } = {}) {
             userRoles,
           })
         );
+
         return res.status(403).json({
           erro: "Acesso negado.",
+          autenticado: true,
+          autorizado: false,
           detalhes: {
             modo: safeMode,
             necessario: allowed,
@@ -139,9 +162,7 @@ const authorizeRoles = authorize.any;
 const authorizeRole = authorize.any;
 
 // ✅ Alias compatível com "admin" / "administrador"
-function requireAdmin(req, res, next) {
-  return authorize.any("administrador", "admin")(req, res, next);
-}
+const requireAdmin = authorize.any("administrador", "admin");
 
 module.exports = {
   authorize,

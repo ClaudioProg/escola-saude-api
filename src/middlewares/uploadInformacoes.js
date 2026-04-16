@@ -1,28 +1,25 @@
+// 📁 src/middlewares/uploadInformacoes.js
 /* eslint-disable no-console */
 "use strict";
 
-const fs = require("fs");
-const path = require("path");
 const crypto = require("crypto");
+const path = require("path");
 const multer = require("multer");
 
-const { UPLOADS_DIR, ensureDir } = require("../paths");
-
-const uploadRoot = path.join(UPLOADS_DIR, "informacoes");
-ensureDir(uploadRoot);
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 
 const allowedMimeTypes = new Set([
   "image/jpeg",
   "image/png",
   "image/webp",
-  "image/jpg"
+  "image/jpg",
 ]);
 
 const mimeToExtension = {
   "image/jpeg": ".jpg",
   "image/jpg": ".jpg",
   "image/png": ".png",
-  "image/webp": ".webp"
+  "image/webp": ".webp",
 };
 
 function sanitizeBaseFilename(originalname = "imagem") {
@@ -39,26 +36,16 @@ function sanitizeBaseFilename(originalname = "imagem") {
   return base || "imagem";
 }
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, uploadRoot);
-  },
+function buildSafeFilename(file) {
+  const safeBase = sanitizeBaseFilename(file?.originalname);
+  const mimeExt = mimeToExtension[file?.mimetype];
+  const originalExt = path.extname(file?.originalname || "").toLowerCase();
+  const ext = mimeExt || originalExt || ".jpg";
+  const stamp = Date.now();
+  const nonce = crypto.randomBytes(4).toString("hex");
 
-  filename: (_req, file, cb) => {
-    try {
-      const safeBase = sanitizeBaseFilename(file.originalname);
-      const mimeExt = mimeToExtension[file.mimetype];
-      const originalExt = path.extname(file.originalname || "").toLowerCase();
-      const ext = mimeExt || originalExt || ".jpg";
-      const stamp = Date.now();
-      const nonce = crypto.randomBytes(4).toString("hex");
-
-      cb(null, `informacao-${stamp}-${nonce}-${safeBase}${ext}`);
-    } catch (error) {
-      cb(error);
-    }
-  }
-});
+  return `informacao-${stamp}-${nonce}-${safeBase}${ext}`;
+}
 
 function fileFilter(_req, file, cb) {
   if (!file || !file.mimetype) {
@@ -69,86 +56,92 @@ function fileFilter(_req, file, cb) {
     return cb(new Error("Formato de imagem inválido. Envie JPG, PNG ou WEBP."));
   }
 
-  cb(null, true);
+  return cb(null, true);
 }
 
 const uploadInformacaoImagem = multer({
-  storage,
+  storage: multer.memoryStorage(),
   fileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024,
-    files: 1
-  }
+    fileSize: MAX_FILE_SIZE,
+    files: 1,
+  },
 }).single("imagem");
 
 function handleUploadInformacaoImagem(req, res, next) {
   uploadInformacaoImagem(req, res, (error) => {
-    if (!error) return next();
+    if (!error) {
+      if (req.file) {
+        req.file.safeFilename = buildSafeFilename(req.file);
+        req.file.detectedExtension =
+          mimeToExtension[req.file.mimetype] ||
+          path.extname(req.file.originalname || "").toLowerCase() ||
+          ".jpg";
+      }
+
+      return next();
+    }
 
     if (error instanceof multer.MulterError) {
       if (error.code === "LIMIT_FILE_SIZE") {
         return res.status(400).json({
           ok: false,
-          mensagem: "A imagem deve ter no máximo 5 MB."
+          mensagem: "A imagem deve ter no máximo 5 MB.",
         });
       }
 
       if (error.code === "LIMIT_FILE_COUNT") {
         return res.status(400).json({
           ok: false,
-          mensagem: "Envie apenas uma imagem por publicação."
+          mensagem: "Envie apenas uma imagem por publicação.",
         });
       }
 
       console.error("[informacoes][upload][multer-erro]", {
         code: error.code,
-        message: error.message
+        message: error.message,
       });
 
       return res.status(400).json({
         ok: false,
-        mensagem: "Não foi possível processar o upload da imagem."
+        mensagem: "Não foi possível processar o upload da imagem.",
       });
     }
 
     console.error("[informacoes][upload][erro]", {
       error: error?.message,
-      stack: error?.stack
+      stack: error?.stack,
     });
 
     return res.status(400).json({
       ok: false,
-      mensagem: error?.message || "Falha ao enviar a imagem."
+      mensagem: error?.message || "Falha ao enviar a imagem.",
     });
   });
 }
 
-function getImageRelativePath(filename) {
-  if (!filename) return null;
-  return `uploads/informacoes/${filename}`;
+/**
+ * Compatibilidade:
+ * Como agora a imagem deve ficar persistida no banco,
+ * não usamos mais caminho relativo em disco.
+ */
+function getImageRelativePath(_filename) {
+  return null;
 }
 
-function resolveImageAbsolutePath(relativePath) {
-  if (!relativePath) return null;
-
-  const cleanRelativePath = String(relativePath).replace(/^\/+/, "");
-
-  return path.resolve(process.cwd(), cleanRelativePath);
+/**
+ * Compatibilidade:
+ * não há mais arquivo salvo em disco para resolver.
+ */
+function resolveImageAbsolutePath(_relativePath) {
+  return null;
 }
 
-function removeFileIfExists(filePath) {
-  try {
-    if (filePath && fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-      return true;
-    }
-  } catch (error) {
-    console.error("[informacoes][upload][remove-file-erro]", {
-      filePath,
-      error: error?.message
-    });
-  }
-
+/**
+ * Compatibilidade:
+ * não há mais arquivo salvo em disco para remover.
+ */
+function removeFileIfExists(_filePath) {
   return false;
 }
 
@@ -157,5 +150,5 @@ module.exports = {
   getImageRelativePath,
   resolveImageAbsolutePath,
   removeFileIfExists,
-  uploadRoot
+  uploadRoot: null,
 };

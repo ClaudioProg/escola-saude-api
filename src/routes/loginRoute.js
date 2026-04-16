@@ -1,5 +1,7 @@
 // 📁 src/routes/loginRoute.js — PREMIUM (seguro, resiliente, pronto p/ produção)
 /* eslint-disable no-console */
+"use strict";
+
 const express = require("express");
 const router = express.Router();
 
@@ -11,14 +13,19 @@ const loginUsuario =
     : loginCtrl?.loginUsuario || loginCtrl?.default;
 
 if (typeof loginUsuario !== "function") {
-  console.error("[authRoute] loginUsuario inválido:", loginCtrl);
-  throw new Error("loginUsuario não é função (verifique exports em loginController)");
+  console.error("[loginRoute] loginUsuario inválido:", loginCtrl);
+  throw new Error(
+    "loginUsuario não é função (verifique exports em src/controllers/loginController.js)"
+  );
 }
 
 /* ───────────────── Helpers premium ───────────────── */
 const routeTag = (tag) => (req, res, next) => {
-  res.set("X-Route-Handler", tag);
-  res.set("Cache-Control", "no-store"); // evita cache de credenciais
+  try {
+    res.set("X-Route-Handler", tag);
+    res.set("Cache-Control", "no-store");
+    res.set("Pragma", "no-cache");
+  } catch {}
   return next();
 };
 
@@ -33,15 +40,27 @@ const handle =
     }
   };
 
-/* ──────────────────────────────────────────────────────────
-   🔐 Autenticação
-   POST /api/usuarios/login
-   Público | sem cache | pronto p/ rate-limit externo
-   ────────────────────────────────────────────────────────── */
+/* ───────────────── Rotas ───────────────── */
+
+/**
+ * 🔐 Login
+ * POST /api/login
+ * Público | sem cache
+ */
 router.post(
   "/",
-  routeTag("authRoute:POST /login"),
+  routeTag("loginRoute:POST /"),
   handle(loginUsuario)
+);
+
+/**
+ * 🩺 HEAD leve para descoberta/health do endpoint
+ * HEAD /api/login
+ */
+router.head(
+  "/",
+  routeTag("loginRoute:HEAD /"),
+  (_req, res) => res.sendStatus(204)
 );
 
 module.exports = router;

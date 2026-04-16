@@ -1,7 +1,12 @@
 // utils/notas.js
+"use strict";
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
 
 function clamp01(x) {
-  return Math.max(0, Math.min(1, x));
+  return clamp(Number(x), 0, 1);
 }
 
 function toNumber(v, fallback = NaN) {
@@ -9,55 +14,101 @@ function toNumber(v, fallback = NaN) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function toSafeDecimals(v, fallback = 1) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return clamp(Math.trunc(n), 0, 6);
+}
+
+function toCriterionKey(id) {
+  if (id === undefined || id === null || id === "") return null;
+  return String(id).trim();
+}
+
+function getItemCriterionId(item) {
+  return item?.criterio_id ?? item?.criterio_oral_id ?? null;
+}
+
 /**
  * Calcula nota final em escala 0..10 normalizando itens que podem ter escalas diferentes.
  *
  * @param {Object} args
- * @param {Array} args.itens - [{ criterio_id, nota }] ou [{ criterio_oral_id, nota }]
- * @param {Array} args.criterios - [{ id, escala_min, escala_max, peso? }]
+ * @param {Array} args.itens
+ *   Ex.: [{ criterio_id, nota }] ou [{ criterio_oral_id, nota }]
+ * @param {Array} args.criterios
+ *   Ex.: [{ id, escala_min, escala_max, peso? }]
  * @param {Object} [opts]
- * @param {number} [opts.decimals=1] - casas decimais no retorno
- * @param {boolean} [opts.withMeta=false] - se true, retorna { nota, meta }
+ * @param {number} [opts.decimals=1]       Casas decimais do retorno
+ * @param {boolean} [opts.withMeta=false]  Retorna metadados do cálculo
  * @returns {number|null|{nota:number|null, meta:Object}}
  */
-function nota10Normalizada({ itens, criterios }, opts = {}) {
-  const { decimals = 1, withMeta = false } = opts;
+function nota10Normalizada({ itens, criterios } = {}, opts = {}) {
+  const decimals = toSafeDecimals(opts.decimals, 1);
+  const withMeta = opts.withMeta === true;
 
   const itensArr = Array.isArray(itens) ? itens : [];
   const critArr = Array.isArray(criterios) ? criterios : [];
 
-  const byId = new Map(critArr.map((c) => [c.id, c]));
+  const byId = new Map(
+    critArr
+      .map((c) => {
+        const key = toCriterionKey(c?.id);
+        return key ? [key, c] : null;
+      })
+      .filter(Boolean)
+  );
 
-  let num = 0; // soma ponderada do score (0..1)
-  let den = 0; // soma dos pesos
+  let somaPonderadaScore = 0; // score normalizado 0..1 ponderado
+  let somaPesos = 0;
   let validCount = 0;
+  let skippedCount = 0;
 
-  for (const it of itensArr) {
-    const id = it?.criterio_id ?? it?.criterio_oral_id;
-    if (id == null) continue;
+  for (const item of itensArr) {
+    const itemCriterionId = toCriterionKey(getItemCriterionId(item));
+    if (!itemCriterionId) {
+      skippedCount += 1;
+      continue;
+    }
 
-    const def = byId.get(id);
-    if (!def) continue;
+    const criterio = byId.get(itemCriterionId);
+    if (!criterio) {
+      skippedCount += 1;
+      continue;
+    }
 
-    const min = toNumber(def.escala_min ?? 0);
-    const max = toNumber(def.escala_max ?? 10);
+    const min = toNumber(criterio.escala_min ?? 0);
+    const max = toNumber(criterio.escala_max ?? 10);
+    const notaBruta = toNumber(item?.nota);
 
-    // peso padrão 1; ignora peso <= 0
-    const wRaw = def?.peso;
-    const w = Number.isFinite(Number(wRaw)) ? Number(wRaw) : 1;
-    if (!(w > 0)) continue;
+    const pesoRaw = criterio?.peso;
+    const peso = Number.isFinite(Number(pesoRaw)) ? Number(pesoRaw) : 1;
 
-    const r = toNumber(it?.nota);
-    if (!Number.isFinite(r) || !Number.isFinite(min) || !Number.isFinite(max) || max <= min) continue;
+    if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
+      skippedCount += 1;
+      continue;
+    }
 
-    const score = clamp01((r - min) / (max - min));
+    if (!Number.isFinite(notaBruta)) {
+      skippedCount += 1;
+      continue;
+    }
 
-    num += w * score;
-    den += w;
+    if (!(peso > 0)) {
+      skippedCount += 1;
+      continue;
+    }
+
+    const score01 = clamp01((notaBruta - min) / (max - min));
+
+    somaPonderadaScore += peso * score01;
+    somaPesos += peso;
     validCount += 1;
   }
 
-  const nota = den === 0 ? null : Number((10 * (num / den)).toFixed(decimals));
+  const nota =
+    somaPesos === 0
+      ? null
+      : Number((10 * (somaPonderadaScore / somaPesos)).toFixed(decimals));
 
   if (!withMeta) return nota;
 
@@ -65,11 +116,44 @@ function nota10Normalizada({ itens, criterios }, opts = {}) {
     nota,
     meta: {
       validCount,
-      pesoTotal: den,
-      score01: den === 0 ? null : Number((num / den).toFixed(4)),
+      skippedCount,
+      totalItensRecebidos: itensArr.length,
+      totalCriteriosRecebidos: critArr.length,
+      pesoTotal: Number(somaPesos.toFixed(4)),
+      score01:
+        somaPesos === 0
+          ? null
+          : Number((somaPonderadaScore / somaPesos).toFixed(4)),
       decimals,
     },
   };
 }
 
-module.exports = { nota10Normalizada };
+/**
+ * Média simples de notas já em escala 0..10.
+ * Ignora valores inválidos.
+ *
+ * @param {Array<number>} notas
+ * @param {Object} [opts]
+ * @param {number} [opts.decimals=1]
+ * @returns {number|null}
+ */
+function mediaNotas10(notas = [], opts = {}) {
+  const decimals = toSafeDecimals(opts.decimals, 1);
+
+  const arr = Array.isArray(notas)
+    ? notas.map((n) => toNumber(n)).filter(Number.isFinite)
+    : [];
+
+  if (!arr.length) return null;
+
+  const soma = arr.reduce((acc, n) => acc + n, 0);
+  return Number((soma / arr.length).toFixed(decimals));
+}
+
+module.exports = {
+  clamp01,
+  toNumber,
+  nota10Normalizada,
+  mediaNotas10,
+};

@@ -1,50 +1,71 @@
 /**
- * 📌 utils/gerarLinkGoogleAgenda.js (versão premium)
+ * 📌 utils/gerarLinkGoogleAgenda.js — PREMIUM++
  *
  * Gera link do Google Calendar a partir de datas LOCAIS, sem “pulo de data”.
  * - Aceita: Date | "YYYY-MM-DD" | "YYYY-MM-DD HH:mm" | "YYYY-MM-DDTHH:mm(:ss?)"
  *           | ISO com Z/offset ("2025-09-03T14:00:00Z" | "2025-09-03T14:00:00-03:00")
  * - Detecta automaticamente eventos ALL-DAY quando ambas as entradas são apenas data.
  * - Sanitiza texto (remove chars de controle, normaliza quebras) e limita tamanho.
- * - Parâmetros opcionais (sem quebrar a API atual): attendees[], rrule.
+ * - Parâmetros opcionais: attendees[], rrule.
  */
 
 const DEFAULT_TZ = "America/Sao_Paulo";
 
-// Limites conservadores
 const MAX_TITLE = 300;
 const MAX_DETAILS = 4000;
 const MAX_LOCATION = 1000;
 
-// ──────────────────────────────────────────────────────────────
-// Helpers de texto (segurança / UX)
-// ──────────────────────────────────────────────────────────────
-
-/** Remove caracteres de controle (exceto \n e \t) e normaliza espaços/linhas. */
+/* ──────────────────────────────────────────────────────────────
+   Helpers de texto
+   ────────────────────────────────────────────────────────────── */
 function sanitizeText(input = "") {
-  const s = String(input);
+  const s = String(input ?? "");
   const cleaned = s.replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, "");
   return cleaned.replace(/\r\n?/g, "\n").trim();
 }
 
-/** Aplica sanitize + corte por tamanho. */
 function clampText(input, maxLen) {
   const s = sanitizeText(input);
   if (!Number.isFinite(maxLen) || maxLen <= 0) return s;
   return s.length > maxLen ? s.slice(0, maxLen) : s;
 }
 
-// ──────────────────────────────────────────────────────────────
-// Helpers de data/hora
-// ──────────────────────────────────────────────────────────────
+/* ──────────────────────────────────────────────────────────────
+   Helpers de data/hora
+   ────────────────────────────────────────────────────────────── */
+function isValidYmdParts(y, m, d) {
+  const yy = Number(y);
+  const mm = Number(m);
+  const dd = Number(d);
 
-function isAllDayLike(s) {
-  return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+  if (!Number.isInteger(yy) || yy < 1900 || yy > 2200) return false;
+  if (!Number.isInteger(mm) || mm < 1 || mm > 12) return false;
+  if (!Number.isInteger(dd) || dd < 1 || dd > 31) return false;
+
+  const dt = new Date(Date.UTC(yy, mm - 1, dd));
+  return (
+    dt.getUTCFullYear() === yy &&
+    dt.getUTCMonth() === mm - 1 &&
+    dt.getUTCDate() === dd
+  );
 }
 
-// ISO com Z ou offset +HH:mm / -HH:mm
+function isAllDayLike(s) {
+  if (typeof s !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const [y, m, d] = s.split("-");
+  return isValidYmdParts(y, m, d);
+}
+
 function hasExplicitOffsetOrZ(s) {
   return /[zZ]$/.test(s) || /[+-]\d{2}:?\d{2}$/.test(s);
+}
+
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+function dateToYMDLocal(d) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
 /**
@@ -55,7 +76,9 @@ function hasExplicitOffsetOrZ(s) {
  * - Date → retorna a própria instância (se válida).
  */
 function toLocalDate(dateLike) {
-  if (dateLike instanceof Date) return isNaN(dateLike) ? new Date(NaN) : dateLike;
+  if (dateLike instanceof Date) {
+    return isNaN(dateLike) ? new Date(NaN) : dateLike;
+  }
 
   const s = String(dateLike || "").trim();
   if (!s) return new Date(NaN);
@@ -67,50 +90,57 @@ function toLocalDate(dateLike) {
 
   if (isAllDayLike(s)) {
     const [y, m, d] = s.split("-").map(Number);
-    return new Date(y, m - 1, d, 0, 0, 0, 0); // local
+    return new Date(y, m - 1, d, 0, 0, 0, 0);
   }
 
   const norm = s.replace(" ", "T");
-  const [datePart, timePartRaw = "00:00"] = norm.split("T");
-  const [y, m, d] = (datePart || "").split("-").map((n) => parseInt(n, 10));
-  const [HH = "00", MM = "00", SS = "00"] = (timePartRaw || "").split(":");
+  const m = norm.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/
+  );
 
-  const hh = parseInt(HH, 10) || 0;
-  const mm = parseInt(MM, 10) || 0;
-  const ss = parseInt(SS, 10) || 0;
+  if (!m) return new Date(NaN);
 
-  return new Date(y, (m || 1) - 1, d || 1, hh, mm, ss, 0); // local
+  const [, y, mo, d, HH, MM, SS = "00"] = m;
+  if (!isValidYmdParts(y, mo, d)) return new Date(NaN);
+
+  const hh = Number(HH);
+  const mm = Number(MM);
+  const ss = Number(SS);
+
+  if (
+    !Number.isInteger(hh) || hh < 0 || hh > 23 ||
+    !Number.isInteger(mm) || mm < 0 || mm > 59 ||
+    !Number.isInteger(ss) || ss < 0 || ss > 59
+  ) {
+    return new Date(NaN);
+  }
+
+  return new Date(Number(y), Number(mo) - 1, Number(d), hh, mm, ss, 0);
 }
 
-/** Date → "YYYYMMDDTHHMMSSZ" (UTC) para Google */
+/** Date → YYYYMMDDTHHMMSSZ (UTC) para Google */
 function toGoogleUtcStamp(d) {
   return d.toISOString().replace(/[-:]|\.\d{3}/g, "");
 }
 
-/** "YYYY-MM-DD" → "YYYYMMDD" (all-day) */
+/** YYYY-MM-DD → YYYYMMDD */
 function ymdToGoogleDate(ymd) {
   return ymd.replace(/-/g, "");
 }
 
-/** Converte entrada diversa para "YYYY-MM-DD" (local). */
+/** Converte entrada diversa para YYYY-MM-DD local */
 function toYMD(input) {
   if (!input) return "";
   if (typeof input === "string" && isAllDayLike(input)) return input;
 
   const d = toLocalDate(input);
   if (isNaN(d)) return "";
-
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  return dateToYMDLocal(d);
 }
 
-// ──────────────────────────────────────────────────────────────
-// Helpers de query
-// ──────────────────────────────────────────────────────────────
-
-/** Seta o param na URL apenas se houver valor não-vazio. */
+/* ──────────────────────────────────────────────────────────────
+   Helpers de query
+   ────────────────────────────────────────────────────────────── */
 function setIf(url, key, value) {
   if (value === null || value === undefined) return;
   const v = String(value).trim();
@@ -118,30 +148,26 @@ function setIf(url, key, value) {
   url.searchParams.set(key, v);
 }
 
-/** Validação mínima de timezone IANA (aceita algo como "Area/City"). */
 function normalizeTz(tz) {
   const s = String(tz || DEFAULT_TZ).trim();
-  return /^([A-Za-z_]+\/[A-Za-z0-9_\-+]+)$/.test(s) ? s : DEFAULT_TZ;
+  try {
+    new Intl.DateTimeFormat("pt-BR", { timeZone: s });
+    return s;
+  } catch {
+    return DEFAULT_TZ;
+  }
 }
 
-// ──────────────────────────────────────────────────────────────
-// API pública
-// ──────────────────────────────────────────────────────────────
+function normalizeRRule(rrule) {
+  const s = String(rrule || "").trim();
+  if (!s) return "";
+  if (!/^[A-Z0-9=;,_-]+$/i.test(s)) return "";
+  return s.toUpperCase();
+}
 
-/**
- * Gera um link do Google Calendar.
- *
- * @param {Object} params
- * @param {string} params.titulo
- * @param {string|Date} params.dataInicio  - Local time ou YMD
- * @param {string|Date} params.dataFim     - Local time ou YMD
- * @param {string} [params.descricao=""]
- * @param {string} [params.local=""]
- * @param {string} [params.ctz="America/Sao_Paulo"] - Timezone de exibição no Google
- * @param {string[]} [params.attendees]    - e-mails dos convidados (opcional)
- * @param {string} [params.rrule]          - RRULE (ex.: "FREQ=DAILY;COUNT=5") (opcional)
- * @returns {string}
- */
+/* ──────────────────────────────────────────────────────────────
+   API pública
+   ────────────────────────────────────────────────────────────── */
 export function gerarLinkGoogleAgenda({
   titulo,
   dataInicio,
@@ -157,8 +183,8 @@ export function gerarLinkGoogleAgenda({
   const place = clampText(local || "", MAX_LOCATION);
   const tz = normalizeTz(ctz);
 
-  const s = String(dataInicio || "");
-  const e = String(dataFim || "");
+  const s = String(dataInicio || "").trim();
+  const e = String(dataFim || "").trim();
   const isAllDay = isAllDayLike(s) && isAllDayLike(e);
 
   const url = new URL("https://www.google.com/calendar/render");
@@ -171,7 +197,6 @@ export function gerarLinkGoogleAgenda({
   url.searchParams.set("output", "xml");
 
   if (isAllDay) {
-    // Para all-day o Google usa [start, end) em YYYYMMDD/YYYYMMDD (end exclusivo)
     const [ys, ms, ds] = s.split("-").map(Number);
     const [ye, me, de] = e.split("-").map(Number);
 
@@ -184,26 +209,14 @@ export function gerarLinkGoogleAgenda({
 
     if (end <= start) {
       end = new Date(start.getTime());
-      end.setDate(end.getDate() + 1);
-    } else {
-      // fim exclusivo: soma 1 dia
-      end.setDate(end.getDate() + 1);
     }
+    end.setDate(end.getDate() + 1); // fim exclusivo
 
-    const startStr = ymdToGoogleDate(
-      `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(
-        start.getDate()
-      ).padStart(2, "0")}`
+    url.searchParams.set(
+      "dates",
+      `${ymdToGoogleDate(dateToYMDLocal(start))}/${ymdToGoogleDate(dateToYMDLocal(end))}`
     );
-    const endStr = ymdToGoogleDate(
-      `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(
-        end.getDate()
-      ).padStart(2, "0")}`
-    );
-
-    url.searchParams.set("dates", `${startStr}/${endStr}`);
   } else {
-    // Com horário → transformar local → UTC (carimbo 'Z')
     const startLocal = toLocalDate(dataInicio);
     let endLocal = toLocalDate(dataFim);
 
@@ -211,32 +224,33 @@ export function gerarLinkGoogleAgenda({
       throw new Error("dataInicio inválida para gerar link do Google Agenda.");
     }
 
-    // Fim ausente → +90min; fim <= início → +1min
     if (!(endLocal instanceof Date) || isNaN(endLocal)) {
       endLocal = new Date(startLocal.getTime() + 90 * 60 * 1000);
     }
+
     if (endLocal <= startLocal) {
       endLocal = new Date(startLocal.getTime() + 60 * 1000);
     }
 
-    const inicioUTC = toGoogleUtcStamp(startLocal);
-    const fimUTC = toGoogleUtcStamp(endLocal);
-    url.searchParams.set("dates", `${inicioUTC}/${fimUTC}`);
+    url.searchParams.set(
+      "dates",
+      `${toGoogleUtcStamp(startLocal)}/${toGoogleUtcStamp(endLocal)}`
+    );
   }
 
-  // Convidados (opcional). Google aceita param "add" com e-mails separados por vírgula.
   if (Array.isArray(attendees) && attendees.length) {
     const emails = attendees
       .map((x) => String(x || "").trim())
       .filter((x) => x && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x));
+
     if (emails.length) {
       url.searchParams.set("add", emails.join(","));
     }
   }
 
-  // Recorrência (opcional): RRULE simples, ex.: "FREQ=DAILY;COUNT=5"
-  if (rrule && /^[A-Z]+=[^;]+(?:;[A-Z]+=[^;]+)*$/.test(rrule)) {
-    url.searchParams.set("recur", `RRULE:${rrule}`);
+  const recur = normalizeRRule(rrule);
+  if (recur) {
+    url.searchParams.set("recur", `RRULE:${recur}`);
   }
 
   return url.toString();
@@ -244,7 +258,7 @@ export function gerarLinkGoogleAgenda({
 
 /**
  * Atalho explícito para evento ALL-DAY.
- * Aceita "YYYY-MM-DD" ou Date (usaremos apenas a parte YMD local).
+ * Aceita YYYY-MM-DD ou Date.
  */
 export function gerarLinkGoogleAgendaAllDay({
   titulo,
@@ -258,6 +272,7 @@ export function gerarLinkGoogleAgendaAllDay({
 }) {
   const startYMD = toYMD(dataInicio);
   const endYMD = toYMD(dataFim);
+
   return gerarLinkGoogleAgenda({
     titulo,
     dataInicio: startYMD,

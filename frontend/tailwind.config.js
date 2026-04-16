@@ -11,13 +11,33 @@ module.exports = {
 
   darkMode: "class",
 
-  // 🔒 Evita purge agressivo remover classes dinâmicas (ex.: via map/status)
+  // 🔒 Evita purge agressivo remover classes dinâmicas
   safelist: [
-    // status (cores institucionais)
-    { pattern: /^(bg|text|ring|border)-status-(programado|andamento|encerrado|aguardando)$/ },
-    // gradientes temáticos opcionais
-    { pattern: /^bg-grad-lousa-(roxo|azul|laranja|dourado)$/ },
-    // helpers ocasionais
+    "bg-status-programado",
+    "bg-status-andamento",
+    "bg-status-encerrado",
+    "bg-status-aguardando",
+
+    "text-status-programado",
+    "text-status-andamento",
+    "text-status-encerrado",
+    "text-status-aguardando",
+
+    "ring-status-programado",
+    "ring-status-andamento",
+    "ring-status-encerrado",
+    "ring-status-aguardando",
+
+    "border-status-programado",
+    "border-status-andamento",
+    "border-status-encerrado",
+    "border-status-aguardando",
+
+    "bg-grad-lousa-roxo",
+    "bg-grad-lousa-azul",
+    "bg-grad-lousa-laranja",
+    "bg-grad-lousa-dourado",
+
     "shadow-suave",
     "shadow-destaque",
   ],
@@ -25,19 +45,22 @@ module.exports = {
   theme: {
     container: {
       center: true,
-      padding: { DEFAULT: "1rem", md: "1.25rem", lg: "2rem", xl: "2.5rem" },
+      padding: {
+        DEFAULT: "1rem",
+        md: "1.25rem",
+        lg: "2rem",
+        xl: "2.5rem",
+      },
     },
 
     extend: {
       colors: {
-        // 🎨 Paleta principal (emerald “mais premium”)
         brand: colors.emerald,
 
-        // Compat/tokens existentes
         gelo: "#f8f9fa",
-        lousa: colors.green[900],
-        verdelousa: colors.green[900],
-        textoLousa: colors.white,
+        lousa: "#14532d",
+        verdelousa: "#14532d",
+        textoLousa: "#ffffff",
 
         petroleo: "#0f172a",
         violeta: "#6d28d9",
@@ -47,7 +70,6 @@ module.exports = {
         lilas: "#a78bfa",
         rosa: "#ec4899",
 
-        // 🟩🟨🟥 Padrão institucional (memorizado)
         status: {
           programado: colors.green[500],
           andamento: colors.amber[400],
@@ -57,7 +79,14 @@ module.exports = {
       },
 
       fontFamily: {
-        sans: ["Inter", "ui-sans-serif", "system-ui", "Segoe UI", "Roboto", "sans-serif"],
+        sans: [
+          "Inter",
+          "ui-sans-serif",
+          "system-ui",
+          "Segoe UI",
+          "Roboto",
+          "sans-serif",
+        ],
       },
 
       borderRadius: {
@@ -71,24 +100,36 @@ module.exports = {
         destaque: "0 18px 55px rgba(2,6,23,0.18)",
       },
 
-      minHeight: { card: "12rem" },
+      minHeight: {
+        card: "12rem",
+      },
 
       backgroundImage: {
-        "grad-lousa-roxo": `linear-gradient(90deg, ${colors.green[900]}, #6d28d9)`,
-        "grad-lousa-azul": `linear-gradient(90deg, ${colors.green[900]}, #2563eb)`,
-        "grad-lousa-laranja": `linear-gradient(90deg, ${colors.green[900]}, #ea580c)`,
-        "grad-lousa-dourado": `linear-gradient(90deg, ${colors.green[900]}, #b45309)`,
+        "grad-lousa-roxo": `linear-gradient(90deg, #14532d, #6d28d9)`,
+        "grad-lousa-azul": `linear-gradient(90deg, #14532d, #2563eb)`,
+        "grad-lousa-laranja": `linear-gradient(90deg, #14532d, #ea580c)`,
+        "grad-lousa-dourado": `linear-gradient(90deg, #14532d, #b45309)`,
       },
 
       keyframes: {
-        "fade-in": { from: { opacity: 0 }, to: { opacity: 1 } },
-        "slide-up": { "0%": { opacity: 0, transform: "translateY(8px)" }, "100%": { opacity: 1, transform: "translateY(0)" } },
-        shimmer: { "0%": { backgroundPosition: "-468px 0" }, "100%": { backgroundPosition: "468px 0" } },
+        "fade-in": {
+          from: { opacity: 0 },
+          to: { opacity: 1 },
+        },
+        "slide-up": {
+          "0%": { opacity: 0, transform: "translateY(8px)" },
+          "100%": { opacity: 1, transform: "translateY(0)" },
+        },
+        shimmer: {
+          "0%": { backgroundPosition: "-468px 0" },
+          "100%": { backgroundPosition: "468px 0" },
+        },
         "pulse-soft": {
           "0%, 100%": { opacity: 1 },
           "50%": { opacity: 0.65 },
         },
       },
+
       animation: {
         "fade-in": "fade-in .2s ease-out forwards",
         "slide-up": "slide-up .25s ease-out forwards",
@@ -96,22 +137,23 @@ module.exports = {
         "pulse-soft": "pulse-soft 2.2s ease-in-out infinite",
       },
 
-      // Breakpoint extra mobile-first
-      screens: { xs: "475px" },
+      screens: {
+        xs: "475px",
+      },
 
-      // Espaçamentos úteis (opcional)
       spacing: {
         13: "3.25rem",
         18: "4.5rem",
       },
 
-      // Z-index utilitário para overlays premium
       zIndex: {
         60: "60",
         70: "70",
         80: "80",
         90: "90",
         100: "100",
+        999: "999",
+        9999: "9999",
       },
     },
   },
@@ -121,7 +163,6 @@ module.exports = {
     require("@tailwindcss/typography"),
     require("@tailwindcss/aspect-ratio"),
 
-    // 🔧 Vars semânticas + tipografia premium (light/dark)
     function ({ addBase, addComponents, theme }) {
       addBase({
         ":root": {
@@ -131,7 +172,7 @@ module.exports = {
           "--color-border": theme("colors.slate.200"),
           "--color-text": theme("colors.slate.900"),
           "--color-text-muted": theme("colors.slate.600"),
-          "--ring": "rgba(20,83,45,.6)", // ring institucional
+          "--ring": "rgba(20,83,45,.6)",
         },
         ".dark": {
           "--color-bg": "#0b1220",
@@ -144,7 +185,6 @@ module.exports = {
         },
       });
 
-      // Tipografia: melhora contraste e links no dark
       addComponents({
         ".prose": {
           "--tw-prose-body": theme("colors.slate.800"),

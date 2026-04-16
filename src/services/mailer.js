@@ -1,11 +1,13 @@
 /* eslint-disable no-console */
+"use strict";
+
 const nodemailer = require("nodemailer");
 
 /* =========================
    Helpers
 ========================= */
-function stripHtml(s) {
-  return String(s || "")
+function stripHtml(input) {
+  return String(input || "")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<[^>]*>/g, " ")
@@ -13,31 +15,121 @@ function stripHtml(s) {
     .trim();
 }
 
-function asRecipients(to) {
-  if (!to) return "";
-  if (Array.isArray(to)) {
-    return to.map((x) => String(x || "").trim()).filter(Boolean).join(", ");
+function asRecipients(value) {
+  if (!value) return "";
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .join(", ");
   }
-  return String(to || "").trim();
+
+  return String(value || "").trim();
 }
 
-/**
- * Suporta novo formato (EMAIL_SMTP_USER/PASS) e legado (EMAIL_REMETENTE/SENHA).
- */
+function normalizeBool(value, fallback = false) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase();
+    if (["true", "1", "sim", "yes", "on"].includes(v)) return true;
+    if (["false", "0", "nao", "não", "no", "off"].includes(v)) return false;
+  }
+  if (typeof value === "number") return value === 1;
+  return fallback;
+}
+
+function normalizeInt(value, fallback) {
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function sanitizeHeaderText(value, max = 255) {
+  return String(value || "")
+    .replace(/[\r\n]+/g, " ")
+    .trim()
+    .slice(0, max);
+}
+
+function getEnvConfig() {
+  const smtpUser = String(
+    process.env.EMAIL_SMTP_USER || process.env.EMAIL_REMETENTE || ""
+  ).trim();
+
+  const smtpPass = String(
+    process.env.EMAIL_SMTP_PASS || process.env.EMAIL_SENHA || ""
+  )
+    .replace(/\s+/g, "")
+    .trim();
+
+  const host = String(process.env.EMAIL_SMTP_HOST || "smtp.gmail.com").trim();
+  const port = normalizeInt(process.env.EMAIL_SMTP_PORT, 465);
+
+  const secure =
+    process.env.EMAIL_SMTP_SECURE != null
+      ? normalizeBool(process.env.EMAIL_SMTP_SECURE, port === 465)
+      : port === 465;
+
+  const fromName = sanitizeHeaderText(
+    process.env.EMAIL_FROM_NAME || "Escola da Saúde",
+    120
+  );
+
+  const fromAddr = String(
+    process.env.EMAIL_FROM_ADDR || process.env.EMAIL_REMETENTE || smtpUser || ""
+  ).trim();
+
+  const replyTo = String(process.env.EMAIL_REPLY_TO || "").trim();
+
+  return {
+    host,
+    port,
+    secure,
+    smtpUser,
+    smtpPass,
+    fromName,
+    fromAddr,
+    replyTo,
+  };
+}
+
 function isConfigured() {
-  const hasNew = process.env.EMAIL_SMTP_USER && process.env.EMAIL_SMTP_PASS;
-  const hasLegacy = process.env.EMAIL_REMETENTE && process.env.EMAIL_SENHA;
-  return !!(hasNew || hasLegacy);
+  const cfg = getEnvConfig();
+  return !!(cfg.smtpUser && cfg.smtpPass);
 }
 
-/** Remetente exibido (From) */
 function getFrom() {
-  const name = process.env.EMAIL_FROM_NAME || "Escola da Saúde";
-  const addr =
-    process.env.EMAIL_FROM_ADDR || // preferido (no-reply)
-    process.env.EMAIL_REMETENTE || // legado
-    "";
-  return addr ? `"${name}" <${addr}>` : `"${name}"`;
+  const cfg = getEnvConfig();
+  return cfg.fromAddr
+    ? `"${cfg.fromName}" <${cfg.fromAddr}>`
+    : `"${cfg.fromName}"`;
+}
+
+function getSender() {
+  const cfg = getEnvConfig();
+  return cfg.smtpUser || undefined;
+}
+
+function safeReplyTo(customReplyTo) {
+  const direct = String(customReplyTo || "").trim();
+  if (direct) return direct;
+
+  const cfg = getEnvConfig();
+  return cfg.replyTo || undefined;
+}
+
+function logConfigPreview() {
+  const cfg = getEnvConfig();
+
+  console.log("[email] cfg", {
+    host: cfg.host,
+    port: cfg.port,
+    secure: cfg.secure,
+    user: cfg.smtpUser || "MISSING",
+    pass: cfg.smtpPass ? `OK (${cfg.smtpPass.length} chars)` : "MISSING",
+    from: getFrom(),
+    replyTo: cfg.replyTo || "OFF",
+  });
 }
 
 /* =========================
@@ -49,73 +141,68 @@ let verifiedAt = 0;
 function getTransporter() {
   if (transporter) return transporter;
 
-  const host = process.env.EMAIL_SMTP_HOST || "smtp.gmail.com";
-  const port = Number(process.env.EMAIL_SMTP_PORT || 465);
-  const secure = String(process.env.EMAIL_SMTP_SECURE || "true").toLowerCase() === "true"; // 465=true, 587=false
+  const cfg = getEnvConfig();
 
-  // Login SMTP (preferir variáveis novas; cair para legado se necessário)
-  const SMTP_USER = process.env.EMAIL_SMTP_USER || process.env.EMAIL_REMETENTE || "";
-  const SMTP_PASS_RAW = process.env.EMAIL_SMTP_PASS || process.env.EMAIL_SENHA || "";
-  const SMTP_PASS = String(SMTP_PASS_RAW).replace(/\s+/g, ""); // limpa espaços (App Password do Gmail)
-
-  if (!SMTP_USER || !SMTP_PASS) {
-    console.warn("⚠️ [email] SMTP_USER/SMTP_PASS não configurados (verifique .env).");
+  if (!cfg.smtpUser || !cfg.smtpPass) {
+    console.warn("⚠️ [email] SMTP_USER/SMTP_PASS não configurados corretamente.");
   } else if (process.env.LOG_EMAIL === "true") {
-    console.log("[email] cfg", {
-      host,
-      port,
-      secure,
-      user: SMTP_USER,
-      pass: SMTP_PASS ? `OK (${SMTP_PASS.length} chars)` : "MISSING",
-      from: getFrom(),
-      replyTo: process.env.EMAIL_REPLY_TO ? "OK" : "OFF",
-    });
+    logConfigPreview();
   }
 
   transporter = nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    auth: SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
-    // Pool para estabilidade em produção
+    host: cfg.host,
+    port: cfg.port,
+    secure: cfg.secure,
+    auth:
+      cfg.smtpUser && cfg.smtpPass
+        ? {
+            user: cfg.smtpUser,
+            pass: cfg.smtpPass,
+          }
+        : undefined,
     pool: process.env.NODE_ENV === "production",
-    maxConnections: Number(process.env.EMAIL_POOL_MAX_CONNECTIONS || 5),
-    maxMessages: Number(process.env.EMAIL_POOL_MAX_MESSAGES || 50),
-    // Timeouts para evitar travas
-    connectionTimeout: Number(process.env.EMAIL_CONNECTION_TIMEOUT || 20000),
-    greetingTimeout: Number(process.env.EMAIL_GREETING_TIMEOUT || 10000),
-    socketTimeout: Number(process.env.EMAIL_SOCKET_TIMEOUT || 30000),
-    // TLS opcional (apenas se precisar contornar CA/self-signed)
+    maxConnections: normalizeInt(process.env.EMAIL_POOL_MAX_CONNECTIONS, 5),
+    maxMessages: normalizeInt(process.env.EMAIL_POOL_MAX_MESSAGES, 50),
+    connectionTimeout: normalizeInt(process.env.EMAIL_CONNECTION_TIMEOUT, 20000),
+    greetingTimeout: normalizeInt(process.env.EMAIL_GREETING_TIMEOUT, 10000),
+    socketTimeout: normalizeInt(process.env.EMAIL_SOCKET_TIMEOUT, 30000),
     tls:
       process.env.EMAIL_TLS_REJECT_UNAUTHORIZED === "false"
-        ? { rejectUnauthorized: false, servername: host }
-        : { servername: host },
+        ? { rejectUnauthorized: false, servername: cfg.host }
+        : { servername: cfg.host },
   });
 
   return transporter;
 }
 
-/** Verifica o transporter (cache 60s) */
-async function verifyTransporter() {
+async function verifyTransporter(force = false) {
   const t = getTransporter();
   const now = Date.now();
-  if (now - verifiedAt < 60_000) return true;
+
+  if (!force && now - verifiedAt < 60_000) return true;
 
   try {
     await t.verify();
     verifiedAt = now;
     console.log("[email] Transporter verificado com sucesso.");
     return true;
-  } catch (e) {
-    console.warn("⚠️ [email] verify falhou:", e?.message || e);
+  } catch (err) {
+    console.warn("⚠️ [email] verify falhou:", err?.message || err);
     return false;
   }
 }
 
+/* =========================
+   Send
+========================= */
 /**
- * Envia e-mail.
- * Formato 1: send({ to, subject, html, text, attachments, cc, bcc, replyTo, headers })
- * Formato 2 (legado): send(to, subject, html, text)
+ * Formato novo:
+ * send({
+ *   to, subject, html, text, attachments, cc, bcc, replyTo, headers
+ * })
+ *
+ * Formato legado:
+ * send(to, subject, html, text)
  */
 async function send(a, b, c, d) {
   if (!isConfigured()) {
@@ -124,50 +211,79 @@ async function send(a, b, c, d) {
     throw err;
   }
 
-  let to, subject, html, text, attachments, cc, bcc, replyTo, headers;
+  let to;
+  let subject;
+  let html;
+  let text;
+  let attachments = [];
+  let cc;
+  let bcc;
+  let replyTo;
+  let headers;
 
   if (typeof a === "object" && a !== null) {
-    ({
-      to,
-      subject,
-      html,
-      text,
-      attachments = [],
-      cc,
-      bcc,
-      replyTo,
-      headers,
-    } = a);
-    if (!text && html) text = stripHtml(html);
-    if (!html && text) html = text;
+    to = a.to;
+    subject = a.subject;
+    html = a.html;
+    text = a.text;
+    attachments = Array.isArray(a.attachments) ? a.attachments : [];
+    cc = a.cc;
+    bcc = a.bcc;
+    replyTo = a.replyTo;
+    headers = a.headers;
   } else {
     to = a;
     subject = b;
     html = c;
-    text = d || stripHtml(c);
+    text = d;
     attachments = [];
   }
 
   const destinatario = asRecipients(to);
+  const ccRecipients = asRecipients(cc);
+  const bccRecipients = asRecipients(bcc);
+  const assunto = sanitizeHeaderText(subject, 255);
+
   if (!destinatario) {
-    const err = new Error("Destinatário (to) vazio");
+    const err = new Error("Destinatário (to) vazio.");
     err.code = "EENVELOPE";
+    throw err;
+  }
+
+  if (!assunto) {
+    const err = new Error("Assunto do e-mail é obrigatório.");
+    err.code = "EMAIL_SUBJECT_REQUIRED";
+    throw err;
+  }
+
+  const finalHtml =
+    html != null && String(html).trim() ? String(html) : undefined;
+
+  const finalText =
+    text != null && String(text).trim()
+      ? String(text)
+      : finalHtml
+        ? stripHtml(finalHtml)
+        : "";
+
+  if (!finalHtml && !finalText) {
+    const err = new Error("Conteúdo do e-mail está vazio.");
+    err.code = "EMAIL_BODY_EMPTY";
     throw err;
   }
 
   const mailOptions = {
     from: getFrom(),
-    sender: String(process.env.EMAIL_SMTP_USER || "").trim() || undefined, // ✅ premium: alinha com SMTP
-  
+    ...(getSender() ? { sender: getSender() } : {}),
     to: destinatario,
-    subject: String(subject || "").trim(),
-    text: text || stripHtml(html),
-    html: html || undefined,
-    attachments,
-    ...(cc ? { cc: asRecipients(cc) } : {}),
-    ...(bcc ? { bcc: asRecipients(bcc) } : {}),
-    ...(replyTo ? { replyTo } : (process.env.EMAIL_REPLY_TO ? { replyTo: process.env.EMAIL_REPLY_TO } : {})),
-    ...(headers ? { headers } : {}),
+    subject: assunto,
+    ...(finalText ? { text: finalText } : {}),
+    ...(finalHtml ? { html: finalHtml } : {}),
+    ...(attachments.length ? { attachments } : {}),
+    ...(ccRecipients ? { cc: ccRecipients } : {}),
+    ...(bccRecipients ? { bcc: bccRecipients } : {}),
+    ...(safeReplyTo(replyTo) ? { replyTo: safeReplyTo(replyTo) } : {}),
+    ...(headers && typeof headers === "object" ? { headers } : {}),
   };
 
   const t = getTransporter();
@@ -176,16 +292,24 @@ async function send(a, b, c, d) {
     if (process.env.EMAIL_VERIFY === "true") {
       const ok = await verifyTransporter();
       if (!ok) {
-        const e = new Error("SMTP indisponível (verify falhou).");
-        e.code = "EMAIL_VERIFY_FAILED";
-        throw e;
+        const err = new Error("SMTP indisponível (verify falhou).");
+        err.code = "EMAIL_VERIFY_FAILED";
+        throw err;
       }
     }
 
     const info = await t.sendMail(mailOptions);
 
     if (process.env.LOG_EMAIL === "true") {
-      console.log(`📧 E-mail enviado -> ${destinatario} (${info?.messageId || "-"})`);
+      console.log("📧 E-mail enviado", {
+        to: destinatario,
+        cc: ccRecipients || null,
+        bcc: bccRecipients ? "[HIDDEN]" : null,
+        subject: assunto,
+        messageId: info?.messageId || null,
+        accepted: info?.accepted || [],
+        rejected: info?.rejected || [],
+      });
     }
 
     return info;
@@ -196,9 +320,25 @@ async function send(a, b, c, d) {
       command: err?.command,
       response: err?.response,
       responseCode: err?.responseCode,
+      to: destinatario,
+      subject: assunto,
     });
     throw err;
   }
 }
 
-module.exports = { send, verifyTransporter };
+/* =========================
+   Reset util (opcional)
+========================= */
+function resetTransporter() {
+  transporter = null;
+  verifiedAt = 0;
+}
+
+module.exports = {
+  send,
+  verifyTransporter,
+  isConfigured,
+  getFrom,
+  resetTransporter,
+};

@@ -1,18 +1,38 @@
 // src/auth/generateToken.js
 /* eslint-disable no-console */
+"use strict";
+
 const jwt = require("jsonwebtoken");
 
-/* =========================
+/* ──────────────────────────────────────────────────────────────
    Helpers
-========================= */
-function toArrayLower(v) {
-  if (!v) return [];
-  const arr = Array.isArray(v)
-    ? v
-    : typeof v === "string"
-      ? v.split(",")
+────────────────────────────────────────────────────────────── */
+function uniq(arr) {
+  return [...new Set(arr)];
+}
+
+function toArrayLower(value) {
+  if (!value) return [];
+
+  const arr = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
       : [];
-  return arr.map((s) => String(s).toLowerCase().trim()).filter(Boolean);
+
+  return uniq(
+    arr
+      .map((item) => String(item || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+function cleanNullable(value) {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+
+  const str = String(value).trim();
+  return str === "" ? null : str;
 }
 
 function sanitizePayload(payload) {
@@ -20,52 +40,96 @@ function sanitizePayload(payload) {
     throw new Error("Payload inválido para geração de token.");
   }
 
-  const id = Number(payload.id ?? payload.sub ?? payload.userId);
+  const id = Number(payload.id ?? payload.sub ?? payload.userId ?? payload.usuario_id);
+
   if (!Number.isFinite(id) || id <= 0) {
-    throw new Error("Payload JWT inválido: id ausente.");
+    throw new Error("Payload JWT inválido: id ausente ou inválido.");
   }
 
-  return {
-    // 🔑 padrão JWT
-    sub: id,
+  const perfil = toArrayLower(
+    payload.perfil ??
+    payload.perfis ??
+    payload.roles ??
+    payload.role
+  );
 
-    // 📦 dados úteis (não sensíveis)
+  const safePayload = {
+    // ✅ padrão JWT: sub deve ser string
+    sub: String(id),
+
+    // ✅ compat com o restante do projeto
     id,
-    nome: payload.nome ?? null,
-    email: payload.email ?? null,
-    cpf: payload.cpf ?? null,
+    nome: cleanNullable(payload.nome ?? payload.name),
+    email: cleanNullable(payload.email),
+    cpf: cleanNullable(payload.cpf),
 
-    // 🔐 roles normalizadas
-    perfil: toArrayLower(payload.perfil ?? payload.perfis ?? payload.roles),
+    // ✅ papéis normalizados
+    perfil,
   };
+
+  // remove undefined, mantém null quando intencional
+  return Object.fromEntries(
+    Object.entries(safePayload).filter(([, value]) => value !== undefined)
+  );
 }
 
-/**
- * 🔐 Gera um token JWT assinado
- *
- * @param {Object} payload - Ex: { id, cpf, nome, email, perfil: ['administrador'] }
- * @param {string} [expiresIn='1d'] - Tempo de expiração ('1d', '2h', etc.)
- * @param {Object} [options] - Opções extras do jwt.sign (opcional)
- * @returns {string} Token JWT
- */
-function generateToken(payload, expiresIn = "1d", options = {}) {
-  const secret = process.env.JWT_SECRET;
+function getJwtSecret() {
+  const secret = String(process.env.JWT_SECRET || "").trim();
 
   if (!secret) {
-    console.error("❌ JWT_SECRET não definido no ambiente");
+    console.error("❌ [generateToken] JWT_SECRET não definido no ambiente");
     throw new Error("Configuração de autenticação indisponível.");
   }
 
-  const safePayload = sanitizePayload(payload);
+  return secret;
+}
 
-  return jwt.sign(
-    safePayload,
-    secret,
-    {
-      expiresIn,
-      ...options, // permite future-proof (issuer, audience, etc.)
-    }
-  );
+function buildSignOptions(expiresIn, options = {}) {
+  const signOptions = {
+    expiresIn: expiresIn || "1d",
+    ...options,
+  };
+
+  const issuer = String(process.env.JWT_ISSUER || "").trim();
+  const audience = String(process.env.JWT_AUDIENCE || "").trim();
+
+  if (!signOptions.issuer && issuer) {
+    signOptions.issuer = issuer;
+  }
+
+  if (!signOptions.audience && audience) {
+    signOptions.audience = audience;
+  }
+
+  return signOptions;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Geração de token
+────────────────────────────────────────────────────────────── */
+/**
+ * Gera um token JWT assinado.
+ *
+ * Exemplo de payload:
+ * {
+ *   id: 1,
+ *   nome: "Cláudio",
+ *   email: "teste@email.com",
+ *   cpf: "12345678900",
+ *   perfil: ["administrador"]
+ * }
+ *
+ * @param {Object} payload
+ * @param {string} [expiresIn="1d"]
+ * @param {Object} [options={}]
+ * @returns {string}
+ */
+function generateToken(payload, expiresIn = "1d", options = {}) {
+  const secret = getJwtSecret();
+  const safePayload = sanitizePayload(payload);
+  const signOptions = buildSignOptions(expiresIn, options);
+
+  return jwt.sign(safePayload, secret, signOptions);
 }
 
 module.exports = generateToken;

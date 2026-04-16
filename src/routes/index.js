@@ -14,11 +14,15 @@ const asyncHandler =
 /* ───────────────── Auth resiliente (p/ bridges globais) ───────────────── */
 const _auth = require("../auth/authMiddleware");
 const requireAuth =
-  typeof _auth === "function" ? _auth : _auth?.default || _auth?.authMiddleware || _auth?.auth;
+  typeof _auth === "function"
+    ? _auth
+    : _auth?.default || _auth?.authMiddleware || _auth?.auth;
 
 if (typeof requireAuth !== "function") {
   console.error("[routes:index] authMiddleware inválido:", _auth);
-  throw new Error("authMiddleware não é função (verifique exports em src/auth/authMiddleware.js)");
+  throw new Error(
+    "authMiddleware não é função (verifique exports em src/auth/authMiddleware.js)"
+  );
 }
 
 /* ───────────────── Controller ÚNICO de submissões (inclui avaliador) ───────────────── */
@@ -40,6 +44,7 @@ const lookupsPublicRoute = require("./lookupsPublicRoute");
 // Auth / Perfil / Login
 const loginRoute = require("./loginRoute");
 const perfilRoute = require("./perfilRoute");
+const authPublicRoute = require("./authPublicRoute");
 const authGoogleRoute = require("../auth/authGoogle");
 
 // Upload
@@ -77,10 +82,10 @@ const trabalhoRoute = require("./trabalhoRoute");
 // ✅ Assinatura (instrutor/admin)
 const assinaturaRoute = require("./assinaturaRoute");
 
-// ✅ CHAMADAS (router próprio, NÃO “auto-prefixado” na raiz)
+// ✅ CHAMADAS
 const chamadaRoute = require("./chamadaRoute");
 
-// Submissão (opcional) — com LOG do motivo quando falha
+// Submissão (opcional)
 let submissaoRoute = null;
 try {
   submissaoRoute = require("./submissaoRoute");
@@ -102,7 +107,7 @@ const metricRoute = require("./metricRoute");
 // Datas (turma/evento)
 const dataEventoRoute = require("./dataEventoRoute");
 
-// Notificação (opcional) — com LOG do motivo quando falha
+// Notificação (opcional)
 let notificacaoRoute = null;
 try {
   notificacaoRoute = require("./notificacaoRoute");
@@ -110,6 +115,64 @@ try {
 } catch (e) {
   console.warn("[routes] ⚠️ notificacaoRoute não carregou:", e?.message || e);
   notificacaoRoute = null;
+}
+
+/* =========================
+   Helpers de forward / bridge
+========================= */
+function forwardToRouter(targetRouter, prefixToAdd = "") {
+  return (req, res, next) => {
+    const originalUrl = req.url;
+    req._bridgedFrom = req.originalUrl || req.url;
+
+    req.url = `${prefixToAdd}${originalUrl}`;
+
+    return targetRouter(req, res, (err) => {
+      req.url = originalUrl;
+      if (err) return next(err);
+      if (res.headersSent) return;
+      return next();
+    });
+  };
+}
+
+function forwardTry(targetRouter, makeCandidates) {
+  return (req, res, next) => {
+    const originalUrl = req.url;
+    const candidates = makeCandidates(originalUrl);
+    req._bridgedFrom = req.originalUrl || req.url;
+
+    let idx = 0;
+
+    const attempt = () => {
+      if (idx >= candidates.length) {
+        req.url = originalUrl;
+        return next();
+      }
+
+      req.url = candidates[idx++];
+
+      return targetRouter(req, res, (err) => {
+        if (err) {
+          req.url = originalUrl;
+          return next(err);
+        }
+        if (res.headersSent) {
+          req.url = originalUrl;
+          return;
+        }
+        return attempt();
+      });
+    };
+
+    return attempt();
+  };
+}
+
+function singularizeAdminSuffix(suffix) {
+  return String(suffix)
+    .replace(/^\/eventos(\/|$)/, "/evento$1")
+    .replace(/^\/turmas(\/|$)/, "/turma$1");
 }
 
 /* =========================
@@ -128,6 +191,7 @@ router.use("/public", lookupsPublicRoute);
 ========================= */
 router.use("/login", loginRoute);
 router.use("/perfil", perfilRoute);
+router.use("/auth", authPublicRoute);
 router.use("/auth", authGoogleRoute);
 
 /* =========================
@@ -139,17 +203,18 @@ router.use("/upload", uploadRoute);
    Eventos / Turma / Inscrição / Agenda
 ========================= */
 router.use("/evento", eventoRoute);
-router.use("/turma", turmaRoute);
-router.use("/inscricao", inscricaoRoute);
-router.use("/agenda", agendaRoute);
-
-// ✅ Aliases plural/legado
 router.use("/eventos", eventoRoute);
+
+router.use("/turma", turmaRoute);
 router.use("/turmas", turmaRoute);
+
+router.use("/inscricao", inscricaoRoute);
 router.use("/inscricoes", inscricaoRoute);
 
+router.use("/agenda", agendaRoute);
+
 /* =========================
-   ✅ Calendário / Bloqueios (front legado chama /api/calendario)
+   ✅ Calendário / Bloqueios
 ========================= */
 router.use("/calendario", calendarioRoute);
 router.use("/calendarios", calendarioRoute);
@@ -160,10 +225,9 @@ router.use("/calendars", calendarioRoute);
    Presença / Relatório
 ========================= */
 router.use("/presenca", presencaRoute);
-router.use("/relatorio", relatorioRoute);
-
-// ✅ Aliases legado
 router.use("/presencas", presencaRoute);
+
+router.use("/relatorio", relatorioRoute);
 router.use("/relatorios", relatorioRoute);
 router.use("/relatorio-presencas", relatorioRoute);
 router.use("/relatorio-presenca", relatorioRoute);
@@ -172,12 +236,12 @@ router.use("/relatorio-presenca", relatorioRoute);
    Usuário / Instrutor / Unidade
 ========================= */
 router.use("/usuario", usuarioRoute);
-router.use("/instrutor", instrutorRoute);
-router.use("/unidade", unidadeRoute);
-
-// ✅ Aliases legado
 router.use("/usuarios", usuarioRoute);
+
+router.use("/instrutor", instrutorRoute);
 router.use("/instrutores", instrutorRoute);
+
+router.use("/unidade", unidadeRoute);
 router.use("/unidades", unidadeRoute);
 
 /* =========================================================
@@ -186,23 +250,60 @@ router.use("/unidades", unidadeRoute);
 ========================================================= */
 if (submissaoCtrl) {
   // /api/avaliador/*
-  router.get("/avaliador/submissao", requireAuth, asyncHandler(submissaoCtrl.listarAtribuidas));
-  router.get("/avaliador/pendentes", requireAuth, asyncHandler(submissaoCtrl.listarPendentes));
-  router.get("/avaliador/minhas-contagens", requireAuth, asyncHandler(submissaoCtrl.minhasContagens));
-  router.get("/avaliador/para-mim", requireAuth, asyncHandler(submissaoCtrl.paraMim));
-  router.get("/avaliador/minhas-submissao", requireAuth, asyncHandler(submissaoCtrl.listarAtribuidas)); // alias
+  router.get(
+    "/avaliador/submissao",
+    requireAuth,
+    asyncHandler(submissaoCtrl.listarAtribuidas)
+  );
+  router.get(
+    "/avaliador/pendentes",
+    requireAuth,
+    asyncHandler(submissaoCtrl.listarPendentes)
+  );
+  router.get(
+    "/avaliador/minhas-contagens",
+    requireAuth,
+    asyncHandler(submissaoCtrl.minhasContagens)
+  );
+  router.get(
+    "/avaliador/para-mim",
+    requireAuth,
+    asyncHandler(submissaoCtrl.paraMim)
+  );
+  router.get(
+    "/avaliador/minhas-submissao",
+    requireAuth,
+    asyncHandler(submissaoCtrl.listarAtribuidas)
+  ); // alias
 
-  // legacy diretos
-  router.get("/avaliacao/atribuidas", requireAuth, asyncHandler(submissaoCtrl.listarAtribuidas));
-  router.get("/submissao/atribuidas", requireAuth, asyncHandler(submissaoCtrl.listarAtribuidas));
-  router.get("/submissao/para-mim", requireAuth, asyncHandler(submissaoCtrl.paraMim));
-  router.get("/admin/submissao/para-mim", requireAuth, asyncHandler(submissaoCtrl.paraMim));
+  // legados diretos
+  router.get(
+    "/avaliacao/atribuidas",
+    requireAuth,
+    asyncHandler(submissaoCtrl.listarAtribuidas)
+  );
+  router.get(
+    "/submissao/atribuidas",
+    requireAuth,
+    asyncHandler(submissaoCtrl.listarAtribuidas)
+  );
+  router.get(
+    "/submissao/para-mim",
+    requireAuth,
+    asyncHandler(submissaoCtrl.paraMim)
+  );
+  router.get(
+    "/admin/submissao/para-mim",
+    requireAuth,
+    asyncHandler(submissaoCtrl.paraMim)
+  );
 
-  // HEADs “descoberta”
+  // HEADs
   router.head("/avaliador/submissao", (_req, res) => res.sendStatus(204));
   router.head("/avaliador/pendentes", (_req, res) => res.sendStatus(204));
   router.head("/avaliador/minhas-contagens", (_req, res) => res.sendStatus(204));
   router.head("/avaliador/para-mim", (_req, res) => res.sendStatus(204));
+  router.head("/avaliador/minhas-submissao", (_req, res) => res.sendStatus(204));
   router.head("/avaliacao/atribuidas", (_req, res) => res.sendStatus(204));
   router.head("/submissao/atribuidas", (_req, res) => res.sendStatus(204));
   router.head("/submissao/para-mim", (_req, res) => res.sendStatus(204));
@@ -212,70 +313,39 @@ if (submissaoCtrl) {
 /* =========================================================
    ✅ BRIDGE GLOBAL — Admin Submissão/Chamada (frontend legado)
    Front chama: /api/admin/submissao, /api/admin/chamada...
-   Encaminha para o chamadaRoute SEM montar na raiz.
 ========================================================= */
-function forwardToChamadaRoute(prefixToAdd) {
-  return (req, res, next) => {
-    const original = req.url;
-    req._bridgedFrom = req.originalUrl || req.url;
+router.use(
+  "/admin/submissao",
+  requireAuth,
+  forwardToRouter(chamadaRoute, "/admin/submissao")
+);
 
-    req.url = `${prefixToAdd}${original}`;
-    return chamadaRoute(req, res, (err) => {
-      if (err) return next(err);
-      if (res.headersSent) return;
-      req.url = original;
-      return next();
-    });
-  };
-}
+router.use(
+  "/admin/submissoes",
+  requireAuth,
+  forwardToRouter(chamadaRoute, "/admin/submissoes")
+);
 
-// ✅ cobre exatamente as rotas que o front legado usa
-router.use("/admin/submissao", requireAuth, forwardToChamadaRoute("/admin/submissao"));
-router.use("/admin/submissoes", requireAuth, forwardToChamadaRoute("/admin/submissoes"));
+router.use(
+  "/admin/chamada",
+  requireAuth,
+  forwardToRouter(chamadaRoute, "/admin/chamada")
+);
 
-router.use("/admin/chamada", requireAuth, forwardToChamadaRoute("/admin/chamada"));
-router.use("/admin/chamadas", requireAuth, forwardToChamadaRoute("/admin/chamadas"));
+router.use(
+  "/admin/chamadas",
+  requireAuth,
+  forwardToRouter(chamadaRoute, "/admin/chamadas")
+);
 
 /* =========================================================
    ✅ BRIDGE GLOBAL — Admin Avaliação (frontend legado)
    Front chama: /api/admin/avaliacao/eventos
-   ✅ Corrige o caso em que o avaliacaoRoute usa /admin/evento (singular)
 ========================================================= */
-function forwardTryAvaliacao(makeCandidates) {
-  return (req, res, next) => {
-    const originalUrl = req.url;
-    const candidates = makeCandidates(originalUrl);
-
-    let i = 0;
-    const attempt = () => {
-      if (i >= candidates.length) {
-        req.url = originalUrl;
-        return next();
-      }
-
-      req.url = candidates[i++];
-      return avaliacaoRoute(req, res, (err) => {
-        if (err) return next(err);
-        if (res.headersSent) return;
-        return attempt();
-      });
-    };
-
-    return attempt();
-  };
-}
-
-// helpers de plural->singular (eventos->evento, turmas->turma)
-function singularizeAdminSuffix(suffix) {
-  return String(suffix)
-    .replace(/^\/eventos(\/|$)/, "/evento$1")
-    .replace(/^\/turmas(\/|$)/, "/turma$1");
-}
-
 router.use(
   "/admin/avaliacao",
   requireAuth,
-  forwardTryAvaliacao((suffix) => {
+  forwardTry(avaliacaoRoute, (suffix) => {
     const s = String(suffix || "/");
     const sSing = singularizeAdminSuffix(s);
 
@@ -287,7 +357,27 @@ router.use(
       `/admin/avaliacoes${sSing}`,
       `/admin/avaliacoes${s}`,
       `${sSing}`,
-      `${s}`
+      `${s}`,
+    ];
+  })
+);
+
+router.use(
+  "/admin/avaliacoes",
+  requireAuth,
+  forwardTry(avaliacaoRoute, (suffix) => {
+    const s = String(suffix || "/");
+    const sSing = singularizeAdminSuffix(s);
+
+    return [
+      `/admin${sSing}`,
+      `/admin${s}`,
+      `/admin/avaliacao${sSing}`,
+      `/admin/avaliacao${s}`,
+      `/admin/avaliacoes${sSing}`,
+      `/admin/avaliacoes${s}`,
+      `${sSing}`,
+      `${s}`,
     ];
   })
 );
@@ -301,9 +391,25 @@ router.use("/avaliacoes", avaliacaoRoute);
 /* =========================
    Dashboard
 ========================= */
+// rota principal moderna
 router.use("/dashboard", dashboardRoute);
+
+// alias do dashboard do usuário
 router.use("/dashboard-usuario", dashboardRoute);
-router.use("/dashboard-analitico", dashboardRoute);
+
+// ✅ bridge dedicado do analítico
+router.use(
+  "/dashboard-analitico",
+  requireAuth,
+  forwardTry(dashboardRoute, (suffix) => {
+    const s = String(suffix || "");
+    return [
+      `/admin${s}`,
+      `/analitico${s}`,
+      `${s || "/"}`,
+    ];
+  })
+);
 
 /* =========================
    Certificado
@@ -341,7 +447,6 @@ router.use("/assinaturas", assinaturaRoute);
 
 /* =========================
    ✅ CHAMADAS — mounts “bonitos” (público)
-   (admin legado já é atendido pelo bridge acima)
 ========================= */
 router.use("/chamada", chamadaRoute);
 router.use("/chamadas", chamadaRoute);
@@ -353,7 +458,7 @@ if (submissaoRoute) {
   router.use("/submissao", submissaoRoute);
   router.use("/submissoes", submissaoRoute);
 } else {
-  // DEV fallback mínimo
+  // fallback mínimo
   router.get("/submissao/minhas", (_req, res) => res.json([]));
   router.get("/submissoes/minhas", (_req, res) => res.json([]));
 }
@@ -370,6 +475,7 @@ router.use("/questionario", questionarioRoute);
 router.use("/questionarios", questionarioRoute);
 
 router.use("/votacao", votacaoRoute);
+router.use("/votacoes", votacaoRoute);
 
 // ✅ Métricas (com aliases)
 router.use("/metric", metricRoute);
@@ -385,6 +491,8 @@ if (notificacaoRoute) {
 /* =========================
    Fallback 404 (API)
 ========================= */
-router.use((_req, res) => res.status(404).json({ erro: "Rota não encontrada." }));
+router.use((_req, res) =>
+  res.status(404).json({ erro: "Rota não encontrada." })
+);
 
 module.exports = router;

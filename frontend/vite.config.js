@@ -4,28 +4,19 @@ import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import path from "path";
 
-function toBool(v, def = false) {
-  if (v == null) return def;
-  const s = String(v).toLowerCase();
-  return s === "1" || s === "true" || s === "yes";
-}
-
 export default defineConfig(({ mode }) => {
   const root = process.cwd();
-  const env = loadEnv(mode, root, ""); // expõe apenas VITE_* em runtime
+  const env = loadEnv(mode, root, ""); // carrega variáveis para a config; só VITE_* vão para o client
 
   const IS_PROD = mode === "production";
-const PWA_DISABLED = env.VITE_ENABLE_PWA === "false" || env.VITE_ENABLE_PWA === "0";
-const ENABLE_PWA = !PWA_DISABLED;
+  const ENABLE_PWA =
+    env.VITE_ENABLE_PWA !== "false" && env.VITE_ENABLE_PWA !== "0";
 
-  // ▶ Proxy alvo no dev
   const proxyTarget =
     (env.VITE_DEV_PROXY_TARGET || "http://localhost:3000").replace(/\/+$/, "");
   const isHttps = /^https:/i.test(proxyTarget);
 
-  // ▶ Caches runtime para Workbox
   const runtimeCaching = [
-    // API da Escola (GET/HEAD): cache com network-first p/ manter dados frescos
     {
       urlPattern: ({ url }) =>
         url.origin.includes("escola-saude-api.onrender.com") ||
@@ -35,11 +26,10 @@ const ENABLE_PWA = !PWA_DISABLED;
       options: {
         cacheName: "api-cache",
         networkTimeoutSeconds: 6,
-        expiration: { maxEntries: 80, maxAgeSeconds: 60 * 10 }, // 10min
+        expiration: { maxEntries: 80, maxAgeSeconds: 60 * 10 },
         cacheableResponse: { statuses: [0, 200] },
       },
     },
-    // Fontes Google
     {
       urlPattern: /^https:\/\/fonts\.(googleapis|gstatic)\.com\/.*/i,
       handler: "CacheFirst",
@@ -49,14 +39,14 @@ const ENABLE_PWA = !PWA_DISABLED;
         cacheableResponse: { statuses: [0, 200] },
       },
     },
-    // Imagens externas (logos/banners): cache-first com expiração
     {
       urlPattern: ({ request }) =>
-        request.destination === "image" || /\.(png|jpe?g|gif|svg|webp)$/i.test(request.url),
+        request.destination === "image" ||
+        /\.(png|jpe?g|gif|svg|webp)$/i.test(request.url),
       handler: "CacheFirst",
       options: {
         cacheName: "images",
-        expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 * 30 }, // 30 dias
+        expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 * 30 },
         cacheableResponse: { statuses: [0, 200] },
       },
     },
@@ -66,12 +56,8 @@ const ENABLE_PWA = !PWA_DISABLED;
     base: "/",
 
     plugins: [
-      react({
-        babel: {
-          // espaço para transforms específicos se precisar
-        },
-      }),
-    
+      react(),
+
       VitePWA({
         disable: !ENABLE_PWA,
         injectRegister: "script",
@@ -84,18 +70,25 @@ const ENABLE_PWA = !PWA_DISABLED;
           scope: "/",
           display: "standalone",
           background_color: "#ffffff",
-          theme_color: "#0f766e",
+          theme_color: "#14532d",
           icons: [
             { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
             { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
-            { src: "/icons/maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+            {
+              src: "/icons/maskable-512.png",
+              sizes: "512x512",
+              type: "image/png",
+              purpose: "maskable",
+            },
           ],
         },
         workbox: {
           clientsClaim: true,
           skipWaiting: true,
           cleanupOutdatedCaches: true,
-          globPatterns: ["**/*.{js,css,html,ico,png,svg,webp}"],
+          globPatterns: [
+            "**/*.{js,css,html,ico,png,svg,webp,jpg,jpeg,woff2,webmanifest}",
+          ],
           navigateFallback: "/index.html",
           runtimeCaching,
         },
@@ -108,7 +101,6 @@ const ENABLE_PWA = !PWA_DISABLED;
       strictPort: true,
       hmr: { timeout: 12000, overlay: true },
       headers: {
-        // Cabeçalhos úteis em dev (não-ruptivos)
         "Referrer-Policy": "strict-origin-when-cross-origin",
         "X-Content-Type-Options": "nosniff",
       },
@@ -124,43 +116,28 @@ const ENABLE_PWA = !PWA_DISABLED;
           secure: isHttps,
         },
       },
-      
     },
 
     resolve: {
       alias: {
-        react: path.resolve(__dirname, "node_modules/react"),
-        "react-dom": path.resolve(__dirname, "node_modules/react-dom"),
         "@": path.resolve(__dirname, "src"),
       },
     },
 
     define: {
-      // flags globais se precisar (ex.: remover warnings libs)
       __APP_VERSION__: JSON.stringify(process.env.npm_package_version),
     },
 
     build: {
       sourcemap: !IS_PROD,
       cssCodeSplit: true,
-      minify: IS_PROD ? "terser" : false,
-      terserOptions: IS_PROD
-        ? {
-            compress: {
-              drop_console: false, // mantenha logs se desejar
-              passes: 2,
-            },
-            mangle: true,
-            format: { comments: false },
-          }
-        : undefined,
+      minify: IS_PROD ? "esbuild" : false,
       target: "es2018",
       reportCompressedSize: true,
       chunkSizeWarningLimit: 1000,
-      assetsInlineLimit: 4096, // 4kb: imagens pequenas inline
+      assetsInlineLimit: 4096,
       rollupOptions: {
         output: {
-          // nomes de arquivos/chunks
           entryFileNames: "assets/[name]-[hash].js",
           chunkFileNames: "assets/[name]-[hash].js",
           assetFileNames: "assets/[name]-[hash][extname]",
@@ -168,13 +145,11 @@ const ENABLE_PWA = !PWA_DISABLED;
             react: ["react", "react-dom", "react-router-dom"],
             chart: ["chart.js", "react-chartjs-2"],
             qrcode: ["qrcode.react", "react-qr-code"],
-            // libs menores irão para "vendor" automaticamente
           },
         },
       },
     },
 
-    // Apenas variáveis com prefixo VITE_ são expostas no client
     envPrefix: "VITE_",
   };
 });

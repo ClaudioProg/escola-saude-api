@@ -7,7 +7,7 @@ const router = express.Router();
 
 const metricService = require("../services/metricService");
 
-// Helper pra responder sempre ok/err
+/* ───────────────── Helpers premium ───────────────── */
 const wrap =
   (fn) =>
   async (req, res, next) => {
@@ -18,64 +18,113 @@ const wrap =
     }
   };
 
-// ✅ Se o service já expõe um middleware/router pronto, usa direto
-if (typeof metricService === "function") {
-  module.exports = metricService;
-  return;
-}
-if (metricService && typeof metricService === "object" && typeof metricService.handle === "function") {
-  // provavelmente é um express.Router
-  module.exports = metricService;
-  return;
+function isExpressRouterLike(obj) {
+  return !!(
+    obj &&
+    typeof obj === "function" &&
+    typeof obj.use === "function" &&
+    typeof obj.handle === "function"
+  );
 }
 
-/**
- * A partir daqui: metricService é OBJETO (não middleware).
- * Exponha endpoints mínimos e adapte conforme as funções existentes.
- */
+function isMiddlewareLike(obj) {
+  return typeof obj === "function";
+}
 
-// Health/overview: tenta mostrar chaves do service (útil pra debug)
-router.get("/", (req, res) => {
-  return res.json({
-    ok: true,
-    serviceType: typeof metricService,
-    keys: metricService && typeof metricService === "object" ? Object.keys(metricService) : [],
+function toFiniteNumber(value, fallback = null) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/* ───────────────── Export direto se o service já for middleware/router ───────────────── */
+if (isExpressRouterLike(metricService) || isMiddlewareLike(metricService)) {
+  module.exports = metricService;
+} else {
+  /**
+   * A partir daqui: metricService é OBJETO (não middleware).
+   * Exponha endpoints mínimos e adapte conforme as funções existentes.
+   */
+
+  // Health/overview: útil para debug
+  router.get("/", (_req, res) => {
+    return res.json({
+      ok: true,
+      serviceType: typeof metricService,
+      keys:
+        metricService && typeof metricService === "object"
+          ? Object.keys(metricService)
+          : [],
+    });
   });
-});
 
-// Exemplo: /metric/inc/:nome  (se existir metricService.inc)
-router.post(
-  "/inc/:name",
-  wrap(async (req, res) => {
-    const name = String(req.params.name || "").trim();
-    if (!name) return res.status(400).json({ ok: false, erro: "name obrigatório" });
+  router.head("/", (_req, res) => {
+    return res.sendStatus(204);
+  });
 
-    if (typeof metricService?.inc !== "function") {
-      return res.status(501).json({ ok: false, erro: "metricService.inc não implementado" });
-    }
+  // Exemplo: /metric/inc/:name  (se existir metricService.inc)
+  router.post(
+    "/inc/:name",
+    wrap(async (req, res) => {
+      const name = String(req.params.name || "").trim();
+      if (!name) {
+        return res
+          .status(400)
+          .json({ ok: false, erro: "name obrigatório" });
+      }
 
-    const value = req.body?.value ?? 1;
-    await metricService.inc(name, value);
-    return res.json({ ok: true });
-  })
-);
+      if (typeof metricService?.inc !== "function") {
+        return res.status(501).json({
+          ok: false,
+          erro: "metricService.inc não implementado",
+        });
+      }
 
-// Exemplo: /metric/timing/:nome  (se existir metricService.timing)
-router.post(
-  "/timing/:name",
-  wrap(async (req, res) => {
-    const name = String(req.params.name || "").trim();
-    const ms = Number(req.body?.ms);
-    if (!name) return res.status(400).json({ ok: false, erro: "name obrigatório" });
-    if (!Number.isFinite(ms)) return res.status(400).json({ ok: false, erro: "ms numérico obrigatório" });
+      const value = toFiniteNumber(req.body?.value, 1);
+      await metricService.inc(name, value);
 
-    if (typeof metricService?.timing !== "function") {
-      return res.status(501).json({ ok: false, erro: "metricService.timing não implementado" });
-    }
+      return res.json({
+        ok: true,
+        metric: name,
+        value,
+      });
+    })
+  );
 
-    await metricService.timing(name, ms);
-    return res.json({ ok: true });
-  })
-);
+  // Exemplo: /metric/timing/:name  (se existir metricService.timing)
+  router.post(
+    "/timing/:name",
+    wrap(async (req, res) => {
+      const name = String(req.params.name || "").trim();
+      const ms = toFiniteNumber(req.body?.ms);
 
-module.exports = router;
+      if (!name) {
+        return res
+          .status(400)
+          .json({ ok: false, erro: "name obrigatório" });
+      }
+
+      if (!Number.isFinite(ms)) {
+        return res
+          .status(400)
+          .json({ ok: false, erro: "ms numérico obrigatório" });
+      }
+
+      if (typeof metricService?.timing !== "function") {
+        return res.status(501).json({
+          ok: false,
+          erro: "metricService.timing não implementado",
+        });
+      }
+
+      await metricService.timing(name, ms);
+
+      return res.json({
+        ok: true,
+        metric: name,
+        ms,
+      });
+    })
+  );
+
+  module.exports = router;
+}

@@ -1,13 +1,12 @@
 /* eslint-disable no-console */
 "use strict";
 
-// 📁 server.js — PREMIUM++
+// 📁 src/server.js — PREMIUM++
 // - CSP robusta DEV/PROD com nonce
 // - uploads estáticos corretos
 // - CORS resiliente
 // - logs com request id
 // - rate limit antes das rotas
-// - suporte ao novo módulo de informações
 // - fallback SPA seguro
 // - pronto para produção
 
@@ -37,14 +36,14 @@ const {
   UPLOADS_DIR,
   MODELOS_CHAMADAS_DIR,
   CERT_DIR,
-  ensureDir
+  ensureDir,
 } = require("./paths");
 
 /* ───────── Rotas (fonte única) ───────── */
 const apiRoutes = require("./routes");
 
 const IS_DEV = process.env.NODE_ENV !== "production";
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, "public");
 
 const app = express();
@@ -70,22 +69,45 @@ function asyncHandler(fn) {
 function safeBooleanEnv(name, fallback = false) {
   const raw = process.env[name];
   if (raw == null) return fallback;
-  return ["1", "true", "yes", "on", "sim"].includes(String(raw).trim().toLowerCase());
+
+  return ["1", "true", "yes", "on", "sim"].includes(
+    String(raw).trim().toLowerCase()
+  );
 }
 
-/* ───────── PREMIUM: Request ID + response header ───────── */
+function sendError(res, status, message, extra = {}) {
+  return res.status(status).json({
+    ok: false,
+    erro: message,
+    requestId: res.getHeader("X-Request-Id"),
+    ...extra,
+  });
+}
+
+function sendOk(res, data = {}, extra = {}) {
+  return res.status(200).json({
+    ok: true,
+    requestId: res.getHeader("X-Request-Id"),
+    ...extra,
+    ...data,
+  });
+}
+
+/* ───────── Request ID + response header ───────── */
 app.use((req, res, next) => {
   const incoming = req.headers["x-request-id"];
   const rid =
     (typeof incoming === "string" && incoming.trim().slice(0, 128)) ||
-    (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex"));
+    (crypto.randomUUID
+      ? crypto.randomUUID()
+      : crypto.randomBytes(16).toString("hex"));
 
   req.requestId = rid;
   res.setHeader("X-Request-Id", rid);
   next();
 });
 
-/* ───────── Normalização de auth (não quebra nada; só ajuda debug) ───────── */
+/* ───────── Normalização de auth (ajuda logs/debug) ───────── */
 app.use((req, _res, next) => {
   const u = req.user || req.usuario || req.auth || null;
 
@@ -115,10 +137,10 @@ app.use((req, res, next) => {
   next();
 });
 
-/* ───────── Helmet + CSP (PREMIUM) ───────── */
+/* ───────── Helmet + CSP ───────── */
 app.use((req, res, next) => {
   const nonce = res.locals.cspNonce;
-  const frontendFromEnv = (process.env.FRONTEND_URL || "").trim();
+  const frontendFromEnv = String(process.env.FRONTEND_URL || "").trim();
 
   const devConnect = IS_DEV
     ? [
@@ -126,7 +148,7 @@ app.use((req, res, next) => {
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:3000",
-        "http://127.0.0.1:3000"
+        "http://127.0.0.1:3000",
       ]
     : [];
 
@@ -135,7 +157,7 @@ app.use((req, res, next) => {
     "https://accounts.google.com",
     "https://www.googleapis.com",
     ...(frontendFromEnv ? [frontendFromEnv] : []),
-    ...devConnect
+    ...devConnect,
   ];
 
   const scriptSrcBase = [
@@ -143,18 +165,18 @@ app.use((req, res, next) => {
     "https://accounts.google.com",
     "https://www.gstatic.com",
     "https://vercel.live",
-    `'nonce-${nonce}'`
+    `'nonce-${nonce}'`,
   ];
 
-  const scriptSrcProd = [...scriptSrcBase, "'strict-dynamic'"];
-  const scriptSrcDev = [...scriptSrcBase, "'unsafe-inline'", "'unsafe-eval'"];
-  const scriptSrc = IS_DEV ? scriptSrcDev : scriptSrcProd;
+  const scriptSrc = IS_DEV
+    ? [...scriptSrcBase, "'unsafe-inline'", "'unsafe-eval'"]
+    : [...scriptSrcBase, "'strict-dynamic'"];
 
   const styleSrc = [
     "'self'",
     "'unsafe-inline'",
     "https://fonts.googleapis.com",
-    "https://accounts.google.com/gsi/style"
+    "https://accounts.google.com/gsi/style",
   ];
 
   const fontSrc = ["'self'", "data:", "https://fonts.gstatic.com"];
@@ -176,8 +198,8 @@ app.use((req, res, next) => {
         camera: [],
         payment: [],
         usb: [],
-        interestCohort: []
-      }
+        interestCohort: [],
+      },
     },
     contentSecurityPolicy: {
       useDefaults: true,
@@ -195,9 +217,9 @@ app.use((req, res, next) => {
         "script-src-attr": scriptSrcAttr,
         "connect-src": connectSrc,
         "manifest-src": ["'self'"],
-        "worker-src": workerSrc
-      }
-    }
+        "worker-src": workerSrc,
+      },
+    },
   })(req, res, next);
 });
 
@@ -205,7 +227,7 @@ app.use((req, res, next) => {
 app.use(compression());
 
 /* ───────── CORS (GLOBAL) ───────── */
-const fromEnv = (process.env.CORS_ORIGINS || "")
+const fromEnv = String(process.env.CORS_ORIGINS || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
@@ -216,7 +238,7 @@ const defaultAllowed = [
   "http://localhost:4173",
   "http://127.0.0.1:4173",
   "https://escola-saude-api-frontend.vercel.app",
-  "https://escoladasaude.vercel.app"
+  "https://escoladasaude.vercel.app",
 ];
 
 const allowedOrigins = [...defaultAllowed, ...fromEnv];
@@ -225,7 +247,10 @@ const vercelRegex = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
 const corsOptions = {
   origin(origin, cb) {
     if (!origin) return cb(null, true);
-    if (allowedOrigins.includes(origin) || vercelRegex.test(origin)) return cb(null, true);
+
+    if (allowedOrigins.includes(origin) || vercelRegex.test(origin)) {
+      return cb(null, true);
+    }
 
     const err = new Error("CORS bloqueado.");
     err.status = 403;
@@ -240,9 +265,9 @@ const corsOptions = {
     "Last-Modified",
     "ETag",
     "X-Perfil-Incompleto",
-    "X-Request-Id"
+    "X-Request-Id",
   ],
-  maxAge: 86400
+  maxAge: 86400,
 };
 
 app.use(cors(corsOptions));
@@ -260,8 +285,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// Preflight
-app.options("*", cors(corsOptions), (_req, res) => res.sendStatus(204));
+/* ✅ Preflight */
+app.options(/.*/, cors(corsOptions), (_req, res) => res.sendStatus(204));
 
 /* ───────── Parsers ───────── */
 app.use(express.json({ limit: "10mb" }));
@@ -273,7 +298,6 @@ ensureDir(UPLOADS_DIR);
 ensureDir(MODELOS_CHAMADAS_DIR);
 ensureDir(CERT_DIR);
 
-// ✅ garante também subpastas essenciais
 ensureDir(path.join(UPLOADS_DIR, "eventos"));
 ensureDir(path.join(UPLOADS_DIR, "posters"));
 ensureDir(path.join(UPLOADS_DIR, "modelos"));
@@ -295,36 +319,33 @@ function setUploadHeaders(res) {
   res.setHeader("Cache-Control", IS_DEV ? "no-store" : "public, max-age=3600");
 }
 
-// ✅ específico /uploads/eventos
 app.use(
   "/uploads/eventos",
   cors(corsOptions),
   express.static(path.join(UPLOADS_DIR, "eventos"), {
     fallthrough: false,
     maxAge: IS_DEV ? 0 : "1h",
-    setHeaders: setUploadHeaders
+    setHeaders: setUploadHeaders,
   })
 );
 
-// ✅ específico /uploads/informacoes
 app.use(
   "/uploads/informacoes",
   cors(corsOptions),
   express.static(path.join(UPLOADS_DIR, "informacoes"), {
     fallthrough: false,
     maxAge: IS_DEV ? 0 : "1h",
-    setHeaders: setUploadHeaders
+    setHeaders: setUploadHeaders,
   })
 );
 
-// ✅ geral /uploads
 app.use(
   "/uploads",
   cors(corsOptions),
   express.static(UPLOADS_DIR, {
     fallthrough: true,
     maxAge: IS_DEV ? 0 : "1h",
-    setHeaders: setUploadHeaders
+    setHeaders: setUploadHeaders,
   })
 );
 
@@ -335,8 +356,10 @@ if (fs.existsSync(PUBLIC_DIR)) {
       index: false,
       maxAge: IS_DEV ? 0 : "1h",
       setHeaders(res) {
-        if (!IS_DEV) res.setHeader("Cache-Control", "public, max-age=3600");
-      }
+        if (!IS_DEV) {
+          res.setHeader("Cache-Control", "public, max-age=3600");
+        }
+      },
     })
   );
 }
@@ -353,9 +376,12 @@ morgan.token("ip", (req) => getClientIp(req));
 morgan.token("uid", (req) => (req.userId != null ? String(req.userId) : "-"));
 
 app.use(
-  morgan(":date[iso] :ip :rid :uid :method :url :status :res[content-length] - :response-time ms", {
-    skip: () => process.env.LOG_HTTP === "false"
-  })
+  morgan(
+    ":date[iso] :ip :rid :uid :method :url :status :res[content-length] - :response-time ms",
+    {
+      skip: () => process.env.LOG_HTTP === "false",
+    }
+  )
 );
 
 if (IS_DEV && safeBooleanEnv("DEBUG_REQUESTS", true)) {
@@ -366,7 +392,7 @@ if (IS_DEV && safeBooleanEnv("DEBUG_REQUESTS", true)) {
       url: req.url,
       hasAuth: Boolean(req.headers.authorization),
       hasCookie: Boolean(req.headers.cookie),
-      userId: req.userId ?? null
+      userId: req.userId ?? null,
     });
     next();
   });
@@ -378,7 +404,7 @@ const loginLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { erro: "Muitas tentativas, tente novamente em alguns minutos." }
+  message: { erro: "Muitas tentativas, tente novamente em alguns minutos." },
 });
 
 const recuperarSenhaLimiter = rateLimit({
@@ -386,31 +412,14 @@ const recuperarSenhaLimiter = rateLimit({
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { erro: "Muitas solicitações, aguarde antes de tentar novamente." }
+  message: { erro: "Muitas solicitações, aguarde antes de tentar novamente." },
 });
 
 app.use("/api/login", loginLimiter);
-app.use("/api/usuarios/recuperar-senha", recuperarSenhaLimiter);
-app.use("/api/usuario/recuperar-senha", recuperarSenhaLimiter);
-
-/* ───────── Helpers de resposta ───────── */
-function sendError(res, status, message, extra = {}) {
-  return res.status(status).json({
-    ok: false,
-    erro: message,
-    requestId: res.getHeader("X-Request-Id"),
-    ...extra
-  });
-}
-
-function sendOk(res, data = {}, extra = {}) {
-  return res.status(200).json({
-    ok: true,
-    requestId: res.getHeader("X-Request-Id"),
-    ...extra,
-    ...data
-  });
-}
+app.use("/api/auth/esqueci-senha", recuperarSenhaLimiter);
+app.use("/api/auth/recuperar-senha", recuperarSenhaLimiter);
+app.use("/api/auth/resetar-senha", recuperarSenhaLimiter);
+app.use("/api/auth/redefinir-senha", recuperarSenhaLimiter);
 
 /* ───────── Rotas de diagnóstico ───────── */
 app.get(
@@ -423,7 +432,7 @@ app.get(
       env: process.env.NODE_ENV || "dev",
       uptime_s: Math.round(process.uptime()),
       now: new Date().toISOString(),
-      requestId: req.requestId
+      requestId: req.requestId,
     });
   })
 );
@@ -445,13 +454,7 @@ app.head("/__ping", (_req, res) => res.sendStatus(204));
 /* ───────── API (fonte única) ───────── */
 app.use("/api", apiRoutes);
 
-/* ───────── Health & SPA fallback ───────── */
-app.get("/api/health", (_req, res) =>
-  res.status(200).json({ ok: true, env: process.env.NODE_ENV || "dev" })
-);
-
-app.head("/api/health", (_req, res) => res.sendStatus(204));
-
+/* ───────── SPA fallback ───────── */
 function renderSpaIndex(res, next) {
   const indexPath = path.join(PUBLIC_DIR, "index.html");
   if (!fs.existsSync(indexPath)) return false;
@@ -500,7 +503,9 @@ app.use((err, req, res, _next) => {
   }
 
   if (err?.code === "CORS_BLOCKED") {
-    return sendError(res, 403, "Origem não autorizada.", { code: "CORS_BLOCKED" });
+    return sendError(res, 403, "Origem não autorizada.", {
+      code: "CORS_BLOCKED",
+    });
   }
 
   if (err?.name === "UnauthorizedError" || err?.code === "UNAUTHORIZED") {
@@ -517,12 +522,19 @@ app.use((err, req, res, _next) => {
     userId: req?.userId ?? null,
     message: err?.message,
     code: err?.code,
-    stack: IS_DEV ? err?.stack : undefined
+    stack: IS_DEV ? err?.stack : undefined,
   });
 
-  const message = IS_DEV ? err?.message || "Erro interno do servidor" : "Erro interno do servidor";
+  const message = IS_DEV
+    ? err?.message || "Erro interno do servidor"
+    : "Erro interno do servidor";
 
-  return sendError(res, status, message, IS_DEV ? { details: err?.details } : undefined);
+  return sendError(
+    res,
+    status,
+    message,
+    IS_DEV ? { details: err?.details } : undefined
+  );
 });
 
 /* ───────── Start / Shutdown ───────── */
@@ -537,7 +549,9 @@ async function shutdown(signal) {
     console.log("✅ HTTP fechado.");
 
     try {
-      if (db?.shutdown) await db.shutdown();
+      if (db?.shutdown) {
+        await db.shutdown();
+      }
     } catch (e) {
       console.warn("⚠️ Falha ao fechar DB:", e?.message || e);
     }
@@ -548,7 +562,7 @@ async function shutdown(signal) {
   setTimeout(() => {
     console.warn("⏱️ Forçando shutdown.");
     process.exit(1);
-  }, 10_000).unref();
+  }, 10000).unref();
 }
 
 process.on("SIGINT", () => shutdown("SIGINT"));

@@ -1,9 +1,10 @@
 /* ==========================================================================
- * Assets Utils — PREMIUM++
+ * Assets Utils — PREMIUM+++
  * Resolve URLs de imagens/PDFs de forma segura em DEV e PROD
- * - Evita localhost em produção
- * - Evita mixed-content (http em https)
+ * - Evita localhost em produção quando houver backend configurado
+ * - Evita mixed-content (http em página https)
  * - Compatível com Vite proxy, Vercel, Render, Railway etc.
+ * - Mantém comportamento same-origin quando apropriado
  * ========================================================================== */
 
 const IS_DEV = import.meta.env.DEV;
@@ -11,6 +12,7 @@ const IS_DEV = import.meta.env.DEV;
 /* ───────────────────────── Helpers ───────────────────────── */
 
 const isAbsUrl = (u = "") => /^https?:\/\//i.test(String(u || "").trim());
+const isProtocolRelative = (u = "") => /^\/\//.test(String(u || "").trim());
 
 const normalize = (u = "") =>
   String(u || "")
@@ -22,6 +24,27 @@ const stripApi = (url = "") =>
     .replace(/\/api\/?$/i, "")
     .replace(/\/+$/, "");
 
+function safeWindow() {
+  return typeof window !== "undefined" ? window : undefined;
+}
+
+function getPageOrigin() {
+  const win = safeWindow();
+  return win?.location?.origin || "";
+}
+
+function forceHttpsIfNeeded(url = "") {
+  const win = safeWindow();
+  if (!win) return url;
+
+  const pageIsHttps = win.location.protocol === "https:";
+  if (pageIsHttps && /^http:\/\//i.test(url)) {
+    return url.replace(/^http:\/\//i, "https://");
+  }
+
+  return url;
+}
+
 /* ───────────────────── Backend origin ───────────────────── */
 
 /**
@@ -31,13 +54,15 @@ const stripApi = (url = "") =>
  * 2) VITE_API_URL
  *
  * Ex:
- *  https://api.escoladasaude.sp.gov.br/api  → https://api.escoladasaude.sp.gov.br
+ *  https://api.escoladasaude.sp.gov.br/api
+ *  → https://api.escoladasaude.sp.gov.br
  */
 export function getBackendOrigin() {
-  const base =
-    (import.meta.env.VITE_API_BASE_URL ||
-      import.meta.env.VITE_API_URL ||
-      "").trim();
+  const base = (
+    import.meta.env.VITE_API_BASE_URL ||
+    import.meta.env.VITE_API_URL ||
+    ""
+  ).trim();
 
   if (!base) return "";
 
@@ -47,37 +72,50 @@ export function getBackendOrigin() {
 /* ───────────────────── Resolver de assets ───────────────────── */
 
 /**
- * resolveAssetUrl
+ * Resolve asset salvo no banco ou vindo do backend.
  *
- * @param {string} raw Caminho salvo no banco (ex: /uploads/eventos/img.png)
- * @returns {string} URL final segura para <img>, <a>, window.open etc.
+ * Regras:
+ * - URL absoluta → retorna como está
+ * - URL protocol-relative (//...) → respeita protocolo atual
+ * - path relativo/absoluto:
+ *   - se houver backend configurado, usa backend
+ *   - se não houver backend configurado, usa same-origin
  */
 export function resolveAssetUrl(raw) {
   const value = normalize(raw);
   if (!value) return "";
 
-  // Já absoluto → retorna como está
-  if (isAbsUrl(value)) return value;
+  // Já absoluto
+  if (isAbsUrl(value)) {
+    return forceHttpsIfNeeded(value);
+  }
 
-  const origin = getBackendOrigin();
+  // Ex.: //cdn.site.com/img.png
+  if (isProtocolRelative(value)) {
+    const win = safeWindow();
+    const protocol = win?.location?.protocol || "https:";
+    return `${protocol}${value}`;
+  }
 
-  // DEV (proxy do Vite ou same-origin)
-  if (!origin) {
+  const backendOrigin = getBackendOrigin();
+  const baseOrigin = backendOrigin || getPageOrigin();
+
+  // Sem nenhuma origem disponível: devolve relativo seguro
+  if (!baseOrigin) {
     return value.startsWith("/") ? value : `/${value}`;
   }
 
-  // PROD → prefixa backend
-  const url = `${origin}${value.startsWith("/") ? "" : "/"}${value}`;
+  try {
+    const finalUrl = new URL(
+      value.startsWith("/") ? value : `/${value}`,
+      `${baseOrigin}/`
+    ).toString();
 
-  // Segurança extra: evita http em páginas https
-  if (typeof window !== "undefined") {
-    const pageIsHttps = window.location.protocol === "https:";
-    if (pageIsHttps && url.startsWith("http://")) {
-      return url.replace(/^http:\/\//i, "https://");
-    }
+    return forceHttpsIfNeeded(finalUrl);
+  } catch {
+    const fallback = `${baseOrigin}${value.startsWith("/") ? "" : "/"}${value}`;
+    return forceHttpsIfNeeded(fallback);
   }
-
-  return url;
 }
 
 /* ───────────────────── Abrir asset (UX premium) ───────────────────── */
@@ -87,7 +125,11 @@ export function resolveAssetUrl(raw) {
  */
 export function openAsset(raw) {
   const url = resolveAssetUrl(raw);
-  if (!url) return;
+  if (!url) return false;
 
-  window.open(url, "_blank", "noopener,noreferrer");
+  const win = safeWindow();
+  if (!win) return false;
+
+  win.open(url, "_blank", "noopener,noreferrer");
+  return true;
 }

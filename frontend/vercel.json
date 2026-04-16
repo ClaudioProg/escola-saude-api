@@ -30,12 +30,14 @@
       "headers": [
         { "key": "X-Content-Type-Options", "value": "nosniff" },
         { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
-        { "key": "X-Frame-Options", "value": "SAMEORIGIN" },
         {
           "key": "Cross-Origin-Opener-Policy",
           "value": "same-origin-allow-popups"
         },
-        { "key": "Cross-Origin-Resource-Policy", "value": "same-site" },
+        {
+          "key": "Cross-Origin-Resource-Policy",
+          "value": "cross-origin"
+        },
         {
           "key": "Permissions-Policy",
           "value": "camera=(self), microphone=(), geolocation=(), payment=()"
@@ -51,38 +53,6 @@
     {
       "source": "/api/(.*)",
       "destination": "https://escola-saude-api.onrender.com/api/$1"
-    },
-    {
-      "source": "/favicon.ico",
-      "destination": "/favicon.ico"
-    },
-    {
-      "source": "/favicon.svg",
-      "destination": "/favicon.svg"
-    },
-    {
-      "source": "/robots.txt",
-      "destination": "/robots.txt"
-    },
-    {
-      "source": "/logo_escola.png",
-      "destination": "/logo_escola.png"
-    },
-    {
-      "source": "/sw.js",
-      "destination": "/sw.js"
-    },
-    {
-      "source": "/manifest.webmanifest",
-      "destination": "/manifest.webmanifest"
-    },
-    {
-      "source": "/assets/(.*)",
-      "destination": "/assets/$1"
-    },
-    {
-      "source": "/icons/(.*)",
-      "destination": "/icons/$1"
     },
     {
       "source": "/(.*)",

@@ -5,25 +5,33 @@
 const express = require("express");
 const router = express.Router();
 
-/* ───────────────── Auth/roles resilientes ───────────────── */
+/* ───────────────── Auth resiliente ───────────────── */
 const _auth = require("../auth/authMiddleware");
 const requireAuth =
-  typeof _auth === "function" ? _auth : _auth?.default || _auth?.authMiddleware || _auth?.auth;
+  typeof _auth === "function"
+    ? _auth
+    : _auth?.default || _auth?.authMiddleware || _auth?.auth;
 
 if (typeof requireAuth !== "function") {
   console.error("[instrutorRoute] authMiddleware inválido:", _auth);
-  throw new Error("authMiddleware não é função (verifique exports em src/auth/authMiddleware.js)");
+  throw new Error(
+    "authMiddleware não é função (verifique exports em src/auth/authMiddleware.js)"
+  );
 }
 
-const _roles = require("../middlewares/authorize");
+/* ───────────────── Roles resiliente ───────────────── */
+const authorizeMod = require("../middlewares/authorize");
 const authorizeRoles =
-  typeof _roles === "function"
-    ? _roles
-    : _roles?.default || _roles?.authorizeRoles || _roles?.authorizeRole;
+  (typeof authorizeMod === "function" ? authorizeMod : authorizeMod?.authorizeRoles) ||
+  authorizeMod?.authorizeRole ||
+  authorizeMod?.authorize?.any ||
+  authorizeMod?.authorize;
 
 if (typeof authorizeRoles !== "function") {
-  console.error("[instrutorRoute] authorizeRoles inválido:", _roles);
-  throw new Error("authorizeRoles não é função (verifique exports em src/middlewares/authorize.js)");
+  console.error("[instrutorRoute] authorizeRoles inválido:", authorizeMod);
+  throw new Error(
+    "authorizeRoles não é função (verifique exports em src/middlewares/authorize.js)"
+  );
 }
 
 /* ───────────────── Controller ───────────────── */
@@ -38,16 +46,25 @@ const {
 const routeTag = (tag) => (req, res, next) => {
   try {
     res.set("X-Route-Handler", tag);
+  } catch {}
+  return next();
+};
+
+const noStore = (_req, res, next) => {
+  try {
     res.set("Cache-Control", "no-store");
+    res.set("Pragma", "no-cache");
   } catch {}
   return next();
 };
 
 const ensureNumericParam = (paramName) => (req, res, next) => {
   const n = Number(req.params?.[paramName]);
+
   if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
     return res.status(400).json({ erro: `${paramName} inválido.` });
   }
+
   req.params[paramName] = String(n);
   return next();
 };
@@ -63,50 +80,73 @@ const handle =
     }
   };
 
+/* ───────────────── Middlewares do grupo ───────────────── */
+router.use(requireAuth);
+router.use(noStore);
+
 /* ──────────────────────────────────────────────────────────
    🚦 Rotas específicas primeiro (evita conflito com :id)
 ────────────────────────────────────────────────────────── */
 
-// 🔐 Turmas do instrutor autenticado (sem :id)
-// ✅ suporta filtro: ?filtro=ativos|encerrados  (default: ativos)
+/**
+ * 🔐 Turmas do instrutor autenticado
+ * GET /api/instrutor/minhas/turmas?filtro=ativos|encerrados|todos
+ */
 router.get(
   "/minhas/turmas",
-  requireAuth,
   authorizeRoles("instrutor", "administrador"),
   routeTag("instrutorRoute:GET /minhas/turmas"),
   handle(getMinhasTurmasInstrutor)
 );
 
-// (Opcional) aliases internos (se algum front chamar diferente)
-// router.get("/minhas-turmas", requireAuth, authorizeRoles("instrutor","administrador"), routeTag("instrutorRoute:GET /minhas-turmas"), handle(getMinhasTurmasInstrutor));
+// aliases internos de compatibilidade, caso algum front use nomes alternativos
+router.get(
+  "/minhas-turmas",
+  authorizeRoles("instrutor", "administrador"),
+  routeTag("instrutorRoute:GET /minhas-turmas"),
+  handle(getMinhasTurmasInstrutor)
+);
+
+router.get(
+  "/me/turmas",
+  authorizeRoles("instrutor", "administrador"),
+  routeTag("instrutorRoute:GET /me/turmas"),
+  handle(getMinhasTurmasInstrutor)
+);
 
 /* ──────────────────────────────────────────────────────────
-   Admin
+   👨‍💼 Admin
 ────────────────────────────────────────────────────────── */
 
-// 📋 Listar todos os instrutores (apenas admin)
+/**
+ * 📋 Listar todos os instrutores
+ * GET /api/instrutor
+ */
 router.get(
   "/",
-  requireAuth,
   authorizeRoles("administrador"),
   routeTag("instrutorRoute:GET /"),
   handle(listarInstrutor)
 );
 
-// 📊 Histórico de eventos + avaliações por instrutor (apenas admin)
+/**
+ * 📊 Histórico de eventos + avaliações por instrutor
+ * GET /api/instrutor/:id/eventos-avaliacao
+ */
 router.get(
   "/:id/eventos-avaliacao",
-  requireAuth,
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
   routeTag("instrutorRoute:GET /:id/eventos-avaliacao"),
   handle(getEventosAvaliacaoPorInstrutor)
 );
 
-// 📚 Turmas vinculadas a um instrutor, com dados do evento (apenas admin)
+/**
+ * 📚 Turmas vinculadas a um instrutor
+ * GET /api/instrutor/:id/turmas
+ */
 router.get(
   "/:id/turmas",
-  requireAuth,
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
   routeTag("instrutorRoute:GET /:id/turmas"),

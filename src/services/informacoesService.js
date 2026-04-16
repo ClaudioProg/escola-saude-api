@@ -1,17 +1,70 @@
 /* eslint-disable no-console */
 "use strict";
 
+// ✅ src/services/informacoesService.js — PREMIUM/UNIFICADO
+
 const rawDb = require("../db");
 const db = rawDb?.db ?? rawDb;
+
+if (!db || typeof db.query !== "function") {
+  console.error("[informacoes][service] DB inválido:", Object.keys(rawDb || {}));
+  throw new Error("DB inválido em informacoesService.js (query ausente)");
+}
+
+/* =========================
+   Config / Constantes
+========================= */
+const IS_DEV = process.env.NODE_ENV !== "production";
+const TZ = "America/Sao_Paulo";
+
+const SELECT_BASE = `
+  id,
+  titulo,
+  subtitulo,
+  badge,
+  resumo,
+  conteudo_html,
+  tipo_exibicao,
+  imagem_url,
+  imagem_nome_original,
+  imagem_mime_type,
+  imagem_tamanho_bytes,
+  ativo,
+  ordem,
+  data_inicio_exibicao::text AS data_inicio_exibicao,
+  data_fim_exibicao::text AS data_fim_exibicao,
+  criado_por,
+  atualizado_por,
+  criado_em,
+  atualizado_em
+`;
 
 /* =========================
    Helpers
 ========================= */
 
+function logInfo(context, extra) {
+  if (IS_DEV) {
+    console.log("[informacoes][service]", context, extra || "");
+  }
+}
+
+function logError(context, error, extra) {
+  console.error("[informacoes][service][erro]", {
+    context,
+    error: error?.message,
+    code: error?.code,
+    stack: error?.stack,
+    ...(extra || {}),
+  });
+}
+
 function normalizeNullableString(value, maxLength = null) {
   if (value === undefined || value === null) return null;
+
   const text = String(value).trim();
   if (!text) return null;
+
   return maxLength ? text.slice(0, maxLength) : text;
 }
 
@@ -34,7 +87,8 @@ function normalizeInteger(value, fallback = 0) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
-function normalizeTipoExibicao(value) {
+function normalizeTipoExibicao(value, fallback = "destaque") {
+  if (value === undefined || value === null || value === "") return fallback;
   return value === "comunicado" ? "comunicado" : "destaque";
 }
 
@@ -53,12 +107,58 @@ function validatePeriodo(dataInicio, dataFim) {
   if (dataFim < dataInicio) throw new Error("Período inválido.");
 }
 
-function logError(context, error) {
-  console.error("[informacoes][service][erro]", {
-    context,
-    error: error?.message,
-    stack: error?.stack
+function resolveNextStringField(payload, key, currentValue, maxLength = null) {
+  if (!Object.prototype.hasOwnProperty.call(payload, key)) return currentValue;
+  return normalizeNullableString(payload[key], maxLength);
+}
+
+function resolveNextBooleanField(payload, key, currentValue) {
+  if (!Object.prototype.hasOwnProperty.call(payload, key)) return currentValue;
+  return normalizeBoolean(payload[key], currentValue);
+}
+
+function resolveNextIntegerField(payload, key, currentValue) {
+  if (!Object.prototype.hasOwnProperty.call(payload, key)) return currentValue;
+  return normalizeInteger(payload[key], currentValue);
+}
+
+function resolveNextTipoExibicao(payload, key, currentValue) {
+  if (!Object.prototype.hasOwnProperty.call(payload, key)) return currentValue;
+  return normalizeTipoExibicao(payload[key], currentValue);
+}
+
+function resolveNextDateOnly(payload, key, currentValue) {
+  if (!Object.prototype.hasOwnProperty.call(payload, key)) return currentValue;
+
+  const normalized = normalizeDateOnly(payload[key]);
+  if (!normalized) throw new Error(`${key} inválida.`);
+
+  return normalized;
+}
+
+function resolveNextNullableNumber(payload, key, currentValue) {
+  if (!Object.prototype.hasOwnProperty.call(payload, key)) return currentValue;
+
+  const value = payload[key];
+  if (value === undefined || value === null || value === "") return null;
+
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) {
+    throw new Error(`${key} inválido.`);
+  }
+
+  return Math.trunc(num);
+}
+
+function getTodayDateOnlyInSaoPaulo() {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
   });
+
+  return formatter.format(new Date());
 }
 
 /* =========================
@@ -66,14 +166,18 @@ function logError(context, error) {
 ========================= */
 
 function mapRow(row) {
-  const hoje = new Date().toISOString().slice(0, 10);
+  const hoje = getTodayDateOnlyInSaoPaulo();
 
   let status = "inativa";
 
-  if (row.ativo) {
-    if (hoje < row.data_inicio_exibicao) status = "agendada";
-    else if (hoje > row.data_fim_exibicao) status = "expirada";
-    else status = "ativa";
+  if (row?.ativo) {
+    if (row.data_inicio_exibicao && hoje < row.data_inicio_exibicao) {
+      status = "agendada";
+    } else if (row.data_fim_exibicao && hoje > row.data_fim_exibicao) {
+      status = "expirada";
+    } else {
+      status = "ativa";
+    }
   }
 
   return {
@@ -96,7 +200,7 @@ function mapRow(row) {
     atualizado_por: row.atualizado_por,
     criado_em: row.criado_em,
     atualizado_em: row.atualizado_em,
-    status
+    status,
   };
 }
 
@@ -106,32 +210,22 @@ function mapRow(row) {
 
 async function listarInformacoesAdmin() {
   try {
-    const { rows } = await db.query(`
+    const { rows } = await db.query(
+      `
       SELECT
-        id,
-        titulo,
-        subtitulo,
-        badge,
-        resumo,
-        conteudo_html,
-        tipo_exibicao,
-        imagem_url,
-        imagem_nome_original,
-        imagem_mime_type,
-        imagem_tamanho_bytes,
-        ativo,
-        ordem,
-        data_inicio_exibicao::text,
-        data_fim_exibicao::text,
-        criado_por,
-        atualizado_por,
-        criado_em,
-        atualizado_em
+        ${SELECT_BASE}
       FROM informacoes_institucionais
-      ORDER BY ordem ASC, criado_em DESC
-    `);
+      ORDER BY ordem ASC, criado_em DESC, id DESC
+      `
+    );
 
-    return rows.map(mapRow);
+    const data = rows.map(mapRow);
+
+    logInfo("listarInformacoesAdmin:ok", {
+      total: data.length,
+    });
+
+    return data;
   } catch (error) {
     logError("listarInformacoesAdmin", error);
     throw error;
@@ -140,28 +234,24 @@ async function listarInformacoesAdmin() {
 
 async function listarInformacoesPublicadas() {
   try {
-    const { rows } = await db.query(`
+    const { rows } = await db.query(
+      `
       SELECT
-        id,
-        titulo,
-        subtitulo,
-        badge,
-        resumo,
-        conteudo_html,
-        tipo_exibicao,
-        imagem_url,
-        ativo,
-        ordem,
-        data_inicio_exibicao::text,
-        data_fim_exibicao::text,
-        criado_em
+        ${SELECT_BASE}
       FROM informacoes_institucionais
       WHERE ativo = TRUE
         AND CURRENT_DATE BETWEEN data_inicio_exibicao AND data_fim_exibicao
-      ORDER BY ordem ASC, criado_em DESC
-    `);
+      ORDER BY ordem ASC, criado_em DESC, id DESC
+      `
+    );
 
-    return rows.map(mapRow);
+    const data = rows.map(mapRow);
+
+    logInfo("listarInformacoesPublicadas:ok", {
+      total: data.length,
+    });
+
+    return data;
   } catch (error) {
     logError("listarInformacoesPublicadas", error);
     throw error;
@@ -174,20 +264,23 @@ async function listarInformacoesPublicadas() {
 
 async function buscarInformacaoPorId(id) {
   try {
+    const infoId = Number(id);
+    if (!Number.isFinite(infoId) || infoId <= 0) return null;
+
     const { rows } = await db.query(
       `
       SELECT
-        *
+        ${SELECT_BASE}
       FROM informacoes_institucionais
       WHERE id = $1
       LIMIT 1
-    `,
-      [id]
+      `,
+      [infoId]
     );
 
     return rows[0] ? mapRow(rows[0]) : null;
   } catch (error) {
-    logError("buscarInformacaoPorId", error);
+    logError("buscarInformacaoPorId", error, { id });
     throw error;
   }
 }
@@ -198,10 +291,25 @@ async function buscarInformacaoPorId(id) {
 
 async function criarInformacao(payload) {
   try {
-    const titulo = normalizeNullableString(payload.titulo, 200);
-    const conteudoHtml = normalizeNullableString(payload.conteudo_html);
-    const dataInicio = normalizeDateOnly(payload.data_inicio_exibicao);
-    const dataFim = normalizeDateOnly(payload.data_fim_exibicao);
+    const titulo = normalizeNullableString(payload?.titulo, 200);
+    const subtitulo = normalizeNullableString(payload?.subtitulo, 300);
+    const badge = normalizeNullableString(payload?.badge, 100);
+    const resumo = normalizeNullableString(payload?.resumo, 500);
+    const conteudoHtml = normalizeNullableString(payload?.conteudo_html);
+    const tipoExibicao = normalizeTipoExibicao(payload?.tipo_exibicao, "destaque");
+    const imagemUrl = normalizeNullableString(payload?.imagem_url);
+    const imagemNomeOriginal = normalizeNullableString(payload?.imagem_nome_original, 255);
+    const imagemMimeType = normalizeNullableString(payload?.imagem_mime_type, 120);
+    const imagemTamanhoBytes = resolveNextNullableNumber(
+      { imagem_tamanho_bytes: payload?.imagem_tamanho_bytes },
+      "imagem_tamanho_bytes",
+      null
+    );
+    const ativo = normalizeBoolean(payload?.ativo, true);
+    const ordem = normalizeInteger(payload?.ordem, 0);
+    const dataInicio = normalizeDateOnly(payload?.data_inicio_exibicao);
+    const dataFim = normalizeDateOnly(payload?.data_fim_exibicao);
+    const criadoPor = payload?.criado_por ?? null;
 
     if (!titulo) throw new Error("Título é obrigatório.");
     if (!conteudoHtml) throw new Error("Conteúdo é obrigatório.");
@@ -234,29 +342,40 @@ async function criarInformacao(payload) {
         $13,$14,$15,$15
       )
       RETURNING id
-    `,
+      `,
       [
         titulo,
-        normalizeNullableString(payload.subtitulo, 300),
-        normalizeNullableString(payload.badge, 100),
-        normalizeNullableString(payload.resumo, 500),
+        subtitulo,
+        badge,
+        resumo,
         conteudoHtml,
-        normalizeTipoExibicao(payload.tipo_exibicao),
-        normalizeNullableString(payload.imagem_url),
-        normalizeNullableString(payload.imagem_nome_original, 255),
-        normalizeNullableString(payload.imagem_mime_type, 120),
-        payload.imagem_tamanho_bytes || null,
-        normalizeBoolean(payload.ativo, true),
-        normalizeInteger(payload.ordem, 0),
+        tipoExibicao,
+        imagemUrl,
+        imagemNomeOriginal,
+        imagemMimeType,
+        imagemTamanhoBytes,
+        ativo,
+        ordem,
         dataInicio,
         dataFim,
-        payload.criado_por ?? null
+        criadoPor,
       ]
     );
 
-    return buscarInformacaoPorId(rows[0].id);
+    const created = await buscarInformacaoPorId(rows[0].id);
+
+    logInfo("criarInformacao:ok", {
+      id: rows[0].id,
+      titulo,
+      tipo_exibicao: tipoExibicao,
+      ativo,
+    });
+
+    return created;
   } catch (error) {
-    logError("criarInformacao", error);
+    logError("criarInformacao", error, {
+      titulo: payload?.titulo,
+    });
     throw error;
   }
 }
@@ -267,20 +386,58 @@ async function criarInformacao(payload) {
 
 async function atualizarInformacao(id, payload) {
   try {
-    const atual = await buscarInformacaoPorId(id);
+    const infoId = Number(id);
+    if (!Number.isFinite(infoId) || infoId <= 0) return null;
+
+    const atual = await buscarInformacaoPorId(infoId);
     if (!atual) return null;
 
-    const dataInicio =
-      payload.data_inicio_exibicao !== undefined
-        ? normalizeDateOnly(payload.data_inicio_exibicao)
-        : atual.data_inicio_exibicao;
+    const proximo = {
+      titulo: resolveNextStringField(payload, "titulo", atual.titulo, 200),
+      subtitulo: resolveNextStringField(payload, "subtitulo", atual.subtitulo, 300),
+      badge: resolveNextStringField(payload, "badge", atual.badge, 100),
+      resumo: resolveNextStringField(payload, "resumo", atual.resumo, 500),
+      conteudo_html: resolveNextStringField(payload, "conteudo_html", atual.conteudo_html),
+      tipo_exibicao: resolveNextTipoExibicao(payload, "tipo_exibicao", atual.tipo_exibicao),
+      imagem_url: resolveNextStringField(payload, "imagem_url", atual.imagem_url),
+      imagem_nome_original: resolveNextStringField(
+        payload,
+        "imagem_nome_original",
+        atual.imagem_nome_original,
+        255
+      ),
+      imagem_mime_type: resolveNextStringField(
+        payload,
+        "imagem_mime_type",
+        atual.imagem_mime_type,
+        120
+      ),
+      imagem_tamanho_bytes: resolveNextNullableNumber(
+        payload,
+        "imagem_tamanho_bytes",
+        atual.imagem_tamanho_bytes
+      ),
+      ativo: resolveNextBooleanField(payload, "ativo", atual.ativo),
+      ordem: resolveNextIntegerField(payload, "ordem", atual.ordem),
+      data_inicio_exibicao: resolveNextDateOnly(
+        payload,
+        "data_inicio_exibicao",
+        atual.data_inicio_exibicao
+      ),
+      data_fim_exibicao: resolveNextDateOnly(
+        payload,
+        "data_fim_exibicao",
+        atual.data_fim_exibicao
+      ),
+      atualizado_por: Object.prototype.hasOwnProperty.call(payload, "atualizado_por")
+        ? payload.atualizado_por ?? null
+        : atual.atualizado_por,
+    };
 
-    const dataFim =
-      payload.data_fim_exibicao !== undefined
-        ? normalizeDateOnly(payload.data_fim_exibicao)
-        : atual.data_fim_exibicao;
+    if (!proximo.titulo) throw new Error("Título é obrigatório.");
+    if (!proximo.conteudo_html) throw new Error("Conteúdo é obrigatório.");
 
-    validatePeriodo(dataInicio, dataFim);
+    validatePeriodo(proximo.data_inicio_exibicao, proximo.data_fim_exibicao);
 
     await db.query(
       `
@@ -300,32 +457,42 @@ async function atualizarInformacao(id, payload) {
         ordem = $12,
         data_inicio_exibicao = $13,
         data_fim_exibicao = $14,
-        atualizado_por = $15
+        atualizado_por = $15,
+        atualizado_em = NOW()
       WHERE id = $16
-    `,
+      `,
       [
-        normalizeNullableString(payload.titulo, 200) ?? atual.titulo,
-        normalizeNullableString(payload.subtitulo, 300),
-        normalizeNullableString(payload.badge, 100),
-        normalizeNullableString(payload.resumo, 500),
-        normalizeNullableString(payload.conteudo_html),
-        normalizeTipoExibicao(payload.tipo_exibicao),
-        normalizeNullableString(payload.imagem_url),
-        normalizeNullableString(payload.imagem_nome_original, 255),
-        normalizeNullableString(payload.imagem_mime_type, 120),
-        payload.imagem_tamanho_bytes || null,
-        normalizeBoolean(payload.ativo, atual.ativo),
-        normalizeInteger(payload.ordem, atual.ordem),
-        dataInicio,
-        dataFim,
-        payload.atualizado_por ?? null,
-        id
+        proximo.titulo,
+        proximo.subtitulo,
+        proximo.badge,
+        proximo.resumo,
+        proximo.conteudo_html,
+        proximo.tipo_exibicao,
+        proximo.imagem_url,
+        proximo.imagem_nome_original,
+        proximo.imagem_mime_type,
+        proximo.imagem_tamanho_bytes,
+        proximo.ativo,
+        proximo.ordem,
+        proximo.data_inicio_exibicao,
+        proximo.data_fim_exibicao,
+        proximo.atualizado_por,
+        infoId,
       ]
     );
 
-    return buscarInformacaoPorId(id);
+    const updated = await buscarInformacaoPorId(infoId);
+
+    logInfo("atualizarInformacao:ok", {
+      id: infoId,
+      titulo: updated?.titulo,
+      tipo_exibicao: updated?.tipo_exibicao,
+      ativo: updated?.ativo,
+    });
+
+    return updated;
   } catch (error) {
-    logError("atualizarInformacao", error);
+    logError("atualizarInformacao", error, { id });
     throw error;
   }
 }
@@ -336,19 +503,36 @@ async function atualizarInformacao(id, payload) {
 
 async function atualizarAtivoInformacao(id, ativo, atualizadoPor = null) {
   try {
+    const infoId = Number(id);
+    if (!Number.isFinite(infoId) || infoId <= 0) return null;
+
     const { rowCount } = await db.query(
       `
       UPDATE informacoes_institucionais
-      SET ativo = $1, atualizado_por = $2
+      SET
+        ativo = $1,
+        atualizado_por = $2,
+        atualizado_em = NOW()
       WHERE id = $3
-    `,
-      [!!ativo, atualizadoPor, id]
+      `,
+      [!!ativo, atualizadoPor, infoId]
     );
 
     if (!rowCount) return null;
-    return buscarInformacaoPorId(id);
+
+    const updated = await buscarInformacaoPorId(infoId);
+
+    logInfo("atualizarAtivoInformacao:ok", {
+      id: infoId,
+      ativo: !!ativo,
+    });
+
+    return updated;
   } catch (error) {
-    logError("atualizarAtivoInformacao", error);
+    logError("atualizarAtivoInformacao", error, {
+      id,
+      ativo,
+    });
     throw error;
   }
 }
@@ -359,17 +543,28 @@ async function atualizarAtivoInformacao(id, ativo, atualizadoPor = null) {
 
 async function excluirInformacao(id) {
   try {
-    const atual = await buscarInformacaoPorId(id);
+    const infoId = Number(id);
+    if (!Number.isFinite(infoId) || infoId <= 0) return null;
+
+    const atual = await buscarInformacaoPorId(infoId);
     if (!atual) return null;
 
     await db.query(
-      `DELETE FROM informacoes_institucionais WHERE id = $1`,
-      [id]
+      `
+      DELETE FROM informacoes_institucionais
+      WHERE id = $1
+      `,
+      [infoId]
     );
+
+    logInfo("excluirInformacao:ok", {
+      id: infoId,
+      titulo: atual.titulo,
+    });
 
     return atual;
   } catch (error) {
-    logError("excluirInformacao", error);
+    logError("excluirInformacao", error, { id });
     throw error;
   }
 }
@@ -385,5 +580,5 @@ module.exports = {
   criarInformacao,
   atualizarInformacao,
   atualizarAtivoInformacao,
-  excluirInformacao
+  excluirInformacao,
 };

@@ -13,7 +13,10 @@ const _auth = require("../auth/authMiddleware");
 const requireAuth =
   typeof _auth === "function"
     ? _auth
-    : _auth?.default || _auth?.authMiddleware || _auth?.auth;
+    : _auth?.default ||
+      _auth?.authMiddleware ||
+      _auth?.authAny ||
+      _auth?.auth;
 
 if (typeof requireAuth !== "function") {
   console.error("[certificadoRoute] authMiddleware inválido:", _auth);
@@ -23,19 +26,17 @@ if (typeof requireAuth !== "function") {
 }
 
 /* ───────────────── Roles resiliente ───────────────── */
-const _roles = require("../middlewares/authorize");
+const authorizeMod = require("../middlewares/authorize");
 const authorizeRoles =
-  typeof _roles === "function"
-    ? _roles
-    : _roles?.default ||
-      _roles?.authorizeRoles ||
-      _roles?.authorizeRole ||
-      _roles?.authorize;
+  authorizeMod?.authorizeRoles ||
+  authorizeMod?.authorizeRole ||
+  authorizeMod?.authorize?.any ||
+  authorizeMod?.authorize;
 
 if (typeof authorizeRoles !== "function") {
-  console.error("[certificadoRoute] authorizeRoles inválido:", _roles);
+  console.error("[certificadoRoute] authorizeRoles inválido:", authorizeMod);
   throw new Error(
-    "authorizeRoles não é função (verifique exports em src/middlewares/authorize.js)"
+    "authorizeRoles não exportado corretamente em src/middlewares/authorize.js"
   );
 }
 
@@ -174,6 +175,23 @@ function isAvulsosLegacyMount(req) {
   );
 }
 
+function buildLimiter({ windowMs, max, message }) {
+  return rateLimit({
+    windowMs,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) =>
+      String(
+        getUserId(req) ||
+          req.ip ||
+          req.headers["x-forwarded-for"] ||
+          "anon"
+      ),
+    message,
+  });
+}
+
 /* ───────────────── Middlewares anti-IDOR ───────────────── */
 
 /** Admin pode tudo; demais só se body.usuario_id === id do token */
@@ -227,6 +245,7 @@ async function ensureCertOwnerOrAdmin(req, res, next) {
     });
 
     if (admin) return next();
+
     if (!tokenId) {
       return res.status(401).json({
         erro: "Não autenticado.",
@@ -275,45 +294,35 @@ async function ensureCertOwnerOrAdmin(req, res, next) {
 /* =========================
    Rate limits (premium)
 ========================= */
-const publicLimiter = rateLimit({
+const publicLimiter = buildLimiter({
   windowMs: 60 * 1000,
   max: 120,
-  standardHeaders: true,
-  legacyHeaders: false,
   message: { ok: false, erro: "Muitas requisições. Aguarde alguns instantes." },
 });
 
-const privateLimiter = rateLimit({
+const privateLimiter = buildLimiter({
   windowMs: 60 * 1000,
   max: 240,
-  standardHeaders: true,
-  legacyHeaders: false,
   message: { erro: "Muitas requisições. Aguarde alguns instantes." },
 });
 
-const resetLimiter = rateLimit({
+const resetLimiter = buildLimiter({
   windowMs: 10 * 60 * 1000,
   max: 30,
-  standardHeaders: true,
-  legacyHeaders: false,
   message: {
     erro: "Muitas operações sensíveis. Aguarde antes de tentar novamente.",
   },
 });
 
-const pdfLimiter = rateLimit({
+const pdfLimiter = buildLimiter({
   windowMs: 60 * 1000,
   max: 60,
-  standardHeaders: true,
-  legacyHeaders: false,
   message: { erro: "Muitas requisições de PDF. Aguarde alguns instantes." },
 });
 
-const emailLimiter = rateLimit({
+const emailLimiter = buildLimiter({
   windowMs: 15 * 60 * 1000,
   max: 30,
-  standardHeaders: true,
-  legacyHeaders: false,
   message: {
     erro: "Muitas solicitações de e-mail. Aguarde antes de tentar novamente.",
   },
@@ -432,7 +441,6 @@ router.get(
     logRoute("ROOT_ENTRYPOINT_GET", req, res, { legacy });
 
     if (!legacy) return next();
-
     return avulsoCtrl.listarCertificadosAvulsos(req, res, next);
   })
 );
@@ -441,20 +449,14 @@ router.post(
   "/",
   authorizeRoles("administrador"),
   [
-    body("nome")
-      .trim()
-      .notEmpty()
-      .withMessage("nome é obrigatório."),
+    body("nome").trim().notEmpty().withMessage("nome é obrigatório."),
     body("email")
       .trim()
       .notEmpty()
       .withMessage("e-mail é obrigatório.")
       .isEmail()
       .withMessage("e-mail inválido."),
-    body("curso")
-      .trim()
-      .notEmpty()
-      .withMessage("curso é obrigatório."),
+    body("curso").trim().notEmpty().withMessage("curso é obrigatório."),
     body("data_inicio")
       .optional({ nullable: true, checkFalsy: true })
       .matches(/^\d{4}-\d{2}-\d{2}$/)
@@ -475,7 +477,6 @@ router.post(
     logRoute("ROOT_ENTRYPOINT_POST", req, res, { legacy });
 
     if (!legacy) return next();
-
     return avulsoCtrl.criarCertificadoAvulso(req, res, next);
   })
 );
@@ -506,7 +507,6 @@ router.get(
     });
 
     if (!legacy) return next();
-
     return avulsoCtrl.gerarPdfCertificado(req, res, next);
   })
 );
@@ -537,7 +537,6 @@ router.post(
     });
 
     if (!legacy) return next();
-
     return avulsoCtrl.enviarPorEmail(req, res, next);
   })
 );
@@ -634,20 +633,14 @@ admin.post(
 admin.post(
   "/avulso",
   [
-    body("nome")
-      .trim()
-      .notEmpty()
-      .withMessage("nome é obrigatório."),
+    body("nome").trim().notEmpty().withMessage("nome é obrigatório."),
     body("email")
       .trim()
       .notEmpty()
       .withMessage("e-mail é obrigatório.")
       .isEmail()
       .withMessage("e-mail inválido."),
-    body("curso")
-      .trim()
-      .notEmpty()
-      .withMessage("curso é obrigatório."),
+    body("curso").trim().notEmpty().withMessage("curso é obrigatório."),
     body("data_inicio")
       .optional({ nullable: true, checkFalsy: true })
       .matches(/^\d{4}-\d{2}-\d{2}$/)
@@ -736,20 +729,14 @@ router.post(
   "/avulso",
   authorizeRoles("administrador"),
   [
-    body("nome")
-      .trim()
-      .notEmpty()
-      .withMessage("nome é obrigatório."),
+    body("nome").trim().notEmpty().withMessage("nome é obrigatório."),
     body("email")
       .trim()
       .notEmpty()
       .withMessage("e-mail é obrigatório.")
       .isEmail()
       .withMessage("e-mail inválido."),
-    body("curso")
-      .trim()
-      .notEmpty()
-      .withMessage("curso é obrigatório."),
+    body("curso").trim().notEmpty().withMessage("curso é obrigatório."),
     body("data_inicio")
       .optional({ nullable: true, checkFalsy: true })
       .matches(/^\d{4}-\d{2}-\d{2}$/)

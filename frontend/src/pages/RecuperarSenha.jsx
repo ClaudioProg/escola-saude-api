@@ -327,10 +327,10 @@ export default function RecuperarSenha() {
       try {
         // ✅ manter mensagem neutra (não vaza existência do e-mail)
         await apiPost(
-          "/usuarios/recuperar-senha",
-          { email: emailTrim },
-          { auth: false, on401: "silent" }
-        );
+  "/auth/esqueci-senha",
+  { email: emailTrim },
+  { auth: false, on401: "silent" }
+);
 
         setMensagem(okMessage);
         setErro("");
@@ -367,7 +367,7 @@ startCooldown(30);
     setLive("Reenviando solicitação…");
   
     try {
-      await apiPost("/usuarios/recuperar-senha", { email: emailTrim }, { auth: false, on401: "silent" });
+      await apiPost("/auth/esqueci-senha", { email: emailTrim }, { auth: false, on401: "silent" });
   
       setMensagem(okMessage);
       setErro("");

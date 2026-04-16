@@ -1,34 +1,84 @@
 /* eslint-disable no-console */
-const db = require("../db");
+// ✅ src/controllers/datasEventoController.js — PREMIUM+++
+// - Compat DB robusta (req.db + fallback)
+// - Logs com RID
+// - Date-only safe
+// - Prioridade de datas:
+//   1) datas_turma
+//   2) presencas (DISTINCT)
+//   3) intervalo da turma
+// - Cache para existência de datas_turma
+// - Deduplicação e normalização defensiva
+// - Saídas estáveis para frontend
+"use strict";
+
+const rawDb = require("../db");
+const dbFallback = rawDb?.db ?? rawDb;
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 
-/**
- * Lista datas de uma turma com diferentes fontes (prioridade):
- * - datas_turma (datas reais, com horários por encontro quando existirem)
- * - presencas (DISTINCT p.data_presenca, horários herdados da turma)
- * - intervalo (generate_series entre data_inicio e data_fim, horários herdados da turma)
- *
- * listarDatasDaTurma:
- *   [{ data: 'YYYY-MM-DD', horario_inicio: 'HH:MM', horario_fim: 'HH:MM' }, ...]
- *
- * listarOcorrenciasTurma:
- *   ["YYYY-MM-DD", ...]
- */
+/* =========================================================================
+   Compat DB
+=========================================================================== */
+function getDb(req) {
+  return req?.db ?? dbFallback;
+}
 
-/* ───────────────── Helpers ───────────────── */
+async function runQuery(db, sql, params = []) {
+  if (typeof db?.query === "function") return db.query(sql, params);
+  throw new Error("DB inválido: query ausente.");
+}
 
-// valida "YYYY-MM-DD"
+/* =========================================================================
+   Logger premium
+=========================================================================== */
+function mkRid(prefix = "DATAS") {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+}
+
+function reqRid(req, prefix = "DATAS") {
+  return req?.requestId || req?.rid || mkRid(prefix);
+}
+
+function _log(rid, level, msg, extra) {
+  const prefix = `[${rid}]`;
+  if (level === "error") {
+    return console.error(
+      `${prefix} ✖ ${msg}`,
+      extra?.stack || extra?.message || extra
+    );
+  }
+  if (level === "warn") {
+    return console.warn(`${prefix} ⚠ ${msg}`, extra || "");
+  }
+  if (IS_DEV) {
+    return console.log(`${prefix} • ${msg}`, extra || "");
+  }
+  return undefined;
+}
+
+const logInfo = (rid, msg, extra) => _log(rid, "info", msg, extra);
+const logWarn = (rid, msg, extra) => _log(rid, "warn", msg, extra);
+const logErr = (rid, msg, err) => _log(rid, "error", msg, err);
+
+/* =========================================================================
+   Helpers
+=========================================================================== */
 function isIsoDateOnly(s) {
   return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
 
-// valida "HH:MM"
 function isHHMM(s) {
   return typeof s === "string" && /^\d{2}:\d{2}$/.test(s);
 }
 
-// normaliza saída defensiva
+function toIntId(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
+}
+
 function normalizeRow(r) {
   const data = String(r?.data || "").slice(0, 10);
   const hi = String(r?.horario_inicio || "").slice(0, 5);
@@ -41,71 +91,97 @@ function normalizeRow(r) {
   };
 }
 
+function dedupeRowsByDate(rows = []) {
+  const seen = new Set();
+  const out = [];
+
+  for (const row of rows) {
+    if (!row?.data || !isIsoDateOnly(row.data)) continue;
+    if (seen.has(row.data)) continue;
+    seen.add(row.data);
+    out.push(row);
+  }
+
+  return out.sort((a, b) => String(a.data).localeCompare(String(b.data)));
+}
+
 function respondError(res, status, msg, err) {
   return res.status(status).json({
     erro: msg,
-    detalhe: IS_DEV ? (err?.message || String(err || "")) : undefined,
+    detalhe: IS_DEV ? err?.message || String(err || "") : undefined,
   });
 }
 
-/* ───────────────── Cache: existência datas_turma ───────────────── */
-
+/* =========================================================================
+   Cache: existência da tabela datas_turma
+=========================================================================== */
 let _hasDatasTurmaCached = null;
 let _hasDatasTurmaCheckedAt = 0;
-const HAS_TABLE_TTL_MS = 5 * 60 * 1000; // 5 min
+const HAS_TABLE_TTL_MS = 5 * 60 * 1000;
 
-async function hasDatasTurmaTable() {
+async function hasDatasTurmaTable(db) {
   const now = Date.now();
-  if (_hasDatasTurmaCached !== null && now - _hasDatasTurmaCheckedAt < HAS_TABLE_TTL_MS) {
+
+  if (
+    _hasDatasTurmaCached !== null &&
+    now - _hasDatasTurmaCheckedAt < HAS_TABLE_TTL_MS
+  ) {
     return _hasDatasTurmaCached;
   }
 
   try {
-    const q = await db.query(
-      `SELECT to_regclass('public.datas_turma') IS NOT NULL AS ok;`
+    const q = await runQuery(
+      db,
+      `SELECT to_regclass('public.datas_turma') IS NOT NULL AS ok`
     );
+
     _hasDatasTurmaCached = q?.rows?.[0]?.ok === true;
     _hasDatasTurmaCheckedAt = now;
     return _hasDatasTurmaCached;
   } catch (e) {
-    // se der ruim, assume false (não derruba endpoint)
     _hasDatasTurmaCached = false;
     _hasDatasTurmaCheckedAt = now;
     return false;
   }
 }
 
-/* ───────────────── Queries ───────────────── */
-
-async function getTurmaBase(turmaId) {
-  const r = await db.query(
+/* =========================================================================
+   Base da turma
+=========================================================================== */
+async function getTurmaBase(db, turmaId) {
+  const r = await runQuery(
+    db,
     `
     SELECT
       id,
       data_inicio::date AS di,
       data_fim::date    AS df,
       to_char(COALESCE(horario_inicio, '00:00'::time), 'HH24:MI') AS hi,
-      to_char(COALESCE(horario_fim,   '23:59'::time), 'HH24:MI') AS hf
+      to_char(COALESCE(horario_fim, '23:59'::time), 'HH24:MI') AS hf
     FROM turmas
     WHERE id = $1
     LIMIT 1
     `,
     [turmaId]
   );
+
   return r?.rows?.[0] || null;
 }
 
-/** Datas reais (datas_turma), preferindo horário do encontro; fallback para horário da turma */
-async function _datasReais(turmaId) {
-  const has = await hasDatasTurmaTable();
+/* =========================================================================
+   Fontes de datas
+=========================================================================== */
+async function _datasReais(db, turmaId) {
+  const has = await hasDatasTurmaTable(db);
   if (!has) return [];
 
-  const r = await db.query(
+  const r = await runQuery(
+    db,
     `
     SELECT
       to_char(dt.data::date, 'YYYY-MM-DD') AS data,
       to_char(COALESCE(dt.horario_inicio, t.horario_inicio, '00:00'::time), 'HH24:MI') AS horario_inicio,
-      to_char(COALESCE(dt.horario_fim,   t.horario_fim,   '23:59'::time), 'HH24:MI') AS horario_fim
+      to_char(COALESCE(dt.horario_fim, t.horario_fim, '23:59'::time), 'HH24:MI') AS horario_fim
     FROM datas_turma dt
     JOIN turmas t ON t.id = dt.turma_id
     WHERE dt.turma_id = $1
@@ -114,17 +190,17 @@ async function _datasReais(turmaId) {
     [turmaId]
   );
 
-  return (r?.rows || []).map(normalizeRow).filter(x => x.data);
+  return dedupeRowsByDate((r?.rows || []).map(normalizeRow));
 }
 
-/** Datas a partir de presenças (DISTINCT), horários herdados da turma */
-async function _datasPresencas(turmaId) {
-  const r = await db.query(
+async function _datasPresencas(db, turmaId) {
+  const r = await runQuery(
+    db,
     `
     SELECT DISTINCT
       to_char(p.data_presenca::date, 'YYYY-MM-DD') AS data,
       to_char(COALESCE(t.horario_inicio, '00:00'::time), 'HH24:MI') AS horario_inicio,
-      to_char(COALESCE(t.horario_fim,   '23:59'::time), 'HH24:MI') AS horario_fim
+      to_char(COALESCE(t.horario_fim, '23:59'::time), 'HH24:MI') AS horario_fim
     FROM presencas p
     JOIN turmas t ON t.id = p.turma_id
     WHERE p.turma_id = $1
@@ -133,15 +209,14 @@ async function _datasPresencas(turmaId) {
     [turmaId]
   );
 
-  return (r?.rows || []).map(normalizeRow).filter(x => x.data);
+  return dedupeRowsByDate((r?.rows || []).map(normalizeRow));
 }
 
-/** Intervalo [data_inicio..data_fim] */
-async function _datasIntervalo(turmaBase) {
-  // turmaBase já validada (di/df existem)
+async function _datasIntervalo(db, turmaBase) {
   const turmaId = Number(turmaBase.id);
 
-  const r = await db.query(
+  const r = await runQuery(
+    db,
     `
     WITH t AS (
       SELECT
@@ -155,17 +230,19 @@ async function _datasIntervalo(turmaBase) {
       to_char(gs::date, 'YYYY-MM-DD') AS data,
       t.hi AS horario_inicio,
       t.hf AS horario_fim
-    FROM t, generate_series(t.di, t.df, interval '1 day') AS gs
+    FROM t,
+         generate_series(t.di, t.df, interval '1 day') AS gs
     ORDER BY 1 ASC
     `,
     [turmaId, turmaBase.di, turmaBase.df, turmaBase.hi, turmaBase.hf]
   );
 
-  return (r?.rows || []).map(normalizeRow).filter(x => x.data);
+  return dedupeRowsByDate((r?.rows || []).map(normalizeRow));
 }
 
-/* ───────────────── Resolvedor premium ───────────────── */
-
+/* =========================================================================
+   Resolvedor premium
+=========================================================================== */
 const VIA_ALLOWED = new Set(["datas", "especificas", "presencas", "intervalo"]);
 
 function normalizeVia(v) {
@@ -175,19 +252,20 @@ function normalizeVia(v) {
 }
 
 /**
- * Resolve datas com fallback em cascata:
- * - via=datas → datas_turma -> (se vazio) presencas -> (se vazio) intervalo
- * - via=presencas → presencas -> (se vazio) intervalo
- * - via=intervalo → (se existir datas_turma) usa datas_turma, senão intervalo
+ * Resolve datas com fallback:
+ * - via=datas      -> datas_turma -> presencas -> intervalo
+ * - via=presencas  -> presencas -> intervalo
+ * - via=intervalo  -> datas_turma -> intervalo
  */
-async function resolveDatasTurma({ turmaId, via }) {
-  // 1) Turma existe?
-  const turmaBase = await getTurmaBase(turmaId);
+async function resolveDatasTurma(db, { turmaId, via, rid }) {
+  const turmaBase = await getTurmaBase(db, turmaId);
+
   if (!turmaBase) {
     const e = new Error("Turma não encontrada.");
     e.status = 404;
     throw e;
   }
+
   if (!turmaBase.di || !turmaBase.df) {
     const e = new Error("Turma sem data_inicio/data_fim configuradas.");
     e.status = 409;
@@ -198,114 +276,174 @@ async function resolveDatasTurma({ turmaId, via }) {
   let rows = [];
 
   if (via === "datas") {
-    rows = await _datasReais(turmaId);
+    rows = await _datasReais(db, turmaId);
     source = "datas_turma";
+
     if (!rows.length) {
-      rows = await _datasPresencas(turmaId);
+      rows = await _datasPresencas(db, turmaId);
       source = rows.length ? "presencas" : "intervalo";
-      if (!rows.length) rows = await _datasIntervalo(turmaBase);
+      if (!rows.length) rows = await _datasIntervalo(db, turmaBase);
     }
+
+    logInfo(rid, "resolveDatasTurma via=datas", {
+      turmaId,
+      source,
+      total: rows.length,
+    });
+
     return { rows, source };
   }
 
   if (via === "presencas") {
-    rows = await _datasPresencas(turmaId);
+    rows = await _datasPresencas(db, turmaId);
     source = "presencas";
+
     if (!rows.length) {
-      rows = await _datasIntervalo(turmaBase);
+      rows = await _datasIntervalo(db, turmaBase);
       source = "intervalo";
     }
+
+    logInfo(rid, "resolveDatasTurma via=presencas", {
+      turmaId,
+      source,
+      total: rows.length,
+    });
+
     return { rows, source };
   }
 
-  // via === "intervalo" (default): prioridade para datas reais se existirem
-  rows = await _datasReais(turmaId);
+  rows = await _datasReais(db, turmaId);
   if (rows.length) {
     source = "datas_turma";
+
+    logInfo(rid, "resolveDatasTurma via=intervalo usando datas_turma", {
+      turmaId,
+      source,
+      total: rows.length,
+    });
+
     return { rows, source };
   }
 
-  rows = await _datasIntervalo(turmaBase);
+  rows = await _datasIntervalo(db, turmaBase);
   source = "intervalo";
+
+  logInfo(rid, "resolveDatasTurma via=intervalo usando fallback", {
+    turmaId,
+    source,
+    total: rows.length,
+  });
+
   return { rows, source };
 }
 
-/* ───────────────── Handlers ───────────────── */
+/* =========================================================================
+   Handlers
+=========================================================================== */
 
 /**
  * GET /api/datas/turma/:id?via=(datas|especificas|presencas|intervalo)
  */
 async function listarDatasDaTurma(req, res) {
-  const turmaId = Number(req.params.id);
-  if (!Number.isFinite(turmaId) || turmaId <= 0) {
+  const rid = reqRid(req, "DATAS-LIST");
+  const db = getDb(req);
+  const turmaId = toIntId(req.params.id);
+
+  if (!turmaId) {
     return respondError(res, 400, "turma_id inválido.");
   }
 
   const via = normalizeVia(req.query.via);
 
   try {
-    const { rows, source } = await resolveDatasTurma({ turmaId, via });
+    logInfo(rid, "listarDatasDaTurma:start", { turmaId, via });
 
-    // dedupe por data (defensivo, caso alguma fonte duplique)
-    const seen = new Set();
-    const out = [];
-    for (const r of rows) {
-      if (!r?.data) continue;
-      if (seen.has(r.data)) continue;
-      seen.add(r.data);
-      out.push(r);
-    }
+    const { rows, source } = await resolveDatasTurma(db, {
+      turmaId,
+      via,
+      rid,
+    });
+
+    const out = dedupeRowsByDate(rows);
 
     res.setHeader("X-Datas-Source", source);
     res.setHeader("X-Datas-Count", String(out.length));
+    res.setHeader("X-Datas-Handler", "datasEventoController:listarDatasDaTurma@premium+++");
+
+    logInfo(rid, "listarDatasDaTurma:ok", {
+      turmaId,
+      via,
+      source,
+      total: out.length,
+    });
+
     return res.json(out);
   } catch (erro) {
+    logErr(rid, "listarDatasDaTurma erro", erro);
+
     const status = Number(erro?.status) || 500;
-    console.error("❌ [datasEvento] erro:", erro?.stack || erro);
     if (status === 404) return respondError(res, 404, "Turma não encontrada.", erro);
-    if (status === 409) return respondError(res, 409, "Turma inválida para geração de datas.", erro);
+    if (status === 409) {
+      return respondError(res, 409, "Turma inválida para geração de datas.", erro);
+    }
     return respondError(res, 500, "Erro ao buscar datas da turma.", erro);
   }
 }
 
 /**
  * GET /api/datas/turma/:id/ocorrencias
- * Retorna apenas array de strings "YYYY-MM-DD"
+ * Retorna apenas ["YYYY-MM-DD", ...]
  */
 async function listarOcorrenciasTurma(req, res) {
-  const turmaId = Number(req.params.id);
-  if (!Number.isFinite(turmaId) || turmaId <= 0) {
+  const rid = reqRid(req, "DATAS-OCO");
+  const db = getDb(req);
+  const turmaId = toIntId(req.params.id);
+
+  if (!turmaId) {
     return respondError(res, 400, "turma_id inválido.");
   }
 
   try {
-    // prioridade fixa: datas reais -> presencas -> intervalo
-    // (não depende de via)
-    const turmaBase = await getTurmaBase(turmaId);
-    if (!turmaBase) return respondError(res, 404, "Turma não encontrada.");
+    logInfo(rid, "listarOcorrenciasTurma:start", { turmaId });
+
+    const turmaBase = await getTurmaBase(db, turmaId);
+    if (!turmaBase) {
+      return respondError(res, 404, "Turma não encontrada.");
+    }
 
     let source = "datas_turma";
-    let rows = await _datasReais(turmaId);
+    let rows = await _datasReais(db, turmaId);
 
     if (!rows.length) {
       source = "presencas";
-      rows = await _datasPresencas(turmaId);
+      rows = await _datasPresencas(db, turmaId);
     }
+
     if (!rows.length) {
       source = "intervalo";
-      if (!turmaBase.di || !turmaBase.df) return respondError(res, 409, "Turma inválida para geração de datas.");
-      rows = await _datasIntervalo(turmaBase);
+      if (!turmaBase.di || !turmaBase.df) {
+        return respondError(res, 409, "Turma inválida para geração de datas.");
+      }
+      rows = await _datasIntervalo(db, turmaBase);
     }
 
     const uniq = Array.from(
-      new Set(rows.map(r => r.data).filter(isIsoDateOnly))
+      new Set(rows.map((r) => r.data).filter(isIsoDateOnly))
     ).sort();
 
     res.setHeader("X-Datas-Source", source);
     res.setHeader("X-Datas-Count", String(uniq.length));
+    res.setHeader("X-Datas-Handler", "datasEventoController:listarOcorrenciasTurma@premium+++");
+
+    logInfo(rid, "listarOcorrenciasTurma:ok", {
+      turmaId,
+      source,
+      total: uniq.length,
+    });
+
     return res.json(uniq);
   } catch (erro) {
-    console.error("❌ [datasEvento/ocorrencias] erro:", erro?.stack || erro);
+    logErr(rid, "listarOcorrenciasTurma erro", erro);
     return respondError(res, 500, "Erro ao buscar ocorrências.", erro);
   }
 }

@@ -28,22 +28,25 @@ node_modules/
 .env.development.local
 .env.production.local
 .env.test.local
+.env.backup
+.env.*.backup
 
 # ===========================
-# ✅ Build / Vite / Next / SSR
+# ✅ Build / Vite / SSR / Next
 # ===========================
 dist/
 dist-ssr/
 build/
-node_modules/.vite/
 .vite/
+node_modules/.vite/
 .next/
 out/
+.parcel-cache/
+.sass-cache/
 
 # ===========================
 # ✅ IDE / Editor
 # ===========================
-# VS Code — ignora tudo, exceto recomendações de extensões
 .vscode/*
 !.vscode/extensions.json
 .idea/
@@ -59,7 +62,7 @@ out/
 # ✅ Cobertura de testes
 # ===========================
 coverage/
-nyc_output/
+.nyc_output/
 
 # ===========================
 # ✅ Caches e artefatos
@@ -80,39 +83,46 @@ tmp/
 !.yarn/versions
 
 # ===========================
+# ✅ Lockfiles do projeto
+# (devem ser versionados)
+# ===========================
+!package-lock.json
+!yarn.lock
+!pnpm-lock.yaml
+!bun.lockb
+
+# ===========================
 # ✅ Outros sensíveis / específicos
 # ===========================
 *.pem
 *.key
 *.crt
 *.csr
+
 .DS_Store
+.DS_Store?
 Thumbs.db
+ehthumbs.db
+desktop.ini
+
 certificados/
 uploads/
 storage/
 backups/
+
 .vercel
 .render
 .neon
-.env.backup
 
 # ===========================
-# ✅ Ferramentas de testes (opcional)
+# ✅ Ferramentas de testes
 # ===========================
-# Cypress
 cypress/videos/
 cypress/screenshots/
-
-# Playwright
 playwright-report/
 test-results/
-
-# Vitest
 .vitest/
 *.tap
-
-# Jest
 jest-html-reporters-attach/
 jest-coverage/
 jest-cache/
@@ -127,11 +137,8 @@ jest-cache/
 *.rej
 
 # ===========================
-# ✅ SO / Temporários
+# ✅ Temporários gerais
 # ===========================
 *.tmp
 *.temp
 *.swp
-*.lock
-ehthumbs.db
-desktop.ini

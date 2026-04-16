@@ -1,61 +1,101 @@
 # ================================================================
-# Configuração de normalização de final de linha para o projeto
+# Git Attributes — normalização de final de linha e tratamento de binários
+# Projeto: Escola da Saúde
+# Padrão:
+# - Texto => LF
+# - Binários => sem normalização
 # ================================================================
 
-# Define como padrão: arquivos de texto terão final de linha LF
+# ----------------------------------------------------------------
+# Regra global
+# ----------------------------------------------------------------
 * text=auto eol=lf
 
 # ----------------------------------------------------------------
-# Linguagens / formatos principais
+# Código-fonte / frontend / backend
 # ----------------------------------------------------------------
-*.js     text eol=lf
-*.jsx    text eol=lf
-*.ts     text eol=lf
-*.tsx    text eol=lf
-*.json   text eol=lf
-*.css    text eol=lf
-*.scss   text eol=lf
-*.html   text eol=lf
-*.md     text eol=lf
-*.yml    text eol=lf
-*.yaml   text eol=lf
+*.js         text eol=lf
+*.jsx        text eol=lf
+*.ts         text eol=lf
+*.tsx        text eol=lf
+*.mjs        text eol=lf
+*.cjs        text eol=lf
+*.json       text eol=lf
+*.css        text eol=lf
+*.scss       text eol=lf
+*.html       text eol=lf
+*.md         text eol=lf
+*.txt        text eol=lf
+*.csv        text eol=lf
+*.xml        text eol=lf
+*.yml        text eol=lf
+*.yaml       text eol=lf
+*.sql        text eol=lf
+*.graphql    text eol=lf
+*.gql        text eol=lf
+*.map        text eol=lf
+*.webmanifest text eol=lf
 
 # ----------------------------------------------------------------
-# Arquivos de configuração e scripts
+# Configurações / dotfiles / scripts
 # ----------------------------------------------------------------
-*.env      text eol=lf
-*.sh       text eol=lf
-# scripts .bat precisam CRLF no Windows
-*.bat      text eol=crlf
-# PowerShell idem
-*.ps1      text eol=crlf
+.env         text eol=lf
+.env.*       text eol=lf
+*.sh         text eol=lf
+*.bash       text eol=lf
+*.zsh        text eol=lf
 
-# ----------------------------------------------------------------
-# Arquivos binários (não normalizar)
-# ----------------------------------------------------------------
-*.png  binary
-*.jpg  binary
-*.jpeg binary
-*.gif  binary
-*.svg  binary
-*.ico  binary
-*.ttf  binary
-*.woff binary
-*.woff2 binary
-*.eot  binary
-*.zip  binary
-*.pdf  binary
-*.mp4  binary
-*.mov  binary
+# scripts Windows
+*.bat        text eol=crlf
+*.cmd        text eol=crlf
+*.ps1        text eol=crlf
 
-# ----------------------------------------------------------------
-# GitHub / GitLab específicos
-# ----------------------------------------------------------------
 .gitattributes text eol=lf
-.gitignore    text eol=lf
-.editorconfig text eol=lf
+.gitignore     text eol=lf
+.editorconfig  text eol=lf
+.prettierrc    text eol=lf
+.prettierrc.*  text eol=lf
+.eslintrc      text eol=lf
+.eslintrc.*    text eol=lf
+.nvmrc         text eol=lf
+Dockerfile     text eol=lf
+docker-compose*.yml text eol=lf
 
-*.sql       text eol=lf
-Dockerfile  text eol=lf
-.prettierrc text eol=lf
-.eslintrc*  text eol=lf
+# ----------------------------------------------------------------
+# Assets texto (manter diff)
+# ----------------------------------------------------------------
+*.svg        text eol=lf
+
+# ----------------------------------------------------------------
+# Binários / mídia / documentos
+# ----------------------------------------------------------------
+*.png        binary
+*.jpg        binary
+*.jpeg       binary
+*.gif        binary
+*.webp       binary
+*.avif       binary
+*.ico        binary
+
+*.ttf        binary
+*.otf        binary
+*.woff       binary
+*.woff2      binary
+*.eot        binary
+
+*.pdf        binary
+*.zip        binary
+*.rar        binary
+*.7z         binary
+
+*.mp3        binary
+*.mp4        binary
+*.mov        binary
+*.webm       binary
+
+*.doc        binary
+*.docx       binary
+*.xls        binary
+*.xlsx       binary
+*.ppt        binary
+*.pptx       binary

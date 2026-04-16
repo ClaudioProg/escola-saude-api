@@ -24,36 +24,36 @@ export default [
     ],
   },
 
+  // ✅ Base recomendada do ESLint
+  js.configs.recommended,
+
   {
-    // 📁 Arquivos a analisar
+    // 📁 Arquivos da aplicação
     files: ["**/*.{js,jsx}"],
 
-    // 🌐 Linguagem / ambiente
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",
-      parserOptions: { ecmaFeatures: { jsx: true } },
+      parserOptions: {
+        ecmaFeatures: { jsx: true },
+      },
       globals: {
         ...globals.browser,
-        ...globals.es2021,
+        ...(globals.es2024 || globals.es2021),
       },
     },
 
-    // 🔌 Plugins
+    linterOptions: {
+      reportUnusedDisableDirectives: "warn",
+    },
+
     plugins: {
       "react-hooks": reactHooks,
       "react-refresh": reactRefresh,
       "jsx-a11y": jsxA11y,
     },
 
-    // ⚙️ Settings
-    settings: {
-      react: { version: "detect" },
-    },
-
-    // ✅ Regras
     rules: {
-      ...js.configs.recommended.rules,
       ...reactHooks.configs.recommended.rules,
       ...jsxA11y.configs.recommended.rules,
 
@@ -64,19 +64,26 @@ export default [
       curly: ["error", "multi-line"],
       "no-duplicate-imports": "error",
 
-      // ⚙️ Variáveis não usadas: permite Args com _ e Vars em Maiúscula (React Components)
+      // ⚙️ Variáveis não usadas
       "no-unused-vars": [
         "error",
-        { varsIgnorePattern: "^[A-Z]", argsIgnorePattern: "^_", ignoreRestSiblings: true },
+        {
+          argsIgnorePattern: "^_",
+          ignoreRestSiblings: true,
+          caughtErrorsIgnorePattern: "^_",
+        },
       ],
 
       // 🔍 Console liberado em dev, restrito em produção
       "no-console": isProd ? ["warn", { allow: ["warn", "error"] }] : "off",
 
       // ♻️ React Refresh (Vite HMR)
-      "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
+      "react-refresh/only-export-components": [
+        "warn",
+        { allowConstantExport: true },
+      ],
 
-      // ♿️ Acessibilidade (jsx-a11y)
+      // ♿️ Acessibilidade
       "jsx-a11y/alt-text": "warn",
       "jsx-a11y/aria-role": "warn",
       "jsx-a11y/anchor-is-valid": "warn",
@@ -92,6 +99,8 @@ export default [
   {
     files: ["**/*.{test,spec}.{js,jsx}"],
     languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "module",
       globals: {
         ...globals.browser,
         ...globals.jest,
@@ -99,6 +108,10 @@ export default [
         describe: true,
         it: true,
         expect: true,
+        beforeEach: true,
+        afterEach: true,
+        beforeAll: true,
+        afterAll: true,
       },
     },
     rules: {
@@ -107,17 +120,20 @@ export default [
     },
   },
 
-  // ⚙️ Configurações Node (Vite, ESLint, scripts)
+  // ⚙️ Configurações Node / tooling
   {
     files: [
       "**/*.config.{js,mjs,cjs}",
       "eslint.config.js",
       "vite.config.{js,mjs,cjs}",
-      "scripts/**/*.js",
+      "scripts/**/*.{js,mjs,cjs}",
     ],
     languageOptions: {
+      ecmaVersion: "latest",
       sourceType: "module",
-      globals: { ...globals.node },
+      globals: {
+        ...globals.node,
+      },
     },
   },
 ];
