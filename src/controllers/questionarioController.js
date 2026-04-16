@@ -1,8 +1,34 @@
-// ✅ src/controllers/questionarioController.js — PREMIUM (seguro, idempotente, anti-fuso, com regras reais)
 /* eslint-disable no-console */
+// ✅ src/controllers/questionarioController.js — PREMIUM+++
+// - Seguro, idempotente, anti-fuso, com regras reais
+// - Logs com RID
+// - Compat DB robusta
+// - Frequência via datas_turma > fallback conservador
+// - Publicação com validação forte
+// - Envio de tentativa mais robusto
+// - Disparo best-effort de notificação de avaliação após aprovação
+
+"use strict";
+
 const db = require("../db");
 
-// compat: alguns módulos exportam { query }, outros { db }, outros função query direto
+let gerarNotificacaoDeAvaliacao = async () => {};
+try {
+  ({ gerarNotificacaoDeAvaliacao } = require("./notificacaoController"));
+} catch {
+  gerarNotificacaoDeAvaliacao = async () => {};
+}
+
+/* ------------------------------------------------------------------ */
+/* Compat DB                                                          */
+/* ------------------------------------------------------------------ */
+const pool =
+  db?.pool ||
+  db?.Pool ||
+  db?.db?.pool ||
+  db?.default?.pool ||
+  null;
+
 const query =
   typeof db?.query === "function"
     ? db.query.bind(db)
@@ -12,13 +38,43 @@ const query =
         ? db
         : db?.db?.query?.bind(db.db);
 
-// transação helpers (pg: BEGIN/COMMIT/ROLLBACK) — PREMIUM (client dedicado)
-async function withTx(fn) {
-  // tenta extrair pool/client do db de forma compat
-  const pool =
-    db?.pool || db?.Pool || db?.db?.pool || db?.default?.pool || null;
+if (typeof query !== "function") {
+  console.error("[questionarioController] DB inválido:", Object.keys(db || {}));
+  throw new Error("DB inválido em questionarioController.js (query ausente)");
+}
 
-  // se não achou pool, cai no modo antigo (não quebra)
+const IS_DEV = process.env.NODE_ENV !== "production";
+const TZ = "America/Sao_Paulo";
+
+/* ------------------------------------------------------------------ */
+/* Logger                                                             */
+/* ------------------------------------------------------------------ */
+function mkRid(prefix = "QST") {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function _log(rid, level, msg, extra) {
+  const prefix = `[${rid}]`;
+  if (level === "error") {
+    return console.error(`${prefix} ✖ ${msg}`, extra?.stack || extra?.message || extra);
+  }
+  if (level === "warn") {
+    return console.warn(`${prefix} ⚠ ${msg}`, extra || "");
+  }
+  if (IS_DEV) {
+    return console.log(`${prefix} • ${msg}`, extra || "");
+  }
+  return undefined;
+}
+
+const logInfo = (rid, msg, extra) => _log(rid, "info", msg, extra);
+const logWarn = (rid, msg, extra) => _log(rid, "warn", msg, extra);
+const logError = (rid, msg, err) => _log(rid, "error", msg, err);
+
+/* ------------------------------------------------------------------ */
+/* Transação                                                          */
+/* ------------------------------------------------------------------ */
+async function withTx(fn) {
   if (!pool || typeof pool.connect !== "function") {
     await query("BEGIN");
     try {
@@ -26,7 +82,7 @@ async function withTx(fn) {
       await query("COMMIT");
       return out;
     } catch (e) {
-      await query("ROLLBACK");
+      try { await query("ROLLBACK"); } catch {}
       throw e;
     }
   }
@@ -39,19 +95,16 @@ async function withTx(fn) {
     await q("COMMIT");
     return out;
   } catch (e) {
-    try { await client.query("ROLLBACK"); } catch (_) {}
+    try { await client.query("ROLLBACK"); } catch {}
     throw e;
   } finally {
     client.release();
   }
 }
 
-
-/* =========================================================
-   Helpers premium (sem “pulo” de fuso / datas-only)
-   ========================================================= */
-const TZ = "America/Sao_Paulo";
-
+/* ------------------------------------------------------------------ */
+/* Helpers premium                                                    */
+/* ------------------------------------------------------------------ */
 function nowSP_YMDHM() {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: TZ,
@@ -63,13 +116,29 @@ function nowSP_YMDHM() {
     hour12: false,
   })
     .formatToParts(new Date())
-    .reduce((o, p) => ((o[p.type] = p.value), o), {});
+    .reduce((o, p) => {
+      o[p.type] = p.value;
+      return o;
+    }, {});
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
 }
 
 function toInt(v) {
   const n = Number(v);
-  return Number.isFinite(n) ? n : null;
+  return Number.isFinite(n) ? Math.trunc(n) : null;
+}
+
+function toPositiveInt(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
+}
+
+function safeText(v, fb = "") {
+  return v == null ? fb : String(v);
+}
+
+function clampNumber(n, min, max) {
+  return Math.max(min, Math.min(max, n));
 }
 
 function normalizePerfis(user) {
@@ -80,17 +149,29 @@ function normalizePerfis(user) {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
-  return Array.from(new Set(arr));
+
+  return Array.from(new Set(arr.map((s) => s.toLowerCase())));
 }
 
 function isAdminLike(user) {
-  const perfis = normalizePerfis(user);
-  return perfis.includes("administrador");
+  return normalizePerfis(user).includes("administrador");
 }
 
+async function resolveInscricaoTable(q) {
+  try {
+    await q(`SELECT 1 FROM inscricoes LIMIT 1`);
+    return "inscricoes";
+  } catch {
+    return "inscricao";
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Regras de turma / elegibilidade                                    */
+/* ------------------------------------------------------------------ */
 /** fim real da turma (datas_turma > turmas), em string "YYYY-MM-DD HH:MM" (SP) */
-async function fimRealTurmaStr(turmaId) {
-  const q = await query(
+async function fimRealTurmaStr(q, turmaId) {
+  const result = await q(
     `
     WITH base AS (
       SELECT
@@ -119,12 +200,12 @@ async function fimRealTurmaStr(turmaId) {
     [Number(turmaId)]
   );
 
-  return q.rows?.[0]?.fim_real || null;
+  return result.rows?.[0]?.fim_real || null;
 }
 
-/** total de encontros reais (datas_turma > fallback generate_series) */
-async function totalEncontrosTurma(turmaId) {
-  const q = await query(
+/** total de encontros reais (datas_turma > fallback conservador = 1) */
+async function totalEncontrosTurma(q, turmaId) {
+  const result = await q(
     `
     WITH dts AS (
       SELECT COUNT(*)::int AS n
@@ -132,61 +213,79 @@ async function totalEncontrosTurma(turmaId) {
       WHERE turma_id = $1
     ),
     fallback AS (
-      SELECT COUNT(*)::int AS n
+      SELECT
+        CASE
+          WHEN t.data_inicio IS NOT NULL AND t.data_fim IS NOT NULL THEN 1
+          ELSE 0
+        END::int AS n
       FROM turmas t
-      CROSS JOIN LATERAL generate_series(t.data_inicio::date, t.data_fim::date, interval '1 day') gs
       WHERE t.id = $1
     )
     SELECT
-      CASE WHEN (SELECT n FROM dts) > 0 THEN (SELECT n FROM dts)
-           ELSE (SELECT n FROM fallback)
+      CASE
+        WHEN (SELECT n FROM dts) > 0 THEN (SELECT n FROM dts)
+        ELSE (SELECT n FROM fallback)
       END AS total;
     `,
     [Number(turmaId)]
   );
-  return Number(q.rows?.[0]?.total || 0);
+
+  return Number(result.rows?.[0]?.total || 0);
 }
 
 /** presentes do usuário (dias distintos com presente=TRUE) */
-async function presentesUsuarioTurma(usuarioId, turmaId) {
-  const q = await query(
+async function presentesUsuarioTurma(q, usuarioId, turmaId) {
+  const result = await q(
     `
     SELECT COUNT(DISTINCT data_presenca::date)::int AS presentes
     FROM presencas
-    WHERE turma_id = $1 AND usuario_id = $2 AND presente = TRUE;
+    WHERE turma_id = $1
+      AND usuario_id = $2
+      AND presente = TRUE
     `,
     [Number(turmaId), Number(usuarioId)]
   );
-  return Number(q.rows?.[0]?.presentes || 0);
+
+  return Number(result.rows?.[0]?.presentes || 0);
 }
 
 /** confere se usuário está inscrito na turma */
-async function ensureInscrito(usuarioId, turmaId) {
-  const q = await query(
-    `SELECT 1 FROM inscricoes WHERE usuario_id = $1 AND turma_id = $2 LIMIT 1`,
+async function ensureInscrito(q, usuarioId, turmaId) {
+  const inscrTable = await resolveInscricaoTable(q);
+  const result = await q(
+    `SELECT 1 FROM ${inscrTable} WHERE usuario_id = $1 AND turma_id = $2 LIMIT 1`,
     [Number(usuarioId), Number(turmaId)]
   );
-  return q.rowCount > 0;
+  return result.rowCount > 0;
 }
 
 /** confere se questionário pertence ao evento da turma */
-async function ensureQuestionarioDaTurma(questionarioId, turmaId) {
-  const q = await query(
+async function getQuestionarioTurmaContext(q, questionarioId, turmaId) {
+  const result = await q(
     `
-    SELECT 1
+    SELECT
+      q.id AS questionario_id,
+      q.evento_id,
+      q.status,
+      q.obrigatorio,
+      q.min_nota,
+      q.tentativas_max,
+      t.id AS turma_id
     FROM questionarios_evento q
     JOIN turmas t ON t.evento_id = q.evento_id
-    WHERE q.id = $1 AND t.id = $2
+    WHERE q.id = $1
+      AND t.id = $2
     LIMIT 1
     `,
     [Number(questionarioId), Number(turmaId)]
   );
-  return q.rowCount > 0;
+
+  return result.rows?.[0] || null;
 }
 
 /** checa elegibilidade real (turma encerrada + presença >= 75%) */
-async function checarElegibilidadeAluno({ usuarioId, turmaId, allowAdminOverride = false }) {
-  const fimReal = await fimRealTurmaStr(turmaId);
+async function checarElegibilidadeAluno(q, { usuarioId, turmaId }) {
+  const fimReal = await fimRealTurmaStr(q, turmaId);
   if (!fimReal) return { ok: false, motivo: "TURMA_INVALIDA" };
 
   const agora = nowSP_YMDHM();
@@ -194,17 +293,70 @@ async function checarElegibilidadeAluno({ usuarioId, turmaId, allowAdminOverride
     return { ok: false, motivo: "TURMA_NAO_ENCERRADA", agora, fimReal };
   }
 
-  const total = await totalEncontrosTurma(turmaId);
-  if (total <= 0) return { ok: false, motivo: "TURMA_SEM_DATAS" };
+  const total = await totalEncontrosTurma(q, turmaId);
+  if (total <= 0) {
+    return { ok: false, motivo: "TURMA_SEM_DATAS" };
+  }
 
-  const presentes = await presentesUsuarioTurma(usuarioId, turmaId);
-  const freq = presentes / total;
+  const presentes = await presentesUsuarioTurma(q, usuarioId, turmaId);
+  const freq = total > 0 ? presentes / total : 0;
 
   if (freq < 0.75) {
-    return { ok: false, motivo: "FREQUENCIA_INSUFICIENTE", presentes, total, freq };
+    return {
+      ok: false,
+      motivo: "FREQUENCIA_INSUFICIENTE",
+      presentes,
+      total,
+      freq,
+    };
   }
 
   return { ok: true, presentes, total, freq, agora, fimReal };
+}
+
+/* ------------------------------------------------------------------ */
+/* Helpers de questões / alternativas                                 */
+/* ------------------------------------------------------------------ */
+async function carregarQuestoes(q, questionarioId) {
+  const result = await q(
+    `
+    SELECT *
+    FROM questoes_questionario
+    WHERE questionario_id = $1
+    ORDER BY ordem ASC, id ASC
+    `,
+    [Number(questionarioId)]
+  );
+  return result.rows || [];
+}
+
+async function carregarAlternativasPorQuestoes(q, questoesIds = []) {
+  const ids = Array.isArray(questoesIds)
+    ? questoesIds.map(Number).filter(Number.isFinite)
+    : [];
+
+  if (!ids.length) return [];
+
+  const result = await q(
+    `
+    SELECT *
+    FROM alternativas_questao
+    WHERE questao_id = ANY($1::int[])
+    ORDER BY questao_id ASC, ordem ASC, id ASC
+    `,
+    [ids]
+  );
+
+  return result.rows || [];
+}
+
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
 /* =========================================================
@@ -213,17 +365,24 @@ async function checarElegibilidadeAluno({ usuarioId, turmaId, allowAdminOverride
 
 // POST /api/questionarios/evento/:evento_id/rascunho
 async function criarOuObterRascunhoPorEvento(req, res) {
+  const rid = mkRid();
   try {
-    const eventoId = toInt(req.params.evento_id);
-    const userId = toInt(req.user?.id);
-    if (!eventoId) return res.status(400).json({ error: "evento_id inválido." });
+    const eventoId = toPositiveInt(req.params.evento_id);
+    const userId = toPositiveInt(req.user?.id);
 
-    // idempotente
+    if (!eventoId) {
+      return res.status(400).json({ error: "evento_id inválido." });
+    }
+
     const existe = await query(
       `SELECT * FROM questionarios_evento WHERE evento_id = $1 LIMIT 1`,
       [eventoId]
     );
-    if (existe.rowCount) return res.json(existe.rows[0]);
+
+    if (existe.rowCount) {
+      logInfo(rid, "rascunho já existente", { eventoId, questionarioId: existe.rows[0].id });
+      return res.json(existe.rows[0]);
+    }
 
     const created = await query(
       `
@@ -240,78 +399,69 @@ async function criarOuObterRascunhoPorEvento(req, res) {
       ]
     );
 
+    logInfo(rid, "rascunho criado", { eventoId, questionarioId: created.rows[0]?.id || null });
     return res.status(201).json(created.rows[0]);
   } catch (err) {
-    console.error("[questionarios] criarOuObterRascunhoPorEvento", err?.message || err);
+    logError(rid, "criarOuObterRascunhoPorEvento", err);
     return res.status(500).json({ error: "Erro ao criar/obter rascunho." });
   }
 }
 
 // GET /api/questionarios/evento/:evento_id
 async function obterQuestionarioPorEvento(req, res) {
+  const rid = mkRid();
   try {
-    const eventoId = toInt(req.params.evento_id);
+    const eventoId = toPositiveInt(req.params.evento_id);
     if (!eventoId) return res.status(400).json({ error: "evento_id inválido." });
 
-    const q = await query(
+    const qst = await query(
       `SELECT * FROM questionarios_evento WHERE evento_id = $1 LIMIT 1`,
       [eventoId]
     );
-    if (!q.rowCount) return res.status(404).json({ error: "Questionário não encontrado." });
+    if (!qst.rowCount) return res.status(404).json({ error: "Questionário não encontrado." });
 
-    const questionarioId = q.rows[0].id;
-
-    const questoes = await query(
-      `
-      SELECT * FROM questoes_questionario
-      WHERE questionario_id = $1
-      ORDER BY ordem ASC, id ASC
-      `,
-      [questionarioId]
+    const questionario = qst.rows[0];
+    const questoes = await carregarQuestoes(query, questionario.id);
+    const alternativas = await carregarAlternativasPorQuestoes(
+      query,
+      questoes.map((r) => r.id)
     );
 
-    const questoesIds = questoes.rows.map((r) => r.id);
-    let alternativas = [];
-    if (questoesIds.length) {
-      const alt = await query(
-        `
-        SELECT * FROM alternativas_questao
-        WHERE questao_id = ANY($1::int[])
-        ORDER BY questao_id ASC, ordem ASC, id ASC
-        `,
-        [questoesIds]
-      );
-      alternativas = alt.rows;
-    }
+    logInfo(rid, "obterQuestionarioPorEvento OK", {
+      eventoId,
+      questionarioId: questionario.id,
+      questoes: questoes.length,
+    });
 
     return res.json({
-      ...q.rows[0],
-      questoes: questoes.rows.map((qq) => ({
+      ...questionario,
+      questoes: questoes.map((qq) => ({
         ...qq,
         alternativas: alternativas.filter((a) => a.questao_id === qq.id),
       })),
     });
   } catch (err) {
-    console.error("[questionarios] obterQuestionarioPorEvento", err?.message || err);
+    logError(rid, "obterQuestionarioPorEvento", err);
     return res.status(500).json({ error: "Erro ao obter questionário." });
   }
 }
 
 // PUT /api/questionarios/:questionario_id
 async function atualizarQuestionario(req, res) {
+  const rid = mkRid();
   try {
-    const questionarioId = toInt(req.params.questionario_id);
+    const questionarioId = toPositiveInt(req.params.questionario_id);
     if (!questionarioId) return res.status(400).json({ error: "questionario_id inválido." });
 
     const { titulo, descricao, obrigatorio, min_nota, tentativas_max, status } = req.body || {};
 
-    // hardening leve
     const minNota = min_nota === "" || min_nota == null ? null : Number(min_nota);
     const tentMax = tentativas_max === "" || tentativas_max == null ? null : Number(tentativas_max);
 
     if (minNota != null && (!Number.isFinite(minNota) || minNota < 0 || minNota > 100)) {
       return res.status(400).json({ error: "min_nota inválida (0..100)." });
     }
+
     if (tentMax != null && (!Number.isFinite(tentMax) || tentMax < 1 || tentMax > 50)) {
       return res.status(400).json({ error: "tentativas_max inválido (1..50)." });
     }
@@ -342,28 +492,36 @@ async function atualizarQuestionario(req, res) {
     );
 
     if (!upd.rowCount) return res.status(404).json({ error: "Questionário não encontrado." });
+
+    logInfo(rid, "atualizarQuestionario OK", { questionarioId });
     return res.json(upd.rows[0]);
   } catch (err) {
-    console.error("[questionarios] atualizarQuestionario", err?.message || err);
+    logError(rid, "atualizarQuestionario", err);
     return res.status(500).json({ error: "Erro ao atualizar questionário." });
   }
 }
 
 // POST /api/questionarios/:questionario_id/questoes
 async function adicionarQuestao(req, res) {
+  const rid = mkRid();
   try {
-    const questionarioId = toInt(req.params.questionario_id);
+    const questionarioId = toPositiveInt(req.params.questionario_id);
     const { tipo, enunciado, ordem, peso } = req.body || {};
 
     if (!questionarioId) return res.status(400).json({ error: "questionario_id inválido." });
     if (!tipo || !["multipla_escolha", "dissertativa"].includes(tipo)) {
       return res.status(400).json({ error: "tipo inválido." });
     }
-    if (!enunciado?.trim()) return res.status(400).json({ error: "enunciado é obrigatório." });
+    if (!safeText(enunciado).trim()) {
+      return res.status(400).json({ error: "enunciado é obrigatório." });
+    }
 
     const ord = Number.isFinite(Number(ordem)) ? Number(ordem) : 1;
     const ps = Number.isFinite(Number(peso)) ? Number(peso) : 1;
-    if (ps <= 0 || ps > 100) return res.status(400).json({ error: "peso inválido (1..100)." });
+
+    if (ps <= 0 || ps > 100) {
+      return res.status(400).json({ error: "peso inválido (1..100)." });
+    }
 
     const ins = await query(
       `
@@ -371,20 +529,22 @@ async function adicionarQuestao(req, res) {
       VALUES ($1, $2, $3, $4, $5)
       RETURNING *
       `,
-      [questionarioId, tipo, enunciado.trim(), ord, ps]
+      [questionarioId, tipo, safeText(enunciado).trim(), ord, ps]
     );
 
+    logInfo(rid, "adicionarQuestao OK", { questionarioId, questaoId: ins.rows[0]?.id || null });
     return res.status(201).json(ins.rows[0]);
   } catch (err) {
-    console.error("[questionarios] adicionarQuestao", err?.message || err);
+    logError(rid, "adicionarQuestao", err);
     return res.status(500).json({ error: "Erro ao adicionar questão." });
   }
 }
 
 // PUT /api/questionarios/:questionario_id/questoes/:questao_id
 async function atualizarQuestao(req, res) {
+  const rid = mkRid();
   try {
-    const questaoId = toInt(req.params.questao_id);
+    const questaoId = toPositiveInt(req.params.questao_id);
     const { enunciado, ordem, peso, tipo } = req.body || {};
 
     if (!questaoId) return res.status(400).json({ error: "questao_id inválido." });
@@ -394,7 +554,10 @@ async function atualizarQuestao(req, res) {
 
     const ord = Number.isFinite(Number(ordem)) ? Number(ordem) : null;
     const ps = Number.isFinite(Number(peso)) ? Number(peso) : null;
-    if (ps != null && (ps <= 0 || ps > 100)) return res.status(400).json({ error: "peso inválido (1..100)." });
+
+    if (ps != null && (ps <= 0 || ps > 100)) {
+      return res.status(400).json({ error: "peso inválido (1..100)." });
+    }
 
     const upd = await query(
       `
@@ -407,39 +570,45 @@ async function atualizarQuestao(req, res) {
       WHERE id = $1
       RETURNING *
       `,
-      [questaoId, enunciado?.trim() ? enunciado.trim() : null, ord, ps, tipo ?? null]
+      [questaoId, safeText(enunciado).trim() || null, ord, ps, tipo ?? null]
     );
 
     if (!upd.rowCount) return res.status(404).json({ error: "Questão não encontrada." });
+
+    logInfo(rid, "atualizarQuestao OK", { questaoId });
     return res.json(upd.rows[0]);
   } catch (err) {
-    console.error("[questionarios] atualizarQuestao", err?.message || err);
+    logError(rid, "atualizarQuestao", err);
     return res.status(500).json({ error: "Erro ao atualizar questão." });
   }
 }
 
 // DELETE /api/questionarios/:questionario_id/questoes/:questao_id
 async function removerQuestao(req, res) {
+  const rid = mkRid();
   try {
-    const questaoId = toInt(req.params.questao_id);
+    const questaoId = toPositiveInt(req.params.questao_id);
     if (!questaoId) return res.status(400).json({ error: "questao_id inválido." });
 
     await query(`DELETE FROM questoes_questionario WHERE id = $1`, [questaoId]);
+
+    logInfo(rid, "removerQuestao OK", { questaoId });
     return res.json({ ok: true });
   } catch (err) {
-    console.error("[questionarios] removerQuestao", err?.message || err);
+    logError(rid, "removerQuestao", err);
     return res.status(500).json({ error: "Erro ao remover questão." });
   }
 }
 
 // POST /api/questionarios/questoes/:questao_id/alternativas
 async function adicionarAlternativa(req, res) {
+  const rid = mkRid();
   try {
-    const questaoId = toInt(req.params.questao_id);
+    const questaoId = toPositiveInt(req.params.questao_id);
     const { texto, correta, ordem } = req.body || {};
 
     if (!questaoId) return res.status(400).json({ error: "questao_id inválido." });
-    if (!texto?.trim()) return res.status(400).json({ error: "texto é obrigatório." });
+    if (!safeText(texto).trim()) return res.status(400).json({ error: "texto é obrigatório." });
 
     const ord = Number.isFinite(Number(ordem)) ? Number(ordem) : 1;
 
@@ -449,21 +618,24 @@ async function adicionarAlternativa(req, res) {
       VALUES ($1, $2, $3, $4)
       RETURNING *
       `,
-      [questaoId, texto.trim(), typeof correta === "boolean" ? correta : false, ord]
+      [questaoId, safeText(texto).trim(), typeof correta === "boolean" ? correta : false, ord]
     );
 
+    logInfo(rid, "adicionarAlternativa OK", { questaoId, alternativaId: ins.rows[0]?.id || null });
     return res.status(201).json(ins.rows[0]);
   } catch (err) {
-    console.error("[questionarios] adicionarAlternativa", err?.message || err);
+    logError(rid, "adicionarAlternativa", err);
     return res.status(500).json({ error: "Erro ao adicionar alternativa." });
   }
 }
 
 // PUT /api/questionarios/alternativas/:alt_id
 async function atualizarAlternativa(req, res) {
+  const rid = mkRid();
   try {
-    const altId = toInt(req.params.alt_id);
+    const altId = toPositiveInt(req.params.alt_id);
     const { texto, correta, ordem } = req.body || {};
+
     if (!altId) return res.status(400).json({ error: "alt_id inválido." });
 
     const ord = Number.isFinite(Number(ordem)) ? Number(ordem) : null;
@@ -478,50 +650,56 @@ async function atualizarAlternativa(req, res) {
       WHERE id = $1
       RETURNING *
       `,
-      [altId, texto?.trim() ? texto.trim() : null, typeof correta === "boolean" ? correta : null, ord]
+      [altId, safeText(texto).trim() || null, typeof correta === "boolean" ? correta : null, ord]
     );
 
     if (!upd.rowCount) return res.status(404).json({ error: "Alternativa não encontrada." });
+
+    logInfo(rid, "atualizarAlternativa OK", { altId });
     return res.json(upd.rows[0]);
   } catch (err) {
-    console.error("[questionarios] atualizarAlternativa", err?.message || err);
+    logError(rid, "atualizarAlternativa", err);
     return res.status(500).json({ error: "Erro ao atualizar alternativa." });
   }
 }
 
 // DELETE /api/questionarios/alternativas/:alt_id
 async function removerAlternativa(req, res) {
+  const rid = mkRid();
   try {
-    const altId = toInt(req.params.alt_id);
+    const altId = toPositiveInt(req.params.alt_id);
     if (!altId) return res.status(400).json({ error: "alt_id inválido." });
 
     await query(`DELETE FROM alternativas_questao WHERE id = $1`, [altId]);
+
+    logInfo(rid, "removerAlternativa OK", { altId });
     return res.json({ ok: true });
   } catch (err) {
-    console.error("[questionarios] removerAlternativa", err?.message || err);
+    logError(rid, "removerAlternativa", err);
     return res.status(500).json({ error: "Erro ao remover alternativa." });
   }
 }
 
 /* =========================================================
-   PUBLICAR: valida conteúdo + regra "antes da 1ª turma finalizar"
+   PUBLICAR: valida conteúdo + prazo
    ========================================================= */
 
 // POST /api/questionarios/:questionario_id/publicar
 async function publicarQuestionario(req, res) {
+  const rid = mkRid();
   try {
-    const questionarioId = toInt(req.params.questionario_id);
+    const questionarioId = toPositiveInt(req.params.questionario_id);
     if (!questionarioId) return res.status(400).json({ error: "questionario_id inválido." });
 
-    const q = await query(
+    const qst = await query(
       `SELECT id, evento_id, status FROM questionarios_evento WHERE id = $1 LIMIT 1`,
       [questionarioId]
     );
-    if (!q.rowCount) return res.status(404).json({ error: "Questionário não encontrado." });
 
-    const eventoId = q.rows[0].evento_id;
+    if (!qst.rowCount) return res.status(404).json({ error: "Questionário não encontrado." });
 
-    // regra do prazo: antes de encerrar a 1ª turma do evento (admin pode publicar mesmo após)
+    const eventoId = qst.rows[0].evento_id;
+
     const turmas = await query(
       `
       SELECT id, data_fim, horario_fim
@@ -547,18 +725,18 @@ async function publicarQuestionario(req, res) {
       }
     }
 
-    // valida: tem questões
     const questoes = await query(
       `SELECT id, tipo, peso FROM questoes_questionario WHERE questionario_id = $1`,
       [questionarioId]
     );
+
     if (!questoes.rowCount) {
       return res.status(400).json({ error: "Não é possível publicar: adicione ao menos 1 questão." });
     }
-    
-    // ✅ (NOVO) — pesos precisam fechar 10
+
     const soma = questoes.rows.reduce((acc, qx) => acc + Number(qx.peso || 0), 0);
     const somaArred = Math.round(soma * 100) / 100;
+
     if (somaArred !== 10) {
       return res.status(400).json({
         error: "Não é possível publicar: a soma dos pesos das questões deve fechar exatamente 10.",
@@ -566,14 +744,17 @@ async function publicarQuestionario(req, res) {
       });
     }
 
-    // valida MCQ: cada questão MCQ tem >=2 alternativas e exatamente 1 correta
-    const mcqIds = questoes.rows.filter((r) => r.tipo === "multipla_escolha").map((r) => r.id);
+    const mcqIds = questoes.rows
+      .filter((r) => r.tipo === "multipla_escolha")
+      .map((r) => r.id);
+
     if (mcqIds.length) {
       const alt = await query(
         `
-        SELECT questao_id,
-               COUNT(*)::int AS total,
-               SUM(CASE WHEN correta THEN 1 ELSE 0 END)::int AS corretas
+        SELECT
+          questao_id,
+          COUNT(*)::int AS total,
+          SUM(CASE WHEN correta THEN 1 ELSE 0 END)::int AS corretas
         FROM alternativas_questao
         WHERE questao_id = ANY($1::int[])
         GROUP BY questao_id
@@ -582,15 +763,18 @@ async function publicarQuestionario(req, res) {
       );
 
       const mapa = new Map(alt.rows.map((r) => [Number(r.questao_id), r]));
+
       for (const qid of mcqIds) {
         const row = mapa.get(Number(qid));
         const total = Number(row?.total || 0);
         const corretas = Number(row?.corretas || 0);
+
         if (total < 2) {
           return res.status(400).json({
             error: `Questão ${qid}: múltipla escolha precisa de pelo menos 2 alternativas.`,
           });
         }
+
         if (corretas !== 1) {
           return res.status(400).json({
             error: `Questão ${qid}: deve existir exatamente 1 alternativa correta.`,
@@ -609,30 +793,32 @@ async function publicarQuestionario(req, res) {
       [questionarioId]
     );
 
+    logInfo(rid, "publicarQuestionario OK", { questionarioId, eventoId });
     return res.json(upd.rows[0]);
   } catch (err) {
-    console.error("[questionarios] publicarQuestionario", err?.message || err);
+    logError(rid, "publicarQuestionario", err);
     return res.status(500).json({ error: "Erro ao publicar questionário." });
   }
 }
 
 /* =========================================================
-   2) ALUNO: DISPONÍVEIS / RESPONDER / ENVIAR (com regras reais)
+   2) ALUNO: DISPONÍVEIS / RESPONDER / ENVIAR
    ========================================================= */
 
 // GET /api/questionarios/disponiveis/usuario/:usuario_id
 async function listarDisponiveisParaUsuario(req, res) {
+  const rid = mkRid();
   try {
-    const usuarioId = toInt(req.params.usuario_id);
+    const usuarioId = toPositiveInt(req.params.usuario_id);
     if (!usuarioId) return res.status(400).json({ error: "usuario_id inválido." });
 
-    // segurança: aluno só pode ver o próprio / admin pode ver qualquer
-    const authUserId = toInt(req.user?.id);
+    const authUserId = toPositiveInt(req.user?.id);
     if (!isAdminLike(req.user) && authUserId !== usuarioId) {
       return res.status(403).json({ error: "Sem permissão para consultar este usuário." });
     }
 
-    // traz candidatas (inscrição + questionário publicado e obrigatório)
+    const inscrTable = await resolveInscricaoTable(query);
+
     const base = await query(
       `
       SELECT
@@ -641,7 +827,7 @@ async function listarDisponiveisParaUsuario(req, res) {
         to_char(t.data_inicio::date,'YYYY-MM-DD') AS data_inicio,
         to_char(t.data_fim::date,'YYYY-MM-DD') AS data_fim,
         to_char(COALESCE(t.horario_inicio::time,'00:00'::time),'HH24:MI') AS horario_inicio,
-        to_char(COALESCE(t.horario_fim::time,'23:59'::time),'HH24:MI')   AS horario_fim,
+        to_char(COALESCE(t.horario_fim::time,'23:59'::time),'HH24:MI') AS horario_fim,
         e.id AS evento_id,
         e.titulo AS evento_titulo,
         q.id AS questionario_id,
@@ -650,7 +836,7 @@ async function listarDisponiveisParaUsuario(req, res) {
         q.tentativas_max,
         q.obrigatorio,
         q.status
-      FROM inscricoes i
+      FROM ${inscrTable} i
       JOIN turmas t ON t.id = i.turma_id
       JOIN eventos e ON e.id = t.evento_id
       JOIN questionarios_evento q ON q.evento_id = e.id
@@ -662,31 +848,32 @@ async function listarDisponiveisParaUsuario(req, res) {
       [usuarioId]
     );
 
-    // filtra elegíveis: turma encerrada + freq >= 75%
     const out = [];
-    for (const r of base.rows) {
-      const elig = await checarElegibilidadeAluno({ usuarioId, turmaId: r.turma_id });
+    for (const row of base.rows || []) {
+      const elig = await checarElegibilidadeAluno(query, { usuarioId, turmaId: row.turma_id });
       if (!elig.ok) continue;
 
-      // tenta contar tentativas já enviadas e bloquear se excedeu
       const tent = await query(
         `
         SELECT
-          COUNT(*) FILTER (WHERE status='enviada')::int AS enviadas,
+          COUNT(*) FILTER (WHERE status = 'enviada')::int AS enviadas,
           MAX(id)::int AS ultima_id,
           MAX(nota)::numeric AS ultima_nota
         FROM tentativas_questionario
-        WHERE questionario_id = $1 AND usuario_id = $2 AND turma_id = $3
+        WHERE questionario_id = $1
+          AND usuario_id = $2
+          AND turma_id = $3
         `,
-        [r.questionario_id, usuarioId, r.turma_id]
+        [row.questionario_id, usuarioId, row.turma_id]
       );
+
       const enviadas = Number(tent.rows?.[0]?.enviadas || 0);
-      const tentMax = r.tentativas_max == null ? null : Number(r.tentativas_max);
+      const tentMax = row.tentativas_max == null ? null : Number(row.tentativas_max);
 
       out.push({
-        ...r,
+        ...row,
         elegivel: true,
-        frequencia: Math.round((elig.freq || 0) * 1000) / 10, // 1 casa
+        frequencia: Math.round((elig.freq || 0) * 1000) / 10,
         presentes: elig.presentes,
         total_encontros: elig.total,
         fim_real: elig.fimReal,
@@ -697,158 +884,140 @@ async function listarDisponiveisParaUsuario(req, res) {
       });
     }
 
+    logInfo(rid, "listarDisponiveisParaUsuario OK", { usuarioId, total: out.length });
     return res.json(out);
   } catch (err) {
-    console.error("[questionarios] listarDisponiveisParaUsuario", err?.message || err);
+    logError(rid, "listarDisponiveisParaUsuario", err);
     return res.status(500).json({ error: "Erro ao listar questionários disponíveis." });
   }
 }
 
 // GET /api/questionarios/:questionario_id/responder/turma/:turma_id
 async function obterQuestionarioParaResponder(req, res) {
+  const rid = mkRid();
   try {
-    const questionarioId = toInt(req.params.questionario_id);
-    const turmaId = toInt(req.params.turma_id);
-    const usuarioId = toInt(req.user?.id);
+    const questionarioId = toPositiveInt(req.params.questionario_id);
+    const turmaId = toPositiveInt(req.params.turma_id);
+    const usuarioId = toPositiveInt(req.user?.id);
 
     if (!questionarioId || !turmaId || !usuarioId) {
       return res.status(400).json({ error: "Parâmetros inválidos." });
     }
 
-    // segurança: questionário precisa ser do evento da turma
-    const okQT = await ensureQuestionarioDaTurma(questionarioId, turmaId);
-    if (!okQT) return res.status(404).json({ error: "Questionário não pertence a esta turma." });
-
-    // precisa estar inscrito (admin pode visualizar)
-    if (!isAdminLike(req.user)) {
-      const inscrito = await ensureInscrito(usuarioId, turmaId);
-      if (!inscrito) return res.status(403).json({ error: "Você não está inscrito nesta turma." });
+    const ctx = await getQuestionarioTurmaContext(query, questionarioId, turmaId);
+    if (!ctx) {
+      return res.status(404).json({ error: "Questionário não pertence a esta turma." });
     }
 
-    // precisa estar elegível (encerrada + 75%) — admin pode ver mesmo assim
     if (!isAdminLike(req.user)) {
-      const elig = await checarElegibilidadeAluno({ usuarioId, turmaId });
+      const inscrito = await ensureInscrito(query, usuarioId, turmaId);
+      if (!inscrito) return res.status(403).json({ error: "Você não está inscrito nesta turma." });
+
+      const elig = await checarElegibilidadeAluno(query, { usuarioId, turmaId });
       if (!elig.ok) {
-        return res.status(409).json({ error: "Questionário indisponível para esta turma.", motivo: elig.motivo });
+        return res.status(409).json({
+          error: "Questionário indisponível para esta turma.",
+          motivo: elig.motivo,
+        });
       }
     }
 
-    const q = await query(
+    const qst = await query(
       `SELECT * FROM questionarios_evento WHERE id = $1 LIMIT 1`,
       [questionarioId]
     );
-    if (!q.rowCount) return res.status(404).json({ error: "Questionário não encontrado." });
+    if (!qst.rowCount) return res.status(404).json({ error: "Questionário não encontrado." });
 
-    if (String(q.rows[0].status) !== "publicado" && !isAdminLike(req.user)) {
+    if (String(qst.rows[0].status) !== "publicado" && !isAdminLike(req.user)) {
       return res.status(409).json({ error: "Questionário ainda não foi publicado." });
     }
 
-    const questoes = await query(
-      `
-      SELECT * FROM questoes_questionario
-      WHERE questionario_id = $1
-      ORDER BY ordem ASC, id ASC
-      `,
-      [questionarioId]
+    const questoes = await carregarQuestoes(query, questionarioId);
+    const alternativas = await carregarAlternativasPorQuestoes(
+      query,
+      questoes.map((r) => r.id)
     );
 
-    const ids = questoes.rows.map((r) => r.id);
-    let alternativas = [];
-    if (ids.length) {
-      const alt = await query(
-        `
-        SELECT id, questao_id, texto, ordem
-        FROM alternativas_questao
-        WHERE questao_id = ANY($1::int[])
-        ORDER BY questao_id ASC, ordem ASC, id ASC
-        `,
-        [ids]
-      );
-      alternativas = alt.rows;
-    }
+    const questoesMix = shuffle(questoes);
 
-    function shuffle(arr) {
-      const a = [...arr];
-      for (let i = a.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [a[i], a[j]] = [a[j], a[i]];
-      }
-      return a;
-    }
-    
-    const questoesMix = shuffle(questoes.rows);
-    
+    logInfo(rid, "obterQuestionarioParaResponder OK", {
+      questionarioId,
+      turmaId,
+      questoes: questoesMix.length,
+    });
+
     return res.json({
-      id: q.rows[0].id,
-      titulo: q.rows[0].titulo,
-      descricao: q.rows[0].descricao,
-      min_nota: q.rows[0].min_nota,
-      tentativas_max: q.rows[0].tentativas_max,
+      id: qst.rows[0].id,
+      titulo: qst.rows[0].titulo,
+      descricao: qst.rows[0].descricao,
+      min_nota: qst.rows[0].min_nota,
+      tentativas_max: qst.rows[0].tentativas_max,
       turma_id: turmaId,
       questoes: questoesMix.map((qq) => {
-        const alts = qq.tipo === "multipla_escolha"
-          ? shuffle(alternativas.filter((a) => a.questao_id === qq.id))
-          : [];
-    
+        const alts =
+          qq.tipo === "multipla_escolha"
+            ? shuffle(alternativas.filter((a) => a.questao_id === qq.id))
+            : [];
+
         return {
           id: qq.id,
           tipo: qq.tipo,
           enunciado: qq.enunciado,
           ordem: qq.ordem,
           peso: qq.peso,
-          alternativas: alts,
+          alternativas: alts.map((a) => ({
+            id: a.id,
+            questao_id: a.questao_id,
+            texto: a.texto,
+            ordem: a.ordem,
+          })),
         };
       }),
     });
-    
   } catch (err) {
-    console.error("[questionarios] obterQuestionarioParaResponder", err?.message || err);
+    logError(rid, "obterQuestionarioParaResponder", err);
     return res.status(500).json({ error: "Erro ao obter questionário." });
   }
 }
 
 // POST /api/questionarios/:questionario_id/iniciar/turma/:turma_id
 async function iniciarTentativa(req, res) {
+  const rid = mkRid();
   try {
-    const questionarioId = toInt(req.params.questionario_id);
-    const turmaId = toInt(req.params.turma_id);
-    const usuarioId = toInt(req.user?.id);
+    const questionarioId = toPositiveInt(req.params.questionario_id);
+    const turmaId = toPositiveInt(req.params.turma_id);
+    const usuarioId = toPositiveInt(req.user?.id);
 
     if (!questionarioId || !turmaId || !usuarioId) {
       return res.status(400).json({ error: "Parâmetros inválidos." });
     }
 
-    // sanity: questionário da turma
-    const okQT = await ensureQuestionarioDaTurma(questionarioId, turmaId);
-    if (!okQT) return res.status(404).json({ error: "Questionário não pertence a esta turma." });
+    const ctx = await getQuestionarioTurmaContext(query, questionarioId, turmaId);
+    if (!ctx) return res.status(404).json({ error: "Questionário não pertence a esta turma." });
 
-    // inscrito (admin override)
     if (!isAdminLike(req.user)) {
-      const inscrito = await ensureInscrito(usuarioId, turmaId);
+      const inscrito = await ensureInscrito(query, usuarioId, turmaId);
       if (!inscrito) return res.status(403).json({ error: "Você não está inscrito nesta turma." });
+
+      const elig = await checarElegibilidadeAluno(query, { usuarioId, turmaId });
+      if (!elig.ok) {
+        return res.status(409).json({ error: "Você ainda não está elegível.", motivo: elig.motivo });
+      }
     }
 
-    // elegibilidade (admin override)
-    if (!isAdminLike(req.user)) {
-      const elig = await checarElegibilidadeAluno({ usuarioId, turmaId });
-      if (!elig.ok) return res.status(409).json({ error: "Você ainda não está elegível.", motivo: elig.motivo });
-    }
-
-    // tentativas_max
-    const qq = await query(`SELECT tentativas_max, status FROM questionarios_evento WHERE id = $1 LIMIT 1`, [questionarioId]);
-    if (!qq.rowCount) return res.status(404).json({ error: "Questionário não encontrado." });
-    if (String(qq.rows[0].status) !== "publicado" && !isAdminLike(req.user)) {
+    if (String(ctx.status) !== "publicado" && !isAdminLike(req.user)) {
       return res.status(409).json({ error: "Questionário ainda não foi publicado." });
     }
 
-    const tentMax = qq.rows[0].tentativas_max == null ? null : Number(qq.rows[0].tentativas_max);
+    const tentMax = ctx.tentativas_max == null ? null : Number(ctx.tentativas_max);
 
-    // se existe tentativa "iniciada" => devolve (idempotente)
     const last = await query(
       `
       SELECT *
       FROM tentativas_questionario
-      WHERE questionario_id = $1 AND usuario_id = $2 AND turma_id = $3
+      WHERE questionario_id = $1
+        AND usuario_id = $2
+        AND turma_id = $3
       ORDER BY id DESC
       LIMIT 1
       `,
@@ -856,29 +1025,39 @@ async function iniciarTentativa(req, res) {
     );
 
     if (last.rowCount && ["iniciada", "enviada"].includes(last.rows[0].status)) {
-      // se última foi enviada e ainda há tentativas, o frontend chamará iniciar de novo → criamos uma nova
       if (last.rows[0].status === "iniciada") {
+        logInfo(rid, "iniciarTentativa idempotente", {
+          questionarioId,
+          turmaId,
+          usuarioId,
+          tentativaId: last.rows[0].id,
+        });
         return res.json(last.rows[0]);
       }
     }
 
-    // conta enviadas para bloquear
     if (tentMax != null) {
       const cnt = await query(
         `
         SELECT COUNT(*)::int AS enviadas
         FROM tentativas_questionario
-        WHERE questionario_id = $1 AND usuario_id = $2 AND turma_id = $3 AND status='enviada'
+        WHERE questionario_id = $1
+          AND usuario_id = $2
+          AND turma_id = $3
+          AND status = 'enviada'
         `,
         [questionarioId, usuarioId, turmaId]
       );
+
       const enviadas = Number(cnt.rows?.[0]?.enviadas || 0);
       if (enviadas >= tentMax) {
-        return res.status(409).json({ error: "Limite de tentativas atingido.", tentativas_max: tentMax });
+        return res.status(409).json({
+          error: "Limite de tentativas atingido.",
+          tentativas_max: tentMax,
+        });
       }
     }
 
-    // cria nova tentativa iniciada
     const ins = await query(
       `
       INSERT INTO tentativas_questionario (questionario_id, usuario_id, turma_id, status, iniciado_em)
@@ -888,9 +1067,16 @@ async function iniciarTentativa(req, res) {
       [questionarioId, usuarioId, turmaId]
     );
 
+    logInfo(rid, "iniciarTentativa OK", {
+      questionarioId,
+      turmaId,
+      usuarioId,
+      tentativaId: ins.rows[0]?.id || null,
+    });
+
     return res.status(201).json(ins.rows[0]);
   } catch (err) {
-    console.error("[questionarios] iniciarTentativa", err?.message || err);
+    logError(rid, "iniciarTentativa", err);
     return res.status(500).json({ error: "Erro ao iniciar tentativa." });
   }
 }
@@ -898,40 +1084,38 @@ async function iniciarTentativa(req, res) {
 // POST /api/questionarios/:questionario_id/enviar/turma/:turma_id
 // body: { respostas: [{ questao_id, alternativa_id?, resposta_texto? }, ...] }
 async function enviarTentativa(req, res) {
+  const rid = mkRid();
   try {
-    const questionarioId = toInt(req.params.questionario_id);
-    const turmaId = toInt(req.params.turma_id);
-    const usuarioId = toInt(req.user?.id);
+    const questionarioId = toPositiveInt(req.params.questionario_id);
+    const turmaId = toPositiveInt(req.params.turma_id);
+    const usuarioId = toPositiveInt(req.user?.id);
     const respostas = Array.isArray(req.body?.respostas) ? req.body.respostas : [];
 
     if (!questionarioId || !turmaId || !usuarioId) {
       return res.status(400).json({ error: "Parâmetros inválidos." });
     }
 
-    // sanity: questionário da turma
-    const okQT = await ensureQuestionarioDaTurma(questionarioId, turmaId);
-    if (!okQT) return res.status(404).json({ error: "Questionário não pertence a esta turma." });
+    const ctx = await getQuestionarioTurmaContext(query, questionarioId, turmaId);
+    if (!ctx) return res.status(404).json({ error: "Questionário não pertence a esta turma." });
 
-    // inscrito (admin override)
     if (!isAdminLike(req.user)) {
-      const inscrito = await ensureInscrito(usuarioId, turmaId);
+      const inscrito = await ensureInscrito(query, usuarioId, turmaId);
       if (!inscrito) return res.status(403).json({ error: "Você não está inscrito nesta turma." });
+
+      const elig = await checarElegibilidadeAluno(query, { usuarioId, turmaId });
+      if (!elig.ok) {
+        return res.status(409).json({ error: "Você ainda não está elegível.", motivo: elig.motivo });
+      }
     }
 
-    // elegibilidade (admin override)
-    if (!isAdminLike(req.user)) {
-      const elig = await checarElegibilidadeAluno({ usuarioId, turmaId });
-      if (!elig.ok) return res.status(409).json({ error: "Você ainda não está elegível.", motivo: elig.motivo });
-    }
-
-    // transação (evita estado quebrado entre tentativa/respostas/nota)
-    const result = await withTx(async ({ query }) => {
-      // locka a tentativa mais recente para evitar “duplo submit” (race)
-      const tent = await query(
+    const result = await withTx(async ({ query: q }) => {
+      const tent = await q(
         `
         SELECT *
         FROM tentativas_questionario
-        WHERE questionario_id = $1 AND usuario_id = $2 AND turma_id = $3
+        WHERE questionario_id = $1
+          AND usuario_id = $2
+          AND turma_id = $3
         ORDER BY id DESC
         LIMIT 1
         FOR UPDATE
@@ -947,47 +1131,56 @@ async function enviarTentativa(req, res) {
         return { http: 200, body: { ...tent.rows[0], ja_enviada: true } };
       }
 
-      // confere status do questionário
-      const qq = await query(`SELECT min_nota, tentativas_max, status FROM questionarios_evento WHERE id = $1 LIMIT 1`, [questionarioId]);
+      const qq = await q(
+        `SELECT id, evento_id, min_nota, tentativas_max, status FROM questionarios_evento WHERE id = $1 LIMIT 1`,
+        [questionarioId]
+      );
+
       if (!qq.rowCount) return { http: 404, body: { error: "Questionário não encontrado." } };
+
       if (String(qq.rows[0].status) !== "publicado" && !isAdminLike(req.user)) {
         return { http: 409, body: { error: "Questionário ainda não foi publicado." } };
       }
 
-      // tentativas_max (garante no submit também)
       const tentMax = qq.rows[0].tentativas_max == null ? null : Number(qq.rows[0].tentativas_max);
       if (tentMax != null) {
-        const cnt = await query(
+        const cnt = await q(
           `
           SELECT COUNT(*)::int AS enviadas
           FROM tentativas_questionario
-          WHERE questionario_id = $1 AND usuario_id = $2 AND turma_id = $3 AND status='enviada'
+          WHERE questionario_id = $1
+            AND usuario_id = $2
+            AND turma_id = $3
+            AND status = 'enviada'
           `,
           [questionarioId, usuarioId, turmaId]
         );
+
         const enviadas = Number(cnt.rows?.[0]?.enviadas || 0);
         if (enviadas >= tentMax) {
-          return { http: 409, body: { error: "Limite de tentativas atingido.", tentativas_max: tentMax } };
+          return {
+            http: 409,
+            body: { error: "Limite de tentativas atingido.", tentativas_max: tentMax },
+          };
         }
       }
 
       const tentativaId = tent.rows[0].id;
 
-      // carrega questões
-      const questoes = await query(
+      const questoes = await q(
         `SELECT id, tipo, peso FROM questoes_questionario WHERE questionario_id = $1`,
         [questionarioId]
       );
-      const questMap = new Map(questoes.rows.map((q) => [Number(q.id), q]));
+      const questRows = questoes.rows || [];
+      const questMap = new Map(questRows.map((item) => [Number(item.id), item]));
 
-      // carrega alternativas (inclui correta server-side)
-      const mcqIds = questoes.rows
-        .filter((q) => q.tipo === "multipla_escolha")
-        .map((q) => q.id);
+      const mcqIds = questRows
+        .filter((item) => item.tipo === "multipla_escolha")
+        .map((item) => item.id);
 
       let altCorretas = [];
       if (mcqIds.length) {
-        const alt = await query(
+        const alt = await q(
           `
           SELECT id, questao_id, correta
           FROM alternativas_questao
@@ -995,63 +1188,73 @@ async function enviarTentativa(req, res) {
           `,
           [mcqIds]
         );
-        altCorretas = alt.rows;
+        altCorretas = alt.rows || [];
       }
 
       const altMap = new Map(
         altCorretas.map((a) => [
           Number(a.id),
-          { questao_id: Number(a.questao_id), correta: !!a.correta },
+          {
+            questao_id: Number(a.questao_id),
+            correta: !!a.correta,
+          },
         ])
       );
 
-      // hardening: valida payload (não deixa enviar alternativa de outra questão)
-      // e garante que dissertativa envia texto (opcional no MVP, mas útil)
       const respostasValidas = [];
       for (const r of respostas) {
-        const qid = toInt(r?.questao_id);
+        const qid = toPositiveInt(r?.questao_id);
         if (!qid) continue;
-        const q = questMap.get(qid);
-        if (!q) continue;
 
-        if (q.tipo === "multipla_escolha") {
-          const altId = toInt(r?.alternativa_id);
+        const questao = questMap.get(qid);
+        if (!questao) continue;
+
+        if (questao.tipo === "multipla_escolha") {
+          const altId = toPositiveInt(r?.alternativa_id);
           if (!altId) continue;
+
           const info = altMap.get(altId);
-          if (!info || info.questao_id !== qid) continue; // tentativa de burlar
-          respostasValidas.push({ qid, altId, texto: null });
+          if (!info || info.questao_id !== qid) continue;
+
+          respostasValidas.push({
+            qid,
+            altId,
+            texto: null,
+          });
         } else {
           const texto = r?.resposta_texto != null ? String(r.resposta_texto) : "";
-          respostasValidas.push({ qid, altId: null, texto: texto.trim() || null });
+          respostasValidas.push({
+            qid,
+            altId: null,
+            texto: texto.trim() || null,
+          });
         }
       }
 
-      // limpa respostas antigas desta tentativa (idempotência)
-      await query(`DELETE FROM respostas_questionario WHERE tentativa_id = $1`, [tentativaId]);
+      await q(`DELETE FROM respostas_questionario WHERE tentativa_id = $1`, [tentativaId]);
 
       let totalPesoMCQ = 0;
       let totalPontos = 0;
 
-      // insere respostas
       for (const r of respostasValidas) {
-        const q = questMap.get(r.qid);
-        const peso = Number(q?.peso || 1);
+        const questao = questMap.get(r.qid);
+        const peso = Number(questao?.peso || 1);
 
         let correta = null;
         let pontuacao = null;
 
-        if (q.tipo === "multipla_escolha") {
+        if (questao.tipo === "multipla_escolha") {
           totalPesoMCQ += peso;
+
           const info = altMap.get(r.altId);
           const ok = !!(info && info.questao_id === r.qid && info.correta === true);
+
           correta = ok;
           pontuacao = ok ? peso : 0;
           totalPontos += pontuacao;
-        } else {
-          // dissertativa: sem pontuação no MVP (corrigir manualmente futuramente)
         }
 
-        await query(
+        await q(
           `
           INSERT INTO respostas_questionario (tentativa_id, questao_id, alternativa_id, resposta_texto, correta, pontuacao)
           VALUES ($1, $2, $3, $4, $5, $6)
@@ -1060,13 +1263,12 @@ async function enviarTentativa(req, res) {
         );
       }
 
-      // nota percentual (0..100) baseado só em MCQ
       let nota = null;
       if (mcqIds.length > 0 && totalPesoMCQ > 0) {
-        nota = Math.round((totalPontos / totalPesoMCQ) * 10000) / 100; // 2 casas
+        nota = Math.round((totalPontos / totalPesoMCQ) * 10000) / 100;
       }
 
-      const upd = await query(
+      const upd = await q(
         `
         UPDATE tentativas_questionario
         SET status = 'enviada', nota = $2, enviado_em = NOW()
@@ -1076,7 +1278,6 @@ async function enviarTentativa(req, res) {
         [tentativaId, nota]
       );
 
-      // flag: passou min_nota?
       const minNota = qq.rows[0].min_nota == null ? null : Number(qq.rows[0].min_nota);
       const aprovado = minNota != null && nota != null ? nota >= minNota : null;
 
@@ -1095,31 +1296,59 @@ async function enviarTentativa(req, res) {
       };
     });
 
+    if (result?.http === 200 && result?.body?.aprovado === true) {
+      try {
+        await gerarNotificacaoDeAvaliacao(usuarioId, {
+          turma_id: turmaId,
+          evento_id: ctx.evento_id,
+        });
+
+        logInfo(rid, "notificação de avaliação disparada após aprovação no questionário", {
+          usuarioId,
+          turmaId,
+          eventoId: ctx.evento_id,
+          questionarioId,
+          tentativaId: result?.body?.id || null,
+        });
+      } catch (e) {
+        logWarn(rid, "falha ao disparar notificação de avaliação pós-questionário", {
+          message: e?.message || String(e),
+        });
+      }
+    }
+
+    logInfo(rid, "enviarTentativa OK", {
+      questionarioId,
+      turmaId,
+      usuarioId,
+      aprovado: result?.body?.aprovado ?? null,
+      nota: result?.body?.nota ?? null,
+    });
+
     return res.status(result.http).json(result.body);
   } catch (err) {
-    console.error("[questionarios] enviarTentativa", err?.message || err);
+    logError(rid, "enviarTentativa", err);
     return res.status(500).json({ error: "Erro ao enviar tentativa." });
   }
 }
 
 // GET /api/questionarios/:questionario_id/minha-tentativa/turma/:turma_id
 async function obterMinhaTentativaPorTurma(req, res) {
+  const rid = mkRid();
   try {
-    const questionarioId = toInt(req.params.questionario_id);
-    const turmaId = toInt(req.params.turma_id);
-    const usuarioId = toInt(req.user?.id);
+    const questionarioId = toPositiveInt(req.params.questionario_id);
+    const turmaId = toPositiveInt(req.params.turma_id);
+    const usuarioId = toPositiveInt(req.user?.id);
 
     if (!questionarioId || !turmaId || !usuarioId) {
       return res.status(400).json({ error: "Parâmetros inválidos." });
     }
 
-    // sanity: questionário da turma
-    const okQT = await ensureQuestionarioDaTurma(questionarioId, turmaId);
-    if (!okQT) return res.status(404).json({ error: "Questionário não pertence a esta turma." });
+    const ctx = await getQuestionarioTurmaContext(query, questionarioId, turmaId);
+    if (!ctx) return res.status(404).json({ error: "Questionário não pertence a esta turma." });
 
-    // inscrito (admin override)
     if (!isAdminLike(req.user)) {
-      const inscrito = await ensureInscrito(usuarioId, turmaId);
+      const inscrito = await ensureInscrito(query, usuarioId, turmaId);
       if (!inscrito) return res.status(403).json({ error: "Você não está inscrito nesta turma." });
     }
 
@@ -1127,7 +1356,9 @@ async function obterMinhaTentativaPorTurma(req, res) {
       `
       SELECT *
       FROM tentativas_questionario
-      WHERE questionario_id = $1 AND usuario_id = $2 AND turma_id = $3
+      WHERE questionario_id = $1
+        AND usuario_id = $2
+        AND turma_id = $3
       ORDER BY id DESC
       LIMIT 1
       `,
@@ -1135,9 +1366,17 @@ async function obterMinhaTentativaPorTurma(req, res) {
     );
 
     if (!last.rowCount) return res.status(404).json({ error: "Sem tentativa." });
+
+    logInfo(rid, "obterMinhaTentativaPorTurma OK", {
+      questionarioId,
+      turmaId,
+      usuarioId,
+      tentativaId: last.rows[0]?.id || null,
+    });
+
     return res.json(last.rows[0]);
   } catch (err) {
-    console.error("[questionarios] obterMinhaTentativaPorTurma", err?.message || err);
+    logError(rid, "obterMinhaTentativaPorTurma", err);
     return res.status(500).json({ error: "Erro ao obter tentativa." });
   }
 }

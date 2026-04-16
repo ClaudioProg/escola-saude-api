@@ -1,13 +1,16 @@
 /* eslint-disable no-console */
-// 📁 src/controllers/notificacaoController.js — PREMIUM V3
-// - Tabela oficial: notificacoes
-// - Date-only safe
-// - Idempotência melhorada
-// - Resumo para badge / dashboard
-// - Listagem premium com filtros / paginação
-// - Marcar uma / todas como lidas
-// - Notificações de reserva aprovada / rejeitada
-// - Sem ambiguidade entre notificacao/notificacoes
+// 📁 src/controllers/notificacaoController.js — PREMIUM+++
+/*
+  - Tabela oficial: notificacoes
+  - Date-only safe
+  - Idempotência reforçada
+  - Resumo para badge / dashboard
+  - Listagem premium com filtros / paginação
+  - Marcar uma / todas como lidas
+  - Notificações de reserva aprovada / rejeitada
+  - Notificações de avaliação / certificado mais consistentes
+  - Sem ambiguidade entre notificacao/notificacoes
+*/
 
 const dbMod = require("../db");
 
@@ -60,11 +63,11 @@ try {
 }
 
 /* ------------------------------------------------------------------ */
-/* (Opcional) serviço de avaliações pendentes                         */
+/* Serviço de avaliações pendentes                                    */
 /* ------------------------------------------------------------------ */
 let buscarAvaliacaoPendentes = null;
 try {
-  ({ buscarAvaliacaoPendentes } = require("./avaliacaoService"));
+  ({ buscarAvaliacaoPendentes } = require("../services/avaliacaoService"));
 } catch {
   buscarAvaliacaoPendentes = async () => [];
 }
@@ -77,11 +80,20 @@ function asInt(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function toPositiveInt(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
+}
+
 function normStr(v, { max = 500 } = {}) {
   if (v == null) return null;
   const s = String(v).trim();
   if (!s) return null;
   return s.length > max ? s.slice(0, max) : s;
+}
+
+function safeRows(result) {
+  return result?.rows || result || [];
 }
 
 function formatSalaLabel(sala) {
@@ -96,8 +108,8 @@ function formatPeriodoLabel(periodo) {
   return "Período";
 }
 
-function safeRows(result) {
-  return result?.rows || result || [];
+function normalizeContext(extra) {
+  return extra && typeof extra === "object" ? extra : {};
 }
 
 /* ------------------------------------------------------------------ */
@@ -146,7 +158,7 @@ async function getNotifMeta() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Map para a UI premium                                              */
+/* Map para UI                                                        */
 /* ------------------------------------------------------------------ */
 function mapNotifRowToDTO(n) {
   return {
@@ -162,6 +174,63 @@ function mapNotifRowToDTO(n) {
     reserva_id: n.reserva_id ?? null,
     link: n.link ?? null,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Helper de duplicidade                                              */
+/* ------------------------------------------------------------------ */
+async function existeNotificacaoDuplicada({
+  usuario_id,
+  tipo,
+  turma_id = null,
+  evento_id = null,
+  reserva_id = null,
+  somenteNaoLida = true,
+}) {
+  const meta = await getNotifMeta();
+
+  if (!meta.hasUsuarioId) return false;
+
+  const where = [];
+  const params = [];
+  let p = 1;
+
+  where.push(`usuario_id = $${p++}`);
+  params.push(Number(usuario_id));
+
+  if (meta.hasTipo && tipo) {
+    where.push(`tipo = $${p++}`);
+    params.push(String(tipo));
+  }
+
+  if (meta.hasTurmaId && turma_id != null) {
+    where.push(`turma_id = $${p++}`);
+    params.push(Number(turma_id));
+  }
+
+  if (meta.hasEventoId && evento_id != null) {
+    where.push(`evento_id = $${p++}`);
+    params.push(Number(evento_id));
+  }
+
+  if (meta.hasReservaId && reserva_id != null) {
+    where.push(`reserva_id = $${p++}`);
+    params.push(Number(reserva_id));
+  }
+
+  if (somenteNaoLida && meta.hasLida) {
+    where.push(`lida = false`);
+  }
+
+  const sql = `
+    SELECT 1
+    FROM ${meta.tableName}
+    WHERE ${where.join(" AND ")}
+    LIMIT 1
+  `;
+
+  const dup = await query(sql, params);
+  return (dup?.rowCount ?? safeRows(dup).length) > 0;
 }
 
 /* ============================================================ */
@@ -246,8 +315,7 @@ async function listarNotificacao(req, res) {
     const result = await query(sql, params);
     const rows = safeRows(result);
 
-    const notificacoes = (rows || []).map(mapNotifRowToDTO);
-    return res.status(200).json(notificacoes);
+    return res.status(200).json((rows || []).map(mapNotifRowToDTO));
   } catch (err) {
     errlog("Erro ao buscar notificações:", err);
     return res.status(500).json({ erro: "Erro ao buscar notificações." });
@@ -256,7 +324,6 @@ async function listarNotificacao(req, res) {
 
 /* ============================================================ */
 /* 📊 Resumo premium de notificações                            */
-/* - para badge do sino / painel inicial                        */
 /* ============================================================ */
 async function resumoNotificacoes(req, res) {
   try {
@@ -312,11 +379,7 @@ async function resumoNotificacoes(req, res) {
       naoLidas += subNaoLidas;
     }
 
-    return res.json({
-      total,
-      naoLidas,
-      porTipo,
-    });
+    return res.json({ total, naoLidas, porTipo });
   } catch (err) {
     errlog("Erro ao montar resumo de notificações:", err);
     return res.status(500).json({ erro: "Erro ao buscar resumo das notificações." });
@@ -363,32 +426,43 @@ async function contarNaoLidas(req, res) {
 /* ============================================================ */
 async function criarNotificacao(usuario_id, mensagem, extra) {
   try {
-    if (!usuario_id || !mensagem) return null;
+    const uid = toPositiveInt(usuario_id);
+    const msg = normStr(mensagem, { max: 5000 });
+    if (!uid || !msg) return null;
 
     const meta = await getNotifMeta();
     const data = {};
-    const safeExtra = extra && typeof extra === "object" ? extra : {};
+    const safeExtra = normalizeContext(extra);
 
-    if (meta.hasUsuarioId) data.usuario_id = Number(usuario_id);
+    if (meta.hasUsuarioId) data.usuario_id = uid;
 
-    if (meta.hasMensagem) data.mensagem = String(mensagem);
-    else if (meta.hasCorpo) data.corpo = String(mensagem);
+    if (meta.hasMensagem) data.mensagem = msg;
+    else if (meta.hasCorpo) data.corpo = msg;
 
     if (meta.hasLida) data.lida = false;
-    if (meta.hasTipo && safeExtra.tipo !== undefined) data.tipo = safeExtra.tipo;
-    if (meta.hasTitulo && safeExtra.titulo !== undefined) data.titulo = safeExtra.titulo;
+    if (meta.hasTipo && safeExtra.tipo !== undefined) data.tipo = normStr(safeExtra.tipo, { max: 120 });
+    if (meta.hasTitulo && safeExtra.titulo !== undefined) data.titulo = normStr(safeExtra.titulo, { max: 255 });
+
     if (meta.hasTurmaId && safeExtra.turma_id !== undefined && safeExtra.turma_id !== null) {
-      data.turma_id = Number(safeExtra.turma_id);
+      const turmaId = toPositiveInt(safeExtra.turma_id);
+      if (turmaId) data.turma_id = turmaId;
     }
+
     if (meta.hasEventoId && safeExtra.evento_id !== undefined && safeExtra.evento_id !== null) {
-      data.evento_id = Number(safeExtra.evento_id);
+      const eventoId = toPositiveInt(safeExtra.evento_id);
+      if (eventoId) data.evento_id = eventoId;
     }
+
     if (meta.hasReservaId && safeExtra.reserva_id !== undefined && safeExtra.reserva_id !== null) {
-      data.reserva_id = Number(safeExtra.reserva_id);
+      const reservaId = toPositiveInt(safeExtra.reserva_id);
+      if (reservaId) data.reserva_id = reservaId;
     }
+
     if (meta.hasLink && safeExtra.link !== undefined && safeExtra.link !== null) {
-      data.link = String(safeExtra.link);
+      const link = normStr(safeExtra.link, { max: 1000 });
+      if (link) data.link = link;
     }
+
     if (meta.hasMetadata && safeExtra.metadata !== undefined && safeExtra.metadata !== null) {
       data.metadata = safeExtra.metadata;
     }
@@ -397,6 +471,7 @@ async function criarNotificacao(usuario_id, mensagem, extra) {
 
     const cols = Object.keys(data);
     const colsFinal = tsCol ? cols.concat([tsCol]) : cols;
+
     if (!colsFinal.length) return null;
 
     const params = cols.map((c) => data[c]);
@@ -414,9 +489,11 @@ async function criarNotificacao(usuario_id, mensagem, extra) {
 
     log("[criarNotificacao] criada", {
       id,
-      usuario_id,
+      usuario_id: uid,
       tipo: data.tipo || null,
       titulo: data.titulo || null,
+      turma_id: data.turma_id || null,
+      evento_id: data.evento_id || null,
     });
 
     return id;
@@ -509,45 +586,41 @@ async function marcarTodasComoLidas(req, res) {
 /* ============================================================ */
 /* 📝 Notificações de avaliação pendente                        */
 /* ============================================================ */
-async function gerarNotificacaoDeAvaliacao(usuario_id) {
+async function gerarNotificacaoDeAvaliacao(usuario_id, contexto = {}) {
   try {
-    if (!usuario_id) return;
+    const uid = toPositiveInt(usuario_id);
+    if (!uid) return;
 
-    const meta = await getNotifMeta();
-    const pendentes = await buscarAvaliacaoPendentes(usuario_id);
+    const pendentes = await buscarAvaliacaoPendentes(uid);
+    if (!Array.isArray(pendentes) || !pendentes.length) return;
 
-    for (const av of pendentes) {
+    const ctx = normalizeContext(contexto);
+    const turmaCtx = ctx.turma_id != null ? Number(ctx.turma_id) : null;
+    const eventoCtx = ctx.evento_id != null ? Number(ctx.evento_id) : null;
+
+    const candidatas = pendentes.filter((av) => {
+      if (turmaCtx != null && Number(av.turma_id) !== turmaCtx) return false;
+      if (eventoCtx != null && Number(av.evento_id) !== eventoCtx) return false;
+      return true;
+    });
+
+    for (const av of candidatas) {
       const turmaId = av?.turma_id != null ? Number(av.turma_id) : null;
       const eventoId = av?.evento_id != null ? Number(av.evento_id) : null;
       const nomeEvento = av.nome_evento || av.titulo || "evento";
 
-      const where = [];
-      const params = [];
-      let p = 1;
+      const duplicada = await existeNotificacaoDuplicada({
+        usuario_id: uid,
+        tipo: "avaliacao",
+        turma_id: turmaId,
+        evento_id: eventoId,
+        somenteNaoLida: true,
+      });
 
-      if (meta.hasUsuarioId) {
-        where.push(`usuario_id = $${p++}`);
-        params.push(Number(usuario_id));
-      }
-      if (meta.hasTipo) where.push(`tipo = 'avaliacao'`);
-      if (meta.hasTurmaId && turmaId != null) {
-        where.push(`turma_id = $${p++}`);
-        params.push(turmaId);
-      }
-      if (meta.hasEventoId && eventoId != null) {
-        where.push(`evento_id = $${p++}`);
-        params.push(eventoId);
-      }
-      if (meta.hasLida) where.push(`lida = false`);
-
-      if (where.length) {
-        const dupSql = `SELECT 1 FROM ${meta.tableName} WHERE ${where.join(" AND ")} LIMIT 1`;
-        const dup = await query(dupSql, params);
-        if ((dup?.rowCount ?? safeRows(dup).length) > 0) continue;
-      }
+      if (duplicada) continue;
 
       await criarNotificacao(
-        usuario_id,
+        uid,
         `Já está disponível a avaliação do evento "${nomeEvento}".`,
         {
           tipo: "avaliacao",
@@ -567,15 +640,15 @@ async function gerarNotificacaoDeAvaliacao(usuario_id) {
 /* ============================================================ */
 async function gerarNotificacaoDeCertificado(usuario_id, turmaOrOpts = null) {
   try {
-    if (!usuario_id) return;
-    const meta = await getNotifMeta();
+    const uid = toPositiveInt(usuario_id);
+    if (!uid) return;
 
     let turma_id = null;
     let evento_id = null;
     let evento_titulo = "evento";
 
     if (typeof turmaOrOpts === "number") {
-      turma_id = turmaOrOpts;
+      turma_id = Number(turmaOrOpts);
     } else if (turmaOrOpts && typeof turmaOrOpts === "object") {
       turma_id = turmaOrOpts.turma_id ?? null;
       evento_id = turmaOrOpts.evento_id ?? null;
@@ -583,33 +656,18 @@ async function gerarNotificacaoDeCertificado(usuario_id, turmaOrOpts = null) {
     }
 
     if (turma_id != null || evento_id != null) {
-      const where = [];
-      const params = [];
-      let p = 1;
+      const duplicada = await existeNotificacaoDuplicada({
+        usuario_id: uid,
+        tipo: "certificado",
+        turma_id,
+        evento_id,
+        somenteNaoLida: true,
+      });
 
-      if (meta.hasUsuarioId) {
-        where.push(`usuario_id = $${p++}`);
-        params.push(Number(usuario_id));
-      }
-      if (meta.hasTipo) where.push(`tipo = 'certificado'`);
-      if (meta.hasTurmaId && turma_id != null) {
-        where.push(`turma_id = $${p++}`);
-        params.push(Number(turma_id));
-      }
-      if (meta.hasEventoId && evento_id != null) {
-        where.push(`evento_id = $${p++}`);
-        params.push(Number(evento_id));
-      }
-      if (meta.hasLida) where.push(`lida = false`);
-
-      if (where.length) {
-        const dupSql = `SELECT 1 FROM ${meta.tableName} WHERE ${where.join(" AND ")} LIMIT 1`;
-        const dup = await query(dupSql, params);
-        if ((dup?.rowCount ?? safeRows(dup).length) > 0) return;
-      }
+      if (duplicada) return;
 
       await criarNotificacao(
-        Number(usuario_id),
+        uid,
         `Seu certificado do evento "${evento_titulo}" está disponível para download.`,
         {
           tipo: "certificado",
@@ -621,6 +679,15 @@ async function gerarNotificacaoDeCertificado(usuario_id, turmaOrOpts = null) {
       return;
     }
 
+    const inscrTable = await (async () => {
+      try {
+        await query(`SELECT 1 FROM inscricoes LIMIT 1`);
+        return "inscricoes";
+      } catch {
+        return "inscricao";
+      }
+    })();
+
     const result = await query(
       `
       SELECT
@@ -628,8 +695,8 @@ async function gerarNotificacaoDeCertificado(usuario_id, turmaOrOpts = null) {
         e.titulo AS nome_evento,
         t.id     AS turma_id
       FROM turmas t
-      JOIN eventos e    ON e.id = t.evento_id
-      JOIN inscricoes i ON i.turma_id = t.id AND i.usuario_id = $1
+      JOIN eventos e ON e.id = t.evento_id
+      JOIN ${inscrTable} i ON i.turma_id = t.id AND i.usuario_id = $1
       LEFT JOIN certificados c
         ON c.usuario_id = $1
        AND c.evento_id  = e.id
@@ -639,39 +706,24 @@ async function gerarNotificacaoDeCertificado(usuario_id, turmaOrOpts = null) {
         AND c.id IS NULL
       ORDER BY t.data_fim DESC
       `,
-      [Number(usuario_id)]
+      [uid]
     );
 
     const rows = safeRows(result);
 
     for (const row of rows || []) {
-      const where = [];
-      const params = [];
-      let p = 1;
+      const duplicada = await existeNotificacaoDuplicada({
+        usuario_id: uid,
+        tipo: "certificado",
+        turma_id: row.turma_id,
+        evento_id: row.evento_id,
+        somenteNaoLida: true,
+      });
 
-      if (meta.hasUsuarioId) {
-        where.push(`usuario_id = $${p++}`);
-        params.push(Number(usuario_id));
-      }
-      if (meta.hasTipo) where.push(`tipo = 'certificado'`);
-      if (meta.hasTurmaId) {
-        where.push(`turma_id = $${p++}`);
-        params.push(Number(row.turma_id));
-      }
-      if (meta.hasEventoId) {
-        where.push(`evento_id = $${p++}`);
-        params.push(Number(row.evento_id));
-      }
-      if (meta.hasLida) where.push(`lida = false`);
-
-      if (where.length) {
-        const dupSql = `SELECT 1 FROM ${meta.tableName} WHERE ${where.join(" AND ")} LIMIT 1`;
-        const dup = await query(dupSql, params);
-        if ((dup?.rowCount ?? safeRows(dup).length) > 0) continue;
-      }
+      if (duplicada) continue;
 
       await criarNotificacao(
-        Number(usuario_id),
+        uid,
         `Seu certificado do evento "${row.nome_evento}" já pode ser emitido.`,
         {
           tipo: "certificado",
@@ -699,36 +751,26 @@ async function gerarNotificacaoDeReservaAprovada({
   observacao,
 }) {
   try {
-    if (!usuario_id || !reserva_id) return;
-    const meta = await getNotifMeta();
+    const uid = toPositiveInt(usuario_id);
+    const reservaId = toPositiveInt(reserva_id);
+    if (!uid || !reservaId) return;
 
-    const where = [];
-    const params = [];
-    let p = 1;
+    const duplicada = await existeNotificacaoDuplicada({
+      usuario_id: uid,
+      tipo: "reserva_aprovada",
+      reserva_id: reservaId,
+      somenteNaoLida: true,
+    });
 
-    if (meta.hasUsuarioId) {
-      where.push(`usuario_id = $${p++}`);
-      params.push(Number(usuario_id));
-    }
-    if (meta.hasTipo) where.push(`tipo = 'reserva_aprovada'`);
-    if (meta.hasReservaId) {
-      where.push(`reserva_id = $${p++}`);
-      params.push(Number(reserva_id));
-    }
-    if (meta.hasLida) where.push(`lida = false`);
-
-    if (where.length) {
-      const dupSql = `SELECT 1 FROM ${meta.tableName} WHERE ${where.join(" AND ")} LIMIT 1`;
-      const dup = await query(dupSql, params);
-      if ((dup?.rowCount ?? safeRows(dup).length) > 0) {
-        log("[NOTIF_RESERVA][SKIP_DUPLICADA][APROVADA]", { usuario_id, reserva_id });
-        return;
-      }
+    if (duplicada) {
+      log("[NOTIF_RESERVA][SKIP_DUPLICADA][APROVADA]", { usuario_id: uid, reserva_id: reservaId });
+      return;
     }
 
-    const dataFmt = typeof data === "string" && /^\d{4}-\d{2}-\d{2}$/.test(data)
-      ? toBrDateOnlyString(data)
-      : toBrDate(data);
+    const dataFmt =
+      typeof data === "string" && /^\d{4}-\d{2}-\d{2}$/.test(data)
+        ? toBrDateOnlyString(data)
+        : toBrDate(data);
 
     const salaLabel = formatSalaLabel(sala);
     const periodoLabel = formatPeriodoLabel(periodo);
@@ -741,13 +783,13 @@ async function gerarNotificacaoDeReservaAprovada({
       ? `${mensagemBase} Observação: ${String(observacao).trim()}`
       : mensagemBase;
 
-    await criarNotificacao(Number(usuario_id), mensagemFinal, {
+    await criarNotificacao(uid, mensagemFinal, {
       tipo: "reserva_aprovada",
       titulo: "Reserva aprovada",
-      reserva_id: Number(reserva_id),
+      reserva_id: reservaId,
     });
 
-    log("[NOTIF_RESERVA][CRIAR][APROVADA]", { usuario_id, reserva_id });
+    log("[NOTIF_RESERVA][CRIAR][APROVADA]", { usuario_id: uid, reserva_id: reservaId });
   } catch (err) {
     errlog("[NOTIF_RESERVA][ERRO][APROVADA]", err?.message || err);
   }
@@ -763,36 +805,26 @@ async function gerarNotificacaoDeReservaRejeitada({
   observacao,
 }) {
   try {
-    if (!usuario_id || !reserva_id) return;
-    const meta = await getNotifMeta();
+    const uid = toPositiveInt(usuario_id);
+    const reservaId = toPositiveInt(reserva_id);
+    if (!uid || !reservaId) return;
 
-    const where = [];
-    const params = [];
-    let p = 1;
+    const duplicada = await existeNotificacaoDuplicada({
+      usuario_id: uid,
+      tipo: "reserva_rejeitada",
+      reserva_id: reservaId,
+      somenteNaoLida: true,
+    });
 
-    if (meta.hasUsuarioId) {
-      where.push(`usuario_id = $${p++}`);
-      params.push(Number(usuario_id));
-    }
-    if (meta.hasTipo) where.push(`tipo = 'reserva_rejeitada'`);
-    if (meta.hasReservaId) {
-      where.push(`reserva_id = $${p++}`);
-      params.push(Number(reserva_id));
-    }
-    if (meta.hasLida) where.push(`lida = false`);
-
-    if (where.length) {
-      const dupSql = `SELECT 1 FROM ${meta.tableName} WHERE ${where.join(" AND ")} LIMIT 1`;
-      const dup = await query(dupSql, params);
-      if ((dup?.rowCount ?? safeRows(dup).length) > 0) {
-        log("[NOTIF_RESERVA][SKIP_DUPLICADA][REJEITADA]", { usuario_id, reserva_id });
-        return;
-      }
+    if (duplicada) {
+      log("[NOTIF_RESERVA][SKIP_DUPLICADA][REJEITADA]", { usuario_id: uid, reserva_id: reservaId });
+      return;
     }
 
-    const dataFmt = typeof data === "string" && /^\d{4}-\d{2}-\d{2}$/.test(data)
-      ? toBrDateOnlyString(data)
-      : toBrDate(data);
+    const dataFmt =
+      typeof data === "string" && /^\d{4}-\d{2}-\d{2}$/.test(data)
+        ? toBrDateOnlyString(data)
+        : toBrDate(data);
 
     const salaLabel = formatSalaLabel(sala);
     const periodoLabel = formatPeriodoLabel(periodo);
@@ -805,13 +837,13 @@ async function gerarNotificacaoDeReservaRejeitada({
       ? `${mensagemBase} Motivo/observação: ${String(observacao).trim()}`
       : mensagemBase;
 
-    await criarNotificacao(Number(usuario_id), mensagemFinal, {
+    await criarNotificacao(uid, mensagemFinal, {
       tipo: "reserva_rejeitada",
       titulo: "Reserva não aprovada",
-      reserva_id: Number(reserva_id),
+      reserva_id: reservaId,
     });
 
-    log("[NOTIF_RESERVA][CRIAR][REJEITADA]", { usuario_id, reserva_id });
+    log("[NOTIF_RESERVA][CRIAR][REJEITADA]", { usuario_id: uid, reserva_id: reservaId });
   } catch (err) {
     errlog("[NOTIF_RESERVA][ERRO][REJEITADA]", err?.message || err);
   }

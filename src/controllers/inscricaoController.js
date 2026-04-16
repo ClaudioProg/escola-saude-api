@@ -1,10 +1,12 @@
-// 📁 src/controllers/inscricaoController.js — PREMIUM++ (instrutor por TURMA + fallback)
+// 📁 src/controllers/inscricaoController.js — PREMIUM+++
 // - Robusto, seguro, date-only safe
-// - ✅ instrutor por turma (turma_instrutor) + fallback evento_instrutor
-// - ✅ inscricoes/inscricao (fallback automático)
-// - ✅ frequência por dia distinto (COUNT DISTINCT)
-// - ✅ logs com RID e transação com lock
-// - ✅ elegibilidade de inscrição separada da visibilidade do evento
+// - Instrutor por turma (turma_instrutor) + fallback evento_instrutor
+// - Compat com inscricoes/inscricao
+// - Conflitos 100% SQL
+// - Transação segura com lock
+// - Notificação premium com contexto
+// - Logs com RID
+// - Resumo e encontros consistentes via datas_turma > fallback conservador
 /* eslint-disable no-console */
 "use strict";
 
@@ -30,7 +32,7 @@ if (typeof query !== "function") {
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Logger util (RID) — sem barulho em produção
+   Logger util (RID)
 ──────────────────────────────────────────────────────────────── */
 function mkRid() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -38,27 +40,55 @@ function mkRid() {
 function log(rid, level, msg, extra) {
   const prefix = `[INS][RID=${rid}]`;
   if (level === "error") return console.error(`${prefix} ✖ ${msg}`, extra?.stack || extra?.message || extra);
-  if (!IS_DEV && level !== "error") return;
+  if (!IS_DEV && level !== "error" && level !== "warn") return;
   if (level === "warn") return console.warn(`${prefix} ⚠ ${msg}`, extra || "");
   return console.log(`${prefix} • ${msg}`, extra || "");
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Helpers date-only safe
+   Helpers básicos
 ──────────────────────────────────────────────────────────────── */
 const asPositiveInt = (v) => {
   const n = Number(v);
   return Number.isFinite(n) && Number.isInteger(n) && n > 0 ? n : null;
 };
+
 const safeText = (v, fb = "") => (v == null ? fb : String(v));
+
 const safeHHMM = (v, fb = "") => {
   const s = safeText(v, "").trim().slice(0, 5);
   return /^\d{2}:\d{2}$/.test(s) ? s : fb;
 };
+
 const safeYMD = (v, fb = null) => {
   const s = safeText(v, "").trim().slice(0, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : fb;
 };
+
+async function safeRollback(q) {
+  try {
+    await q("ROLLBACK");
+  } catch {}
+}
+
+async function withTransaction(fn) {
+  const client = pool?.connect ? await pool.connect() : null;
+  const q = client?.query ? client.query.bind(client) : query;
+
+  try {
+    await q("BEGIN");
+    const out = await fn(q);
+    await q("COMMIT");
+    return out;
+  } catch (err) {
+    await safeRollback(q);
+    throw err;
+  } finally {
+    try {
+      client?.release?.();
+    } catch {}
+  }
+}
 
 /* ────────────────────────────────────────────────────────────────
    Constantes de restrição
@@ -79,7 +109,7 @@ async function resolveInscricaoTable(q) {
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Helpers de restrição / elegibilidade
+   Helpers de apresentação / restrição
 ──────────────────────────────────────────────────────────────── */
 function normalizarTituloPtBr(input = "") {
   const raw = String(input || "").trim();
@@ -101,6 +131,7 @@ function normalizarTituloPtBr(input = "") {
     .map((w, idx) => {
       const clean = w.replace(/[()]/g, "");
       const upper = clean.toUpperCase();
+
       if (siglas.has(upper)) return upper;
       if (roman.test(clean)) return upper;
 
@@ -121,10 +152,12 @@ async function carregarCargosPermitidosDetalhe(q, cargosIds = []) {
 
   try {
     const { rows } = await q(
-      `SELECT id, nome
-         FROM cargos
-        WHERE id = ANY($1::int[])
-        ORDER BY nome`,
+      `
+      SELECT id, nome
+      FROM cargos
+      WHERE id = ANY($1::int[])
+      ORDER BY nome
+      `,
       [ids]
     );
     return rows || [];
@@ -142,10 +175,12 @@ async function carregarUnidadesPermitidasDetalhe(q, unidadesIds = []) {
 
   try {
     const { rows } = await q(
-      `SELECT id, nome
-         FROM unidades
-        WHERE id = ANY($1::int[])
-        ORDER BY nome`,
+      `
+      SELECT id, nome
+      FROM unidades
+      WHERE id = ANY($1::int[])
+      ORDER BY nome
+      `,
       [ids]
     );
     return rows || [];
@@ -190,10 +225,12 @@ async function getUsuarioContextoRestricao(q, usuarioId) {
   }
 
   const { rows } = await q(
-    `SELECT registro, cargo_id, unidade_id
-       FROM usuarios
-      WHERE id = $1
-      LIMIT 1`,
+    `
+    SELECT registro, cargo_id, unidade_id
+    FROM usuarios
+    WHERE id = $1
+    LIMIT 1
+    `,
     [usuarioId]
   );
 
@@ -276,11 +313,13 @@ async function avaliarElegibilidadeInscricao(q, usuarioId, evento) {
   if (evento.restrito_modo === MODO_LISTA) {
     if (usuario.registro_norm) {
       const hit = await q(
-        `SELECT 1
-           FROM evento_registros
-          WHERE evento_id = $1
-            AND registro_norm = $2
-          LIMIT 1`,
+        `
+        SELECT 1
+        FROM evento_registros
+        WHERE evento_id = $1
+          AND registro_norm = $2
+        LIMIT 1
+        `,
         [evento.id, usuario.registro_norm]
       );
 
@@ -329,14 +368,14 @@ async function avaliarElegibilidadeInscricao(q, usuarioId, evento) {
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Helpers de datas/horários (datas_turma) — sem new Date()
+   Helpers de turma (date-only safe)
 ──────────────────────────────────────────────────────────────── */
 /**
  * Resumo consistente da turma:
- *  - data_inicio/data_fim: MIN/MAX datas_turma; fallback presencas; fallback colunas da turma
- *  - horario_inicio/horario_fim: mais frequente em datas_turma; fallback colunas da turma; fallback 08:00–17:00
+ * - datas_turma > presencas > turmas
+ * - horários mais frequentes em datas_turma > turmas > fallback
  */
-async function getResumoTurma(turmaId) {
+async function getResumoTurma(q, turmaId) {
   const sql = `
     SELECT
       t.id,
@@ -355,7 +394,8 @@ async function getResumoTurma(turmaId) {
 
       COALESCE(
         (
-          SELECT to_char(z.hi, 'HH24:MI') FROM (
+          SELECT to_char(z.hi, 'HH24:MI')
+          FROM (
             SELECT dt.horario_inicio AS hi, COUNT(*) c
             FROM datas_turma dt
             WHERE dt.turma_id = t.id
@@ -370,7 +410,8 @@ async function getResumoTurma(turmaId) {
 
       COALESCE(
         (
-          SELECT to_char(z.hf, 'HH24:MI') FROM (
+          SELECT to_char(z.hf, 'HH24:MI')
+          FROM (
             SELECT dt.horario_fim AS hf, COUNT(*) c
             FROM datas_turma dt
             WHERE dt.turma_id = t.id
@@ -386,17 +427,49 @@ async function getResumoTurma(turmaId) {
     FROM turmas t
     WHERE t.id = $1
   `;
-  const { rows } = await query(sql, [turmaId]);
+
+  const { rows } = await q(sql, [turmaId]);
   return rows?.[0] || null;
 }
 
-/* ────────────────────────────────────────────────────────────────
-   🔒 Checagens de conflito — 100% SQL (sem fuso, sem Date())
-──────────────────────────────────────────────────────────────── */
-
 /**
- * Usa fn_tem_conflito_inscricao_mesmo_evento(usuario_id, turma_id)
+ * Total de encontros da turma:
+ * - prioridade: datas_turma
+ * - fallback conservador: 1 encontro se houver período definido
+ * Evita inflar encontros por dias corridos inexistentes.
  */
+async function getTotalEncontrosTurma(q, turmaId) {
+  const result = await q(
+    `
+    WITH dts AS (
+      SELECT COUNT(*)::int AS total
+      FROM datas_turma
+      WHERE turma_id = $1
+    ),
+    fallback AS (
+      SELECT
+        CASE
+          WHEN t.data_inicio IS NOT NULL AND t.data_fim IS NOT NULL THEN 1
+          ELSE 0
+        END::int AS total
+      FROM turmas t
+      WHERE t.id = $1
+    )
+    SELECT
+      CASE
+        WHEN (SELECT total FROM dts) > 0 THEN (SELECT total FROM dts)
+        ELSE COALESCE((SELECT total FROM fallback), 0)
+      END AS total
+    `,
+    [turmaId]
+  );
+
+  return Number(result?.rows?.[0]?.total || 0);
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Checagens de conflito — 100% SQL
+──────────────────────────────────────────────────────────────── */
 async function conflitoMesmoEventoSQL(usuarioId, turmaId) {
   const q = `SELECT fn_tem_conflito_inscricao_mesmo_evento($1, $2) AS conflito`;
   const { rows } = await query(q, [usuarioId, turmaId]);
@@ -405,21 +478,19 @@ async function conflitoMesmoEventoSQL(usuarioId, turmaId) {
 
 /**
  * Conflito GLOBAL (turma-alvo x qualquer outra inscrição do usuário)
- * - Compara SOMENTE no mesmo dia (datas_turma)
- * - Intervalo meia-aberto [início, fim) => bordas contíguas NÃO conflitam
- * - Fallback: se turma-alvo não tem datas_turma, usa (data_inicio/data_fim+horários) apenas se di=df
+ * - Compara somente no mesmo dia (datas_turma)
+ * - Intervalo meia-aberto [início, fim) => bordas contíguas não conflitam
+ * - Fallback: se turma-alvo não tem datas_turma, usa somente se di=df
  */
 async function conflitoGlobalSQL(usuarioId, turmaIdAlvo) {
   const rid = mkRid();
 
-  // 1) turma-alvo tem datas_turma?
   const { rows: alvoTemDatas } = await query(
     `SELECT EXISTS(SELECT 1 FROM datas_turma WHERE turma_id = $1) AS tem;`,
     [turmaIdAlvo]
   );
   const temDatasAlvo = !!alvoTemDatas?.[0]?.tem;
 
-  // precisa da tabela correta de inscrição
   const inscrTable = await resolveInscricaoTable(query);
 
   if (temDatasAlvo) {
@@ -444,7 +515,8 @@ async function conflitoGlobalSQL(usuarioId, turmaIdAlvo) {
         SELECT tsrange((d2.data + d2.horario_inicio)::timestamp, (d2.data + d2.horario_fim)::timestamp, '[)') AS rng
         FROM datas_turma d2
         JOIN outras o ON o.turma_id = d2.turma_id
-        WHERE d2.horario_inicio IS NOT NULL AND d2.horario_fim IS NOT NULL
+        WHERE d2.horario_inicio IS NOT NULL
+          AND d2.horario_fim IS NOT NULL
       )
       SELECT EXISTS (
         SELECT 1
@@ -464,14 +536,13 @@ async function conflitoGlobalSQL(usuarioId, turmaIdAlvo) {
     }
   }
 
-  // 2) fallback: turma-alvo SEM datas_turma
   const qFallback = `
     WITH alvo AS (
       SELECT
         to_char(t.data_inicio::date, 'YYYY-MM-DD') AS di,
-        to_char(t.data_fim::date,    'YYYY-MM-DD') AS df,
-        left(t.horario_inicio::text, 5)            AS hi,
-        left(t.horario_fim::text,    5)            AS hf
+        to_char(t.data_fim::date, 'YYYY-MM-DD') AS df,
+        left(t.horario_inicio::text, 5) AS hi,
+        left(t.horario_fim::text, 5) AS hf
       FROM turmas t
       WHERE t.id = $2
     ),
@@ -484,10 +555,11 @@ async function conflitoGlobalSQL(usuarioId, turmaIdAlvo) {
     slots_alvo AS (
       SELECT
         CASE
-          WHEN a.di IS NOT NULL AND a.df IS NOT NULL
-               AND a.di = a.df
-               AND a.hi ~ '^[0-9]{2}:[0-9]{2}$'
-               AND a.hf ~ '^[0-9]{2}:[0-9]{2}$'
+          WHEN a.di IS NOT NULL
+           AND a.df IS NOT NULL
+           AND a.di = a.df
+           AND a.hi ~ '^[0-9]{2}:[0-9]{2}$'
+           AND a.hf ~ '^[0-9]{2}:[0-9]{2}$'
           THEN tsrange((a.di || 'T' || a.hi)::timestamp, (a.df || 'T' || a.hf)::timestamp, '[)')
           ELSE NULL
         END AS rng
@@ -497,7 +569,8 @@ async function conflitoGlobalSQL(usuarioId, turmaIdAlvo) {
       SELECT tsrange((d2.data::date + d2.horario_inicio::time)::timestamp, (d2.data::date + d2.horario_fim::time)::timestamp, '[)') AS rng
       FROM datas_turma d2
       JOIN outras o ON o.turma_id = d2.turma_id
-      WHERE d2.horario_inicio IS NOT NULL AND d2.horario_fim IS NOT NULL
+      WHERE d2.horario_inicio IS NOT NULL
+        AND d2.horario_fim IS NOT NULL
     )
     SELECT EXISTS (
       SELECT 1
@@ -532,28 +605,27 @@ async function inscreverEmTurma(req, res) {
 
   log(rid, "info", "inscreverEmTurma:start", { usuarioId, turmaId });
 
-  const client = pool?.connect ? await pool.connect() : null;
-  const q = client?.query ? client.query.bind(client) : query;
-
   try {
-    const inscrTable = await resolveInscricaoTable(q);
+    const payload = await withTransaction(async (q) => {
+      const inscrTable = await resolveInscricaoTable(q);
 
-    await q("BEGIN");
+      // 1) Turma com lock
+      const { rows: turmaRows } = await q(
+        `SELECT * FROM turmas WHERE id = $1 FOR UPDATE`,
+        [turmaId]
+      );
 
-    // 1) Turma (lock)
-    const { rows: turmaRows } = await q(`SELECT * FROM turmas WHERE id = $1 FOR UPDATE`, [turmaId]);
-    if (!turmaRows.length) {
-      await q("ROLLBACK");
-      return res.status(404).json({ erro: "Turma não encontrada." });
-    }
-    const turma = turmaRows[0];
+      if (!turmaRows.length) {
+        return { http: 404, body: { erro: "Turma não encontrada." } };
+      }
 
-    // Resumo calculado (para exibição/e-mail)
-    const resumo = await getResumoTurma(turmaId);
+      const turma = turmaRows[0];
+      const resumo = await getResumoTurma(q, turmaId);
 
-    // 2) Evento (tipo + dados p/ notificação/e-mail + elegibilidade)
-    const { rows: evRows } = await q(
-      `SELECT 
+      // 2) Evento
+      const { rows: evRows } = await q(
+        `
+        SELECT
           id,
           publicado,
           titulo,
@@ -565,206 +637,240 @@ async function inscreverEmTurma(req, res) {
           COALESCE(unidades_permitidas_ids, '{}') AS unidades_permitidas_ids,
           (tipo::text) AS tipo,
           CASE WHEN tipo::text ILIKE 'congresso' THEN TRUE ELSE FALSE END AS is_congresso
-       FROM eventos
-       WHERE id = $1`,
-      [turma.evento_id]
-    );
-
-    if (!evRows.length) {
-      await q("ROLLBACK");
-      return res.status(404).json({ erro: "Evento da turma não encontrado." });
-    }
-
-    const evento = evRows[0];
-    const isCongresso = !!evento.is_congresso;
-
-    // 2A) Evento precisa estar publicado para inscrição normal
-    if (!evento.publicado) {
-      await q("ROLLBACK");
-      return res.status(403).json({
-        erro: "Evento ainda não publicado.",
-        motivo: "NAO_PUBLICADO",
-        rid,
-      });
-    }
-
-    // 2B) Elegibilidade de inscrição (nova regra)
-    const elegibilidade = await avaliarElegibilidadeInscricao(q, usuarioId, evento);
-    if (!elegibilidade.ok) {
-      await q("ROLLBACK");
-
-      log(rid, "warn", "inscreverEmTurma:bloqueado_elegibilidade", {
-        usuarioId,
-        turmaId,
-        eventoId: evento.id,
-        motivo: elegibilidade.motivo,
-        mensagem: elegibilidade.mensagem,
-        publico_alvo_label: elegibilidade.publico_alvo_label,
-      });
-
-      return res.status(403).json({
-        erro: elegibilidade.mensagem || "Sem permissão para se inscrever neste evento.",
-        motivo: elegibilidade.motivo || "SEM_PERMISSAO",
-        mensagem: elegibilidade.mensagem || "Sem permissão para se inscrever neste evento.",
-        publico_alvo_label: elegibilidade.publico_alvo_label || "",
-        rid,
-      });
-    }
-
-    // 3) Bloqueio: instrutor da TURMA (ou do evento, como fallback)
-    let ehInstrutor;
-    try {
-      ehInstrutor = await q(
-        `
-        SELECT 1
-        FROM turmas t
-        WHERE t.id = $1
-          AND (
-            EXISTS (SELECT 1 FROM turma_instrutor ti WHERE ti.turma_id = t.id AND ti.instrutor_id = $2)
-            OR EXISTS (SELECT 1 FROM evento_instrutor ei WHERE ei.evento_id = t.evento_id AND ei.instrutor_id = $2)
-          )
-        LIMIT 1
+        FROM eventos
+        WHERE id = $1
         `,
-        [turmaId, usuarioId]
+        [turma.evento_id]
       );
-    } catch (e) {
-      if (e?.code === "42P01") {
+
+      if (!evRows.length) {
+        return { http: 404, body: { erro: "Evento da turma não encontrado." } };
+      }
+
+      const evento = evRows[0];
+      const isCongresso = !!evento.is_congresso;
+
+      if (!evento.publicado) {
+        return {
+          http: 403,
+          body: {
+            erro: "Evento ainda não publicado.",
+            motivo: "NAO_PUBLICADO",
+            rid,
+          },
+        };
+      }
+
+      const elegibilidade = await avaliarElegibilidadeInscricao(q, usuarioId, evento);
+      if (!elegibilidade.ok) {
+        log(rid, "warn", "inscreverEmTurma:bloqueado_elegibilidade", {
+          usuarioId,
+          turmaId,
+          eventoId: evento.id,
+          motivo: elegibilidade.motivo,
+          mensagem: elegibilidade.mensagem,
+          publico_alvo_label: elegibilidade.publico_alvo_label,
+        });
+
+        return {
+          http: 403,
+          body: {
+            erro: elegibilidade.mensagem || "Sem permissão para se inscrever neste evento.",
+            motivo: elegibilidade.motivo || "SEM_PERMISSAO",
+            mensagem: elegibilidade.mensagem || "Sem permissão para se inscrever neste evento.",
+            publico_alvo_label: elegibilidade.publico_alvo_label || "",
+            rid,
+          },
+        };
+      }
+
+      // 3) Instrutor da turma/evento não pode se inscrever
+      let ehInstrutor;
+      try {
         ehInstrutor = await q(
           `
           SELECT 1
           FROM turmas t
           WHERE t.id = $1
-            AND EXISTS (
-              SELECT 1
-              FROM turma_instrutor ti
-              WHERE ti.turma_id = t.id
-                AND ti.instrutor_id = $2
+            AND (
+              EXISTS (
+                SELECT 1
+                FROM turma_instrutor ti
+                WHERE ti.turma_id = t.id
+                  AND ti.instrutor_id = $2
+              )
+              OR EXISTS (
+                SELECT 1
+                FROM evento_instrutor ei
+                WHERE ei.evento_id = t.evento_id
+                  AND ei.instrutor_id = $2
+              )
             )
           LIMIT 1
           `,
           [turmaId, usuarioId]
         );
-      } else {
-        throw e;
+      } catch (e) {
+        if (e?.code === "42P01") {
+          ehInstrutor = await q(
+            `
+            SELECT 1
+            FROM turmas t
+            WHERE t.id = $1
+              AND EXISTS (
+                SELECT 1
+                FROM turma_instrutor ti
+                WHERE ti.turma_id = t.id
+                  AND ti.instrutor_id = $2
+              )
+            LIMIT 1
+            `,
+            [turmaId, usuarioId]
+          );
+        } else {
+          throw e;
+        }
       }
-    }
 
-    if (ehInstrutor.rowCount > 0) {
-      await q("ROLLBACK");
-      return res.status(409).json({
-        erro: "Você é instrutor desta turma/evento e não pode se inscrever como participante.",
-      });
-    }
-
-    // 4) Duplicidade na MESMA turma
-    const duplicado = await q(
-      `SELECT 1 FROM ${inscrTable} WHERE usuario_id = $1 AND turma_id = $2 LIMIT 1`,
-      [usuarioId, turmaId]
-    );
-    if (duplicado.rowCount > 0) {
-      await q("ROLLBACK");
-      return res.status(409).json({ erro: "Usuário já inscrito nesta turma." });
-    }
-
-    // 5) Regra: uma turma por evento (exceto congresso)
-    if (!isCongresso) {
-      const ja = await q(
-        `
-        SELECT 1
-          FROM ${inscrTable} i
-          JOIN turmas t2 ON t2.id = i.turma_id
-         WHERE i.usuario_id = $1
-           AND t2.evento_id = $2
-         LIMIT 1`,
-        [usuarioId, turma.evento_id]
-      );
-      if (ja.rowCount > 0) {
-        await q("ROLLBACK");
-        return res.status(409).json({ erro: "Você já está inscrito em uma turma deste evento." });
+      if (ehInstrutor.rowCount > 0) {
+        return {
+          http: 409,
+          body: {
+            erro: "Você é instrutor desta turma/evento e não pode se inscrever como participante.",
+          },
+        };
       }
-    }
 
-    // 5A) Congresso: conflito dentro do mesmo evento
-    if (isCongresso) {
-      const conflitoMesmoEvento = await conflitoMesmoEventoSQL(usuarioId, turmaId);
-      if (conflitoMesmoEvento) {
-        await q("ROLLBACK");
-        return res.status(409).json({
-          erro: "Conflito de horário dentro deste evento com outra turma já inscrita.",
-        });
-      }
-    }
-
-    // 5B) Conflito global
-    const conflitoGlobal = await conflitoGlobalSQL(usuarioId, turmaId);
-    if (conflitoGlobal) {
-      await q("ROLLBACK");
-      return res.status(409).json({
-        erro: "Conflito de horário com outra turma já inscrita em seu histórico.",
-      });
-    }
-
-    // 6) Vagas (contagem na transação)
-    const { rows: cntRows } = await q(
-      `SELECT COUNT(*)::int AS total FROM ${inscrTable} WHERE turma_id = $1`,
-      [turmaId]
-    );
-    const totalInscritos = Number(cntRows?.[0]?.total || 0);
-    const totalVagas = Number(turma.vagas_total);
-
-    if (!Number.isFinite(totalVagas) || totalVagas <= 0) {
-      await q("ROLLBACK");
-      return res.status(500).json({ erro: "Número de vagas inválido para a turma." });
-    }
-    if (totalInscritos >= totalVagas) {
-      await q("ROLLBACK");
-      return res.status(400).json({ erro: "Turma lotada. Vagas esgotadas." });
-    }
-
-    // 7) Inserir inscrição (pode existir trigger)
-    let insert;
-    try {
-      insert = await q(
-        `INSERT INTO ${inscrTable} (usuario_id, turma_id, data_inscricao) 
-         VALUES ($1, $2, NOW()) 
-         RETURNING id`,
+      // 4) Duplicidade na mesma turma
+      const duplicado = await q(
+        `SELECT 1 FROM ${inscrTable} WHERE usuario_id = $1 AND turma_id = $2 LIMIT 1`,
         [usuarioId, turmaId]
       );
-    } catch (e) {
-      if (e?.code === "P0001") {
-        await q("ROLLBACK");
-        return res.status(409).json({ erro: e?.message || "Inscrição bloqueada por conflito de horário." });
+      if (duplicado.rowCount > 0) {
+        return { http: 409, body: { erro: "Usuário já inscrito nesta turma." } };
       }
-      if (e?.code === "23505") {
-        await q("ROLLBACK");
-        return res.status(409).json({ erro: "Usuário já inscrito nesta turma." });
+
+      // 5) Regra: uma turma por evento (exceto congresso)
+      if (!isCongresso) {
+        const ja = await q(
+          `
+          SELECT 1
+          FROM ${inscrTable} i
+          JOIN turmas t2 ON t2.id = i.turma_id
+          WHERE i.usuario_id = $1
+            AND t2.evento_id = $2
+          LIMIT 1
+          `,
+          [usuarioId, turma.evento_id]
+        );
+
+        if (ja.rowCount > 0) {
+          return { http: 409, body: { erro: "Você já está inscrito em uma turma deste evento." } };
+        }
       }
-      log(rid, "error", "Erro no INSERT (inscrição)", e);
-      throw e;
+
+      // 5A) Congresso: conflito no mesmo evento
+      if (isCongresso) {
+        const conflitoMesmoEvento = await conflitoMesmoEventoSQL(usuarioId, turmaId);
+        if (conflitoMesmoEvento) {
+          return {
+            http: 409,
+            body: { erro: "Conflito de horário dentro deste evento com outra turma já inscrita." },
+          };
+        }
+      }
+
+      // 5B) Conflito global
+      const conflitoGlobal = await conflitoGlobalSQL(usuarioId, turmaId);
+      if (conflitoGlobal) {
+        return {
+          http: 409,
+          body: { erro: "Conflito de horário com outra turma já inscrita em seu histórico." },
+        };
+      }
+
+      // 6) Vagas
+      const { rows: cntRows } = await q(
+        `SELECT COUNT(*)::int AS total FROM ${inscrTable} WHERE turma_id = $1`,
+        [turmaId]
+      );
+      const totalInscritos = Number(cntRows?.[0]?.total || 0);
+      const totalVagas = Number(turma.vagas_total);
+
+      if (!Number.isFinite(totalVagas) || totalVagas <= 0) {
+        return { http: 500, body: { erro: "Número de vagas inválido para a turma." } };
+      }
+
+      if (totalInscritos >= totalVagas) {
+        return { http: 400, body: { erro: "Turma lotada. Vagas esgotadas." } };
+      }
+
+      // 7) Insert
+      try {
+        const insert = await q(
+          `
+          INSERT INTO ${inscrTable} (usuario_id, turma_id, data_inscricao)
+          VALUES ($1, $2, NOW())
+          RETURNING id
+          `,
+          [usuarioId, turmaId]
+        );
+
+        if (!insert?.rowCount) {
+          return { http: 500, body: { erro: "Erro ao registrar inscrição no banco." } };
+        }
+      } catch (e) {
+        if (e?.code === "P0001") {
+          return { http: 409, body: { erro: e?.message || "Inscrição bloqueada por conflito de horário." } };
+        }
+        if (e?.code === "23505") {
+          return { http: 409, body: { erro: "Usuário já inscrito nesta turma." } };
+        }
+        throw e;
+      }
+
+      return {
+        http: 201,
+        body: {
+          mensagem: "Inscrição realizada com sucesso",
+          publico_alvo_label: elegibilidade.publico_alvo_label || "",
+        },
+        meta: {
+          inscrTable,
+          turma,
+          evento,
+          resumo,
+          elegibilidade,
+        },
+      };
+    });
+
+    if (payload.http !== 201) {
+      return res.status(payload.http).json(payload.body);
     }
 
-    if (!insert?.rowCount) {
-      await q("ROLLBACK");
-      return res.status(500).json({ erro: "Erro ao registrar inscrição no banco." });
-    }
+    const { turma, evento, resumo, elegibilidade } = payload.meta;
 
-    await q("COMMIT");
-
-    // 8) Dados do usuário (para e-mail) — fora da transação ok
-    const { rows: userRows } = await query(`SELECT nome, email FROM usuarios WHERE id = $1`, [usuarioId]);
+    // fora da transação
+    const { rows: userRows } = await query(
+      `SELECT nome, email FROM usuarios WHERE id = $1`,
+      [usuarioId]
+    );
     const usuario = userRows?.[0] || null;
 
-    // 9) Datas legíveis (sem Date)
     const dataIni = resumo?.data_inicio ? formatarDataBR(safeYMD(resumo.data_inicio, "") || "") : "";
     const dataFim = resumo?.data_fim ? formatarDataBR(safeYMD(resumo.data_fim, "") || "") : "";
     const hi = safeHHMM(resumo?.horario_inicio, "");
     const hf = safeHHMM(resumo?.horario_fim, "");
-    const periodoStr =
-      dataIni && dataFim ? `${dataIni} a ${dataFim}` :
-      dataIni || dataFim ? (dataIni || dataFim) :
-      "a definir";
 
-    // 10) Notificação (best-effort)
+    const periodoStr =
+      dataIni && dataFim
+        ? `${dataIni} a ${dataFim}`
+        : dataIni || dataFim
+        ? dataIni || dataFim
+        : "a definir";
+
+    // Notificação
     try {
       const mensagem = [
         `✅ Sua inscrição foi confirmada com sucesso no evento "${evento.titulo}".`,
@@ -776,16 +882,22 @@ async function inscreverEmTurma(req, res) {
         `- Local: ${evento.local || "A definir"}`,
       ].join("\n");
 
-      await criarNotificacao(usuarioId, mensagem, null);
+      await criarNotificacao(usuarioId, mensagem, {
+        tipo: "inscricao",
+        titulo: `Inscrição confirmada: ${evento.titulo}`,
+        turma_id: turmaId,
+        evento_id: evento.id,
+      });
     } catch (e) {
       log(rid, "warn", "Falha ao criar notificação (não bloqueante)", { message: e?.message });
     }
 
-    // 11) E-mail (best-effort)
+    // E-mail
     try {
       if (usuario?.email) {
         const nomeUser = safeText(usuario.nome, "participante");
         const carga = turma.carga_horaria ?? "—";
+
         const html = `
           <h2>Olá, ${nomeUser}!</h2>
           <p>Sua inscrição foi confirmada com sucesso.</p>
@@ -831,107 +943,115 @@ Equipe da Escola da Saúde`;
     log(rid, "info", "inscreverEmTurma:ok", {
       usuarioId,
       turmaId,
-      eventoId: turma.evento_id,
+      eventoId: evento.id,
+      turma_nome: turma.nome,
+      evento_titulo: evento.titulo,
+      data_inicio: resumo?.data_inicio || null,
+      data_fim: resumo?.data_fim || null,
+      horario_inicio: resumo?.horario_inicio || null,
+      horario_fim: resumo?.horario_fim || null,
       publico_alvo_label: elegibilidade.publico_alvo_label || "",
     });
 
-    return res.status(201).json({
-      mensagem: "Inscrição realizada com sucesso",
-      publico_alvo_label: elegibilidade.publico_alvo_label || "",
-    });
+    return res.status(201).json(payload.body);
   } catch (err) {
-    try { await q("ROLLBACK"); } catch {}
-
-    if (err?.code === "P0001") return res.status(409).json({ erro: err?.message || "Inscrição bloqueada por conflito." });
-    if (err?.code === "23505") return res.status(409).json({ erro: "Usuário já inscrito nesta turma." });
+    if (err?.code === "P0001") {
+      return res.status(409).json({ erro: err?.message || "Inscrição bloqueada por conflito." });
+    }
+    if (err?.code === "23505") {
+      return res.status(409).json({ erro: "Usuário já inscrito nesta turma." });
+    }
 
     log(rid, "error", "Erro ao processar inscrição", err);
     return res.status(500).json({ erro: "Erro ao processar inscrição." });
-  } finally {
-    try { client?.release?.(); } catch {}
   }
 }
 
 /* ────────────────────────────────────────────────────────────────
-   ❌ Cancelar inscrição (usuário cancela a PRÓPRIA, por turmaId)
+   ❌ Cancelar inscrição (usuário cancela a própria)
 ──────────────────────────────────────────────────────────────── */
 async function cancelarMinhaInscricao(req, res) {
   const rid = mkRid();
   const usuarioId = asPositiveInt(req.user?.id);
   const turmaId = asPositiveInt(req.params?.turmaId ?? req.params?.id);
 
-  if (!usuarioId || !turmaId) return res.status(400).json({ erro: "Parâmetros inválidos." });
-
-  const client = pool?.connect ? await pool.connect() : null;
-  const q = client?.query ? client.query.bind(client) : query;
+  if (!usuarioId || !turmaId) {
+    return res.status(400).json({ erro: "Parâmetros inválidos." });
+  }
 
   try {
-    const inscrTable = await resolveInscricaoTable(q);
+    const result = await withTransaction(async (q) => {
+      const inscrTable = await resolveInscricaoTable(q);
 
-    const sel = await q(`SELECT id FROM ${inscrTable} WHERE usuario_id = $1 AND turma_id = $2`, [usuarioId, turmaId]);
-    if (!sel.rowCount) return res.status(404).json({ erro: "Inscrição não encontrada para este usuário nesta turma." });
+      const sel = await q(
+        `SELECT id FROM ${inscrTable} WHERE usuario_id = $1 AND turma_id = $2`,
+        [usuarioId, turmaId]
+      );
 
-    await q("BEGIN");
+      if (!sel.rowCount) {
+        return { http: 404, body: { erro: "Inscrição não encontrada para este usuário nesta turma." } };
+      }
 
-    await q(`DELETE FROM presencas WHERE usuario_id = $1 AND turma_id = $2`, [usuarioId, turmaId]);
-    await q(`DELETE FROM ${inscrTable} WHERE usuario_id = $1 AND turma_id = $2`, [usuarioId, turmaId]);
+      await q(`DELETE FROM presencas WHERE usuario_id = $1 AND turma_id = $2`, [usuarioId, turmaId]);
+      await q(`DELETE FROM ${inscrTable} WHERE usuario_id = $1 AND turma_id = $2`, [usuarioId, turmaId]);
 
-    await q("COMMIT");
+      return { http: 200, body: { mensagem: "Inscrição cancelada com sucesso." } };
+    });
 
     log(rid, "info", "cancelarMinhaInscricao:ok", { usuarioId, turmaId });
-    return res.json({ mensagem: "Inscrição cancelada com sucesso." });
+    return res.status(result.http).json(result.body);
   } catch (err) {
-    try { await q("ROLLBACK"); } catch {}
     log(rid, "error", "Erro ao cancelar inscrição (minha)", err);
     return res.status(500).json({ erro: "Erro ao cancelar inscrição." });
-  } finally {
-    try { client?.release?.(); } catch {}
   }
 }
 
 /* ────────────────────────────────────────────────────────────────
-   ❌ Cancelar inscrição (ADMIN cancela de QUALQUER usuário)
+   ❌ Cancelar inscrição (admin)
 ──────────────────────────────────────────────────────────────── */
 async function cancelarInscricaoAdmin(req, res) {
   const rid = mkRid();
   const usuarioId = asPositiveInt(req.params?.usuarioId);
   const turmaId = asPositiveInt(req.params?.turmaId);
 
-  if (!usuarioId || !turmaId) return res.status(400).json({ erro: "Parâmetros inválidos." });
-
-  const client = pool?.connect ? await pool.connect() : null;
-  const q = client?.query ? client.query.bind(client) : query;
+  if (!usuarioId || !turmaId) {
+    return res.status(400).json({ erro: "Parâmetros inválidos." });
+  }
 
   try {
-    const inscrTable = await resolveInscricaoTable(q);
+    const result = await withTransaction(async (q) => {
+      const inscrTable = await resolveInscricaoTable(q);
 
-    const sel = await q(`SELECT id FROM ${inscrTable} WHERE usuario_id = $1 AND turma_id = $2`, [usuarioId, turmaId]);
-    if (!sel.rowCount) return res.status(404).json({ erro: "Inscrição não encontrada." });
+      const sel = await q(
+        `SELECT id FROM ${inscrTable} WHERE usuario_id = $1 AND turma_id = $2`,
+        [usuarioId, turmaId]
+      );
 
-    await q("BEGIN");
+      if (!sel.rowCount) {
+        return { http: 404, body: { erro: "Inscrição não encontrada." } };
+      }
 
-    await q(`DELETE FROM presencas WHERE usuario_id = $1 AND turma_id = $2`, [usuarioId, turmaId]);
-    await q(`DELETE FROM ${inscrTable} WHERE usuario_id = $1 AND turma_id = $2`, [usuarioId, turmaId]);
+      await q(`DELETE FROM presencas WHERE usuario_id = $1 AND turma_id = $2`, [usuarioId, turmaId]);
+      await q(`DELETE FROM ${inscrTable} WHERE usuario_id = $1 AND turma_id = $2`, [usuarioId, turmaId]);
 
-    await q("COMMIT");
+      return { http: 200, body: { mensagem: "Inscrição cancelada (admin)." } };
+    });
 
     log(rid, "info", "cancelarInscricaoAdmin:ok", { usuarioId, turmaId });
-    return res.json({ mensagem: "Inscrição cancelada (admin)." });
+    return res.status(result.http).json(result.body);
   } catch (err) {
-    try { await q("ROLLBACK"); } catch {}
     log(rid, "error", "Erro ao cancelar inscrição (admin)", err);
     return res.status(500).json({ erro: "Erro ao cancelar inscrição." });
-  } finally {
-    try { client?.release?.(); } catch {}
   }
 }
 
 /* ────────────────────────────────────────────────────────────────
-   🔍 Minhas inscrições (com período/horário calculados + instrutores)
+   🔍 Minhas inscrições
 ──────────────────────────────────────────────────────────────── */
 async function obterMinhasInscricao(req, res) {
   const rid = mkRid();
   const usuarioId = asPositiveInt(req.user?.id);
+
   if (!usuarioId) return res.status(401).json({ erro: "NAO_AUTENTICADO" });
 
   try {
@@ -939,12 +1059,12 @@ async function obterMinhasInscricao(req, res) {
 
     const resultado = await query(
       `
-      SELECT 
-        i.id AS inscricao_id, 
-        e.id AS evento_id, 
+      SELECT
+        i.id AS inscricao_id,
+        e.id AS evento_id,
         t.id AS turma_id,
         t.nome AS turma_nome,
-        e.titulo, 
+        e.titulo,
         e.local,
 
         to_char(
@@ -967,7 +1087,8 @@ async function obterMinhasInscricao(req, res) {
 
         COALESCE(
           (
-            SELECT to_char(z.hi, 'HH24:MI') FROM (
+            SELECT to_char(z.hi, 'HH24:MI')
+            FROM (
               SELECT dt.horario_inicio AS hi, COUNT(*) c
               FROM datas_turma dt
               WHERE dt.turma_id = t.id
@@ -982,7 +1103,8 @@ async function obterMinhasInscricao(req, res) {
 
         COALESCE(
           (
-            SELECT to_char(z.hf, 'HH24:MI') FROM (
+            SELECT to_char(z.hf, 'HH24:MI')
+            FROM (
               SELECT dt.horario_fim AS hf, COUNT(*) c
               FROM datas_turma dt
               WHERE dt.turma_id = t.id
@@ -1020,10 +1142,10 @@ async function obterMinhasInscricao(req, res) {
       WHERE i.usuario_id = $1
       GROUP BY i.id, e.id, t.id, inst.nomes
       ORDER BY COALESCE(
-               (SELECT MAX(dt.data) FROM datas_turma dt WHERE dt.turma_id = t.id),
-               t.data_fim
-             ) DESC, 
-             t.horario_fim DESC NULLS LAST;
+        (SELECT MAX(dt.data) FROM datas_turma dt WHERE dt.turma_id = t.id),
+        t.data_fim
+      ) DESC,
+      t.horario_fim DESC NULLS LAST
       `,
       [usuarioId]
     );
@@ -1042,36 +1164,33 @@ async function obterMinhasInscricao(req, res) {
 async function listarInscritosPorTurma(req, res) {
   const rid = mkRid();
   const turmaId = asPositiveInt(req.params.turma_id ?? req.params.turmaId);
+
   if (!turmaId) return res.status(400).json({ erro: "turmaId inválido" });
 
   try {
     const inscrTable = await resolveInscricaoTable(query);
+    const totalDias = await getTotalEncontrosTurma(query, turmaId);
 
-    // total de encontros (datas_turma)
-    const { rows: diasRows } = await query(
-      `SELECT COUNT(*)::int AS total_dias FROM datas_turma WHERE turma_id = $1`,
-      [turmaId]
-    );
-    const totalDias = Number(diasRows?.[0]?.total_dias || 0);
-
-    // presentes por usuário (dias distintos presentes)
     const { rows: presRows } = await query(
       `
-      SELECT usuario_id,
-             COUNT(DISTINCT CASE WHEN presente THEN data_presenca::date END)::int AS presentes
-        FROM presencas
-       WHERE turma_id = $1
-       GROUP BY usuario_id
+      SELECT
+        usuario_id,
+        COUNT(DISTINCT CASE WHEN presente THEN data_presenca::date END)::int AS presentes
+      FROM presencas
+      WHERE turma_id = $1
+      GROUP BY usuario_id
       `,
       [turmaId]
     );
-    const presentesMap = new Map(presRows.map((r) => [Number(r.usuario_id), Number(r.presentes)]));
 
-    // inscritos + dados extras
+    const presentesMap = new Map(
+      presRows.map((r) => [Number(r.usuario_id), Number(r.presentes)])
+    );
+
     const { rows } = await query(
       `
-      SELECT 
-        u.id  AS usuario_id,
+      SELECT
+        u.id AS usuario_id,
         u.nome,
         u.cpf,
         u.registro,
@@ -1101,6 +1220,7 @@ async function listarInscritosPorTurma(req, res) {
     const lista = rows.map((r) => {
       const presentes = presentesMap.get(Number(r.usuario_id)) || 0;
       const freqNum = totalDias > 0 ? Math.round((presentes / totalDias) * 100) : null;
+      const atingiuFrequenciaMinima = totalDias > 0 ? presentes / totalDias >= 0.75 : false;
 
       return {
         usuario_id: r.usuario_id,
@@ -1118,12 +1238,22 @@ async function listarInscritosPorTurma(req, res) {
         pcd_multipla: !!r.pcd_multipla,
         pcd_autismo: !!r.pcd_autismo,
 
+        total_encontros: totalDias,
+        presencas_confirmadas: presentes,
         frequencia_num: freqNum,
         frequencia: freqNum != null ? `${freqNum}%` : null,
+        frequencia_minima_percentual: 75,
+        atingiu_frequencia_minima: atingiuFrequenciaMinima,
       };
     });
 
-    log(rid, "info", "listarInscritosPorTurma:ok", { turmaId, total: lista.length, totalDias, inscrTable });
+    log(rid, "info", "listarInscritosPorTurma:ok", {
+      turmaId,
+      total: lista.length,
+      totalDias,
+      inscrTable,
+    });
+
     return res.json(lista);
   } catch (err) {
     log(rid, "error", "Erro ao buscar inscritos", err);
@@ -1132,7 +1262,7 @@ async function listarInscritosPorTurma(req, res) {
 }
 
 /* ────────────────────────────────────────────────────────────────
-   🔎 Checagem de conflito (frontend) — uma turma específica
+   🔎 Checagem de conflito (frontend)
 ──────────────────────────────────────────────────────────────── */
 async function conflitoPorTurma(req, res) {
   const rid = mkRid();
@@ -1140,11 +1270,19 @@ async function conflitoPorTurma(req, res) {
   const usuarioId = asPositiveInt(req.user?.id);
   const turmaId = asPositiveInt(req.params?.turmaId ?? req.params?.turma_id);
 
-  if (!usuarioId || !turmaId) return res.status(400).json({ erro: "Parâmetros inválidos." });
+  if (!usuarioId || !turmaId) {
+    return res.status(400).json({ erro: "Parâmetros inválidos." });
+  }
 
   try {
-    const { rows: trows } = await query(`SELECT evento_id FROM turmas WHERE id = $1`, [turmaId]);
-    if (!trows.length) return res.status(404).json({ erro: "Turma não encontrada." });
+    const { rows: trows } = await query(
+      `SELECT evento_id FROM turmas WHERE id = $1`,
+      [turmaId]
+    );
+
+    if (!trows.length) {
+      return res.status(404).json({ erro: "Turma não encontrada." });
+    }
 
     const eventoId = trows[0].evento_id;
 

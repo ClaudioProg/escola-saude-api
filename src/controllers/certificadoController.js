@@ -1,5 +1,15 @@
 /* eslint-disable no-console */
-// ✅ src/controllers/certificadoController.js — UNIFICADO (singular + admin embutido) — PREMIUM/ROBUSTO
+// ✅ src/controllers/certificadoController.js — PREMIUM+++
+// - Compat DB robusta
+// - Date-only safe
+// - Elegibilidade consistente com presença/avaliação
+// - Compat com avaliacoes/avaliacao e inscricoes/inscricao
+// - Instrutor por turma/evento
+// - Geração física resiliente de PDF
+// - Download com regeneração segura
+// - Admin embutido
+// - Logs com RID
+// - Transação no fluxo principal
 "use strict";
 
 const fs = require("fs");
@@ -8,33 +18,120 @@ const path = require("path");
 const PDFDocument = require("pdfkit");
 const QRCode = require("qrcode");
 
-const dbFallback = require("../db");
-const { gerarNotificacaoDeCertificado } = require("./notificacaoController");
+const dbMod = require("../db");
 const { CERT_DIR, ensureDir } = require("../paths");
+
+let gerarNotificacaoDeCertificado = null;
+try {
+  const notif = require("./notificacaoController");
+  gerarNotificacaoDeCertificado =
+    notif?.gerarNotificacaoDeCertificado ||
+    notif?.gerarNotificacoesDeCertificado ||
+    null;
+} catch (_) {
+  gerarNotificacaoDeCertificado = null;
+}
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 const TZ = "America/Sao_Paulo";
 
 /* =========================================================================
-   Helpers gerais
+   Compat DB
 =========================================================================== */
+const pgpDb = dbMod?.db ?? null;
+const pool = dbMod.pool || dbMod.Pool || dbMod.pool?.pool || dbMod;
+
+const query =
+  dbMod.query ||
+  (typeof dbMod === "function" ? dbMod : null) ||
+  (pool?.query ? pool.query.bind(pool) : null) ||
+  (pgpDb?.query ? pgpDb.query.bind(pgpDb) : null);
+
+if (typeof query !== "function") {
+  console.error("[certificadoController] DB inválido:", Object.keys(dbMod || {}));
+  throw new Error("DB inválido em certificadoController.js (query ausente)");
+}
 
 function getDb(req) {
-  return req?.db ?? dbFallback;
+  const reqDb = req?.db;
+  if (reqDb?.query && typeof reqDb.query === "function") return reqDb;
+  return { query };
 }
 
-function logDev(...args) {
-  if (IS_DEV) console.log("[certificado]", ...args);
+async function withTx(req, fn) {
+  const reqDb = req?.db;
+  const reqPool =
+    reqDb?.pool ||
+    reqDb?.Pool ||
+    reqDb?.db?.pool ||
+    dbMod?.pool ||
+    dbMod?.Pool ||
+    dbMod?.db?.pool ||
+    null;
+
+  if (!reqPool || typeof reqPool.connect !== "function") {
+    await query("BEGIN");
+    try {
+      const out = await fn({ query });
+      await query("COMMIT");
+      return out;
+    } catch (e) {
+      try {
+        await query("ROLLBACK");
+      } catch {}
+      throw e;
+    }
+  }
+
+  const client = await reqPool.connect();
+  try {
+    const q = client.query.bind(client);
+    await q("BEGIN");
+    const out = await fn({ query: q });
+    await q("COMMIT");
+    return out;
+  } catch (e) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
-function logWarn(...args) {
-  console.warn("[certificado]", ...args);
+/* =========================================================================
+   Logger premium
+=========================================================================== */
+function mkRid(prefix = "CERT") {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function logErr(...args) {
-  console.error("[certificado]", ...args);
+function reqRid(req, prefix = "CERT") {
+  return req?.requestId || req?.rid || mkRid(prefix);
 }
 
+function _log(rid, level, msg, extra) {
+  const prefix = `[${rid}]`;
+  if (level === "error") {
+    return console.error(`${prefix} ✖ ${msg}`, extra?.stack || extra?.message || extra);
+  }
+  if (level === "warn") {
+    return console.warn(`${prefix} ⚠ ${msg}`, extra || "");
+  }
+  if (IS_DEV) {
+    return console.log(`${prefix} • ${msg}`, extra || "");
+  }
+  return undefined;
+}
+
+const logInfo = (rid, msg, extra) => _log(rid, "info", msg, extra);
+const logWarn = (rid, msg, extra) => _log(rid, "warn", msg, extra);
+const logErr = (rid, msg, err) => _log(rid, "error", msg, err);
+
+/* =========================================================================
+   Helpers gerais
+=========================================================================== */
 function toIntId(v) {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
@@ -79,7 +176,12 @@ function isYmd(s) {
 
 function ymdFromAny(v) {
   if (!v) return "";
-  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (v instanceof Date) {
+    const y = v.getUTCFullYear();
+    const m = String(v.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(v.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
   const s = String(v);
   const m = s.match(/(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
@@ -110,7 +212,7 @@ function dataExtensoBR(dateLike = new Date()) {
   const d = dateLike instanceof Date ? dateLike : new Date(dateLike);
   if (Number.isNaN(d.getTime())) return "";
   const parts = new Intl.DateTimeFormat("pt-BR", {
-    timeZone: "America/Sao_Paulo",
+    timeZone: TZ,
     day: "2-digit",
     month: "long",
     year: "numeric",
@@ -134,10 +236,8 @@ function registerFonts(doc) {
       try {
         doc.registerFont(name, p);
       } catch (e) {
-        logWarn(`⚠️ Fonte ${file}:`, e.message);
+        logWarn(mkRid("FONT"), `Fonte ${file}`, e.message);
       }
-    } else {
-      logDev(`Fonte ausente: ${file}`);
     }
   }
 }
@@ -167,271 +267,13 @@ function drawSignatureText(
   doc.restore();
 }
 
-async function queryFirstWorking(db, variants, params = []) {
-  let lastErr = null;
-  for (const sql of variants) {
-    try {
-      return await db.query(sql, params);
-    } catch (e) {
-      lastErr = e;
-      if (["42P01", "42703"].includes(e?.code)) continue;
-      throw e;
-    }
-  }
-  throw lastErr || new Error("Nenhuma variante SQL funcionou.");
+function hoursOrFallback(horasTotal, cargaHoraria) {
+  const h = Number(horasTotal || 0);
+  if (Number.isFinite(h) && h > 0) return h;
+  const ch = Number(cargaHoraria || 0);
+  if (Number.isFinite(ch) && ch > 0) return ch;
+  return 0;
 }
-
-/* =========================================================================
-   Regras de negócio / elegibilidade
-=========================================================================== */
-
-async function turmaEncerradaSP(db, turmaId) {
-  const r = await db.query(
-    `
-    SELECT
-      (NOW() AT TIME ZONE '${TZ}') >=
-      COALESCE(
-        (
-          SELECT MAX(
-            dt.data::date + COALESCE(dt.horario_fim::time, t.horario_fim::time, '23:59'::time)
-          )
-          FROM datas_turma dt
-          JOIN turmas t ON t.id = dt.turma_id
-          WHERE dt.turma_id = $1
-        ),
-        (
-          SELECT t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time)
-          FROM turmas t
-          WHERE t.id = $1
-          LIMIT 1
-        )
-      ) AS encerrou
-    `,
-    [Number(turmaId)]
-  );
-
-  return r.rows?.[0]?.encerrou === true;
-}
-
-async function usuarioFezAvaliacao(usuario_id, turma_id, req = null) {
-  const db = getDb(req);
-  const variants = [
-    `SELECT 1 FROM avaliacoes WHERE usuario_id = $1 AND turma_id = $2 LIMIT 1`,
-    `SELECT 1 FROM avaliacao  WHERE usuario_id = $1 AND turma_id = $2 LIMIT 1`,
-  ];
-
-  for (const sql of variants) {
-    try {
-      const q = await db.query(sql, [Number(usuario_id), Number(turma_id)]);
-      if (q.rowCount > 0) return true;
-    } catch (e) {
-      if (["42P01", "42703"].includes(e?.code)) continue;
-      throw e;
-    }
-  }
-
-  return false;
-}
-
-async function resumoDatasTurma(turma_id, usuario_id, req = null) {
-  const db = getDb(req);
-
-  try {
-    const q = await db.query(
-      `
-      WITH base AS (
-        SELECT
-          MIN(dt.data::date) AS min_data,
-          MAX(dt.data::date) AS max_data,
-          COUNT(*)::int      AS total_aulas,
-          SUM(
-            EXTRACT(EPOCH FROM (
-              COALESCE(dt.horario_fim::time,   '23:59'::time) -
-              COALESCE(dt.horario_inicio::time,'00:00'::time)
-            )) / 3600.0
-          ) AS horas_total
-        FROM datas_turma dt
-        WHERE dt.turma_id = $1
-      ),
-      pres AS (
-        SELECT COUNT(DISTINCT p.data_presenca::date)::int AS presencas_distintas
-        FROM presencas p
-        WHERE p.turma_id = $1 AND p.usuario_id = $2 AND p.presente = TRUE
-      )
-      SELECT
-        base.min_data,
-        base.max_data,
-        COALESCE(base.total_aulas, 0)         AS total_aulas,
-        COALESCE(base.horas_total, 0)         AS horas_total,
-        COALESCE(pres.presencas_distintas, 0) AS presencas_distintas
-      FROM base
-      LEFT JOIN pres ON TRUE
-      `,
-      [Number(turma_id), Number(usuario_id)]
-    );
-
-    return q.rows[0] || {};
-  } catch (e) {
-    logWarn("[resumoDatasTurma] fallback:", e?.message);
-
-    const r2 = await db.query(
-      `
-      SELECT
-        t.data_inicio::date AS min_data,
-        t.data_fim::date    AS max_data,
-        GREATEST(1, (t.data_fim::date - t.data_inicio::date) + 1)::int AS total_aulas,
-        COALESCE(t.carga_horaria::numeric, 0) AS horas_total,
-        (
-          SELECT COUNT(DISTINCT p.data_presenca::date)::int
-          FROM presencas p
-          WHERE p.turma_id = $1 AND p.usuario_id = $2 AND p.presente = TRUE
-        ) AS presencas_distintas
-      FROM turmas t
-      WHERE t.id = $1
-      `,
-      [Number(turma_id), Number(usuario_id)]
-    );
-
-    return r2.rows[0] || {};
-  }
-}
-
-async function instrutorVinculadoATurmaOuEvento(db, usuario_id, turma_id) {
-  const q = await db.query(
-    `
-    SELECT EXISTS (
-      SELECT 1
-      FROM turmas t
-      WHERE t.id = $2
-        AND (
-          EXISTS (
-            SELECT 1
-            FROM turma_instrutor ti
-            WHERE ti.turma_id = t.id
-              AND ti.instrutor_id = $1
-          )
-          OR EXISTS (
-            SELECT 1
-            FROM evento_instrutor ei
-            WHERE ei.evento_id = t.evento_id
-              AND ei.instrutor_id = $1
-          )
-        )
-    ) AS vinculado
-    `,
-    [Number(usuario_id), Number(turma_id)]
-  );
-
-  return q.rows?.[0]?.vinculado === true;
-}
-
-/* =========================================================================
-   Assinante da turma
-=========================================================================== */
-
-async function obterAssinanteDaTurma(turmaId, req = null) {
-  const db = getDb(req);
-  const id = toIntId(turmaId);
-
-  if (!id) {
-    return { id: null, nome: "", imagem_base64: null, origem: "turma.invalid" };
-  }
-
-  // 1) turma.instrutor_assinante_id
-  try {
-    const qTurma = await db.query(
-      `SELECT COALESCE(t.instrutor_assinante_id) AS assinante_id FROM turmas t WHERE t.id = $1`,
-      [id]
-    );
-
-    const assinanteId = toIntId(qTurma.rows?.[0]?.assinante_id || 0);
-
-    if (assinanteId) {
-      const r = await db.query(
-        `
-        SELECT u.id, NULLIF(TRIM(u.nome), '') AS nome, a.imagem_base64
-        FROM usuarios u
-        LEFT JOIN assinaturas a ON a.usuario_id = u.id
-        WHERE u.id = $1
-        LIMIT 1
-        `,
-        [assinanteId]
-      );
-
-      if (r.rowCount > 0 && r.rows[0].nome) {
-        return {
-          id: r.rows[0].id,
-          nome: r.rows[0].nome,
-          imagem_base64: r.rows[0].imagem_base64 || null,
-          origem: "turma.instrutor_assinante_id",
-        };
-      }
-    }
-  } catch (e) {
-    if (e?.code !== "42703") throw e;
-  }
-
-  // 2) turma_instrutor (flags)
-  try {
-    const qTI = await db.query(
-      `
-      SELECT u.id, NULLIF(TRIM(u.nome), '') AS nome, a.imagem_base64
-      FROM turma_instrutor ti
-      JOIN usuarios u ON u.id = ti.instrutor_id
-      LEFT JOIN assinaturas a ON a.usuario_id = ti.instrutor_id
-      WHERE ti.turma_id = $1
-      ORDER BY ti.is_assinante DESC NULLS LAST, ti.ordem_assinatura ASC NULLS LAST, u.nome ASC
-      LIMIT 1
-      `,
-      [id]
-    );
-
-    if (qTI.rowCount > 0 && qTI.rows[0].nome) {
-      return {
-        id: qTI.rows[0].id,
-        nome: qTI.rows[0].nome,
-        imagem_base64: qTI.rows[0].imagem_base64 || null,
-        origem: "turma_instrutor",
-      };
-    }
-  } catch (e) {
-    if (e?.code !== "42P01" && e?.code !== "42703") throw e;
-  }
-
-  // 3) fallback pelo primeiro instrutor do evento
-  try {
-    const qEI = await db.query(
-      `
-      SELECT u.id, NULLIF(TRIM(u.nome), '') AS nome, a.imagem_base64
-      FROM turmas t
-      JOIN evento_instrutor ei ON ei.evento_id = t.evento_id
-      JOIN usuarios u ON u.id = ei.instrutor_id
-      LEFT JOIN assinaturas a ON a.usuario_id = u.id
-      WHERE t.id = $1
-      ORDER BY u.nome ASC
-      LIMIT 1
-      `,
-      [id]
-    );
-
-    if (qEI.rowCount > 0 && qEI.rows[0].nome) {
-      return {
-        id: qEI.rows[0].id,
-        nome: qEI.rows[0].nome,
-        imagem_base64: qEI.rows[0].imagem_base64 || null,
-        origem: "evento_instrutor",
-      };
-    }
-  } catch (e) {
-    if (e?.code !== "42P01") throw e;
-  }
-
-  return { id: null, nome: "", imagem_base64: null, origem: "turma.sem_assinante" };
-}
-
-/* =========================================================================
-   Assets / QR
-=========================================================================== */
 
 function resolveFirstExisting(candidates = []) {
   for (const p of candidates) {
@@ -465,26 +307,369 @@ function getFundoPath(tipo) {
     candidates.push(path.resolve(__dirname, nome));
   }
 
-  const found = resolveFirstExisting(candidates);
-  if (!found) logDev("⚠️ Fundo não encontrado.", candidates);
-  else logDev("✅ Fundo encontrado:", found);
-
-  return found;
+  return resolveFirstExisting(candidates);
 }
 
 async function tryQRCodeDataURL(texto) {
   try {
     return await QRCode.toDataURL(texto, { margin: 1, width: 140 });
   } catch (e) {
-    logWarn("⚠️ Falha ao gerar QRCode:", e.message);
+    logWarn(mkRid("QRC"), "Falha ao gerar QRCode", e.message);
     return null;
   }
+}
+
+async function queryFirstWorking(db, variants, params = []) {
+  let lastErr = null;
+  for (const sql of variants) {
+    try {
+      return await db.query(sql, params);
+    } catch (e) {
+      lastErr = e;
+      if (["42P01", "42703"].includes(e?.code)) continue;
+      throw e;
+    }
+  }
+  throw lastErr || new Error("Nenhuma variante SQL funcionou.");
+}
+
+async function resolveInscricaoTable(db) {
+  try {
+    await db.query(`SELECT 1 FROM inscricoes LIMIT 1`);
+    return "inscricoes";
+  } catch {
+    return "inscricao";
+  }
+}
+
+async function resolveAvaliacaoTable(db) {
+  try {
+    await db.query(`SELECT 1 FROM avaliacoes LIMIT 1`);
+    return "avaliacoes";
+  } catch {
+    return "avaliacao";
+  }
+}
+
+/* =========================================================================
+   Regras de negócio / elegibilidade
+=========================================================================== */
+async function turmaEncerradaSP(db, turmaId) {
+  const r = await db.query(
+    `
+    SELECT
+      (NOW() AT TIME ZONE '${TZ}') >=
+      COALESCE(
+        (
+          SELECT MAX(
+            dt.data::date + COALESCE(dt.horario_fim::time, t.horario_fim::time, '23:59'::time)
+          )
+          FROM datas_turma dt
+          JOIN turmas t ON t.id = dt.turma_id
+          WHERE dt.turma_id = $1
+        ),
+        (
+          SELECT t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time)
+          FROM turmas t
+          WHERE t.id = $1
+          LIMIT 1
+        )
+      ) AS encerrou
+    `,
+    [Number(turmaId)]
+  );
+
+  return r.rows?.[0]?.encerrou === true;
+}
+
+async function usuarioFezAvaliacao(usuario_id, turma_id, req = null) {
+  const db = getDb(req);
+  const avaliacaoTable = await resolveAvaliacaoTable(db);
+  const q = await db.query(
+    `SELECT 1 FROM ${avaliacaoTable} WHERE usuario_id = $1 AND turma_id = $2 LIMIT 1`,
+    [Number(usuario_id), Number(turma_id)]
+  );
+  return q.rowCount > 0;
+}
+
+async function usuarioEstaInscrito(usuario_id, turma_id, req = null) {
+  const db = getDb(req);
+  const inscrTable = await resolveInscricaoTable(db);
+  const q = await db.query(
+    `SELECT 1 FROM ${inscrTable} WHERE usuario_id = $1 AND turma_id = $2 LIMIT 1`,
+    [Number(usuario_id), Number(turma_id)]
+  );
+  return q.rowCount > 0;
+}
+
+async function totalEncontrosTurma(db, turma_id) {
+  const q = await db.query(
+    `
+    WITH dts AS (
+      SELECT COUNT(*)::int AS total
+      FROM datas_turma
+      WHERE turma_id = $1
+    ),
+    fallback AS (
+      SELECT
+        CASE
+          WHEN t.data_inicio IS NOT NULL AND t.data_fim IS NOT NULL THEN 1
+          ELSE 0
+        END::int AS total
+      FROM turmas t
+      WHERE t.id = $1
+    )
+    SELECT
+      CASE
+        WHEN (SELECT total FROM dts) > 0 THEN (SELECT total FROM dts)
+        ELSE (SELECT total FROM fallback)
+      END AS total
+    `,
+    [Number(turma_id)]
+  );
+
+  return Number(q.rows?.[0]?.total || 0);
+}
+
+async function presencasDistintasUsuarioTurma(db, usuario_id, turma_id) {
+  const q = await db.query(
+    `
+    SELECT COUNT(DISTINCT p.data_presenca::date)::int AS total
+    FROM presencas p
+    WHERE p.turma_id = $1
+      AND p.usuario_id = $2
+      AND p.presente = TRUE
+    `,
+    [Number(turma_id), Number(usuario_id)]
+  );
+  return Number(q.rows?.[0]?.total || 0);
+}
+
+async function resumoDatasTurma(turma_id, usuario_id, req = null) {
+  const db = getDb(req);
+
+  try {
+    const q = await db.query(
+      `
+      WITH base AS (
+        SELECT
+          MIN(dt.data::date) AS min_data,
+          MAX(dt.data::date) AS max_data,
+          COUNT(*)::int      AS total_aulas,
+          SUM(
+            EXTRACT(EPOCH FROM (
+              COALESCE(dt.horario_fim::time,   '23:59'::time) -
+              COALESCE(dt.horario_inicio::time,'00:00'::time)
+            )) / 3600.0
+          ) AS horas_total
+        FROM datas_turma dt
+        WHERE dt.turma_id = $1
+      ),
+      pres AS (
+        SELECT COUNT(DISTINCT p.data_presenca::date)::int AS presencas_distintas
+        FROM presencas p
+        WHERE p.turma_id = $1
+          AND p.usuario_id = $2
+          AND p.presente = TRUE
+      )
+      SELECT
+        base.min_data,
+        base.max_data,
+        COALESCE(base.total_aulas, 0)         AS total_aulas,
+        COALESCE(base.horas_total, 0)         AS horas_total,
+        COALESCE(pres.presencas_distintas, 0) AS presencas_distintas
+      FROM base
+      LEFT JOIN pres ON TRUE
+      `,
+      [Number(turma_id), Number(usuario_id)]
+    );
+
+    return q.rows?.[0] || {};
+  } catch (e) {
+    logWarn(mkRid("RSM"), "resumoDatasTurma fallback", e.message);
+
+    const r2 = await db.query(
+      `
+      SELECT
+        t.data_inicio::date AS min_data,
+        t.data_fim::date    AS max_data,
+        CASE
+          WHEN t.data_inicio IS NOT NULL AND t.data_fim IS NOT NULL THEN 1
+          ELSE 0
+        END::int AS total_aulas,
+        COALESCE(t.carga_horaria::numeric, 0) AS horas_total,
+        (
+          SELECT COUNT(DISTINCT p.data_presenca::date)::int
+          FROM presencas p
+          WHERE p.turma_id = $1
+            AND p.usuario_id = $2
+            AND p.presente = TRUE
+        ) AS presencas_distintas
+      FROM turmas t
+      WHERE t.id = $1
+      `,
+      [Number(turma_id), Number(usuario_id)]
+    );
+
+    return r2.rows?.[0] || {};
+  }
+}
+
+async function instrutorVinculadoATurmaOuEvento(db, usuario_id, turma_id) {
+  const q = await db.query(
+    `
+    SELECT EXISTS (
+      SELECT 1
+      FROM turmas t
+      WHERE t.id = $2
+        AND (
+          EXISTS (
+            SELECT 1
+            FROM turma_instrutor ti
+            WHERE ti.turma_id = t.id
+              AND ti.instrutor_id = $1
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM evento_instrutor ei
+            WHERE ei.evento_id = t.evento_id
+              AND ei.instrutor_id = $1
+          )
+        )
+    ) AS vinculado
+    `,
+    [Number(usuario_id), Number(turma_id)]
+  );
+
+  return q.rows?.[0]?.vinculado === true;
+}
+
+async function obterContextoTurmaCertificado(db, evento_id, turma_id) {
+  const q = await db.query(
+    `
+    SELECT
+      e.titulo,
+      t.evento_id,
+      t.nome AS turma_nome,
+      t.horario_inicio,
+      t.horario_fim,
+      t.data_inicio,
+      t.data_fim,
+      t.carga_horaria
+    FROM eventos e
+    JOIN turmas t ON t.evento_id = e.id
+    WHERE e.id = $1
+      AND t.id = $2
+    LIMIT 1
+    `,
+    [Number(evento_id), Number(turma_id)]
+  );
+
+  return q.rows?.[0] || null;
+}
+
+/* =========================================================================
+   Assinante da turma
+=========================================================================== */
+async function obterAssinanteDaTurma(turmaId, req = null) {
+  const db = getDb(req);
+  const id = toIntId(turmaId);
+
+  if (!id) {
+    return { id: null, nome: "", imagem_base64: null, origem: "turma.invalid" };
+  }
+
+  try {
+    const qTurma = await db.query(
+      `SELECT COALESCE(t.instrutor_assinante_id) AS assinante_id FROM turmas t WHERE t.id = $1`,
+      [id]
+    );
+
+    const assinanteId = toIntId(qTurma.rows?.[0]?.assinante_id || 0);
+    if (assinanteId) {
+      const r = await db.query(
+        `
+        SELECT u.id, NULLIF(TRIM(u.nome), '') AS nome, a.imagem_base64
+        FROM usuarios u
+        LEFT JOIN assinaturas a ON a.usuario_id = u.id
+        WHERE u.id = $1
+        LIMIT 1
+        `,
+        [assinanteId]
+      );
+
+      if (r.rowCount > 0 && r.rows[0].nome) {
+        return {
+          id: r.rows[0].id,
+          nome: r.rows[0].nome,
+          imagem_base64: r.rows[0].imagem_base64 || null,
+          origem: "turma.instrutor_assinante_id",
+        };
+      }
+    }
+  } catch (e) {
+    if (e?.code !== "42703") throw e;
+  }
+
+  try {
+    const qTI = await db.query(
+      `
+      SELECT u.id, NULLIF(TRIM(u.nome), '') AS nome, a.imagem_base64
+      FROM turma_instrutor ti
+      JOIN usuarios u ON u.id = ti.instrutor_id
+      LEFT JOIN assinaturas a ON a.usuario_id = ti.instrutor_id
+      WHERE ti.turma_id = $1
+      ORDER BY ti.is_assinante DESC NULLS LAST, ti.ordem_assinatura ASC NULLS LAST, u.nome ASC
+      LIMIT 1
+      `,
+      [id]
+    );
+
+    if (qTI.rowCount > 0 && qTI.rows[0].nome) {
+      return {
+        id: qTI.rows[0].id,
+        nome: qTI.rows[0].nome,
+        imagem_base64: qTI.rows[0].imagem_base64 || null,
+        origem: "turma_instrutor",
+      };
+    }
+  } catch (e) {
+    if (e?.code !== "42P01" && e?.code !== "42703") throw e;
+  }
+
+  try {
+    const qEI = await db.query(
+      `
+      SELECT u.id, NULLIF(TRIM(u.nome), '') AS nome, a.imagem_base64
+      FROM turmas t
+      JOIN evento_instrutor ei ON ei.evento_id = t.evento_id
+      JOIN usuarios u ON u.id = ei.instrutor_id
+      LEFT JOIN assinaturas a ON a.usuario_id = u.id
+      WHERE t.id = $1
+      ORDER BY u.nome ASC
+      LIMIT 1
+      `,
+      [id]
+    );
+
+    if (qEI.rowCount > 0 && qEI.rows[0].nome) {
+      return {
+        id: qEI.rows[0].id,
+        nome: qEI.rows[0].nome,
+        imagem_base64: qEI.rows[0].imagem_base64 || null,
+        origem: "evento_instrutor",
+      };
+    }
+  } catch (e) {
+    if (e?.code !== "42P01") throw e;
+  }
+
+  return { id: null, nome: "", imagem_base64: null, origem: "turma.sem_assinante" };
 }
 
 /* =========================================================================
    Gerador físico do PDF
 =========================================================================== */
-
 async function _gerarPdfFisico({
   tipo,
   usuario_id,
@@ -538,20 +723,21 @@ async function _gerarPdfFisico({
     doc.save().rect(0, 0, doc.page.width, doc.page.height).fill("#ffffff").restore();
   }
 
-  // Título
   doc.fillColor("#0b3d2e").font("BreeSerif").fontSize(63).text("CERTIFICADO", { align: "center" });
   doc.y += 20;
 
-  // Cabeçalho
   doc.fillColor("black");
-  doc.font("AlegreyaSans-Bold").fontSize(20).text("SECRETARIA MUNICIPAL DE SAÚDE", { align: "center", lineGap: 4 });
-  doc.font("AlegreyaSans-Regular").fontSize(15).text("A Escola Municipal de Saúde Pública certifica que:", {
+  doc.font("AlegreyaSans-Bold").fontSize(20).text("SECRETARIA MUNICIPAL DE SAÚDE", {
     align: "center",
+    lineGap: 4,
   });
+  doc
+    .font("AlegreyaSans-Regular")
+    .fontSize(15)
+    .text("A Escola Municipal de Saúde Pública certifica que:", { align: "center" });
   doc.moveDown(1);
   doc.y += 20;
 
-  // Nome
   const nomeFontName = "AlexBrush";
   const maxNomeWidth = 680;
   let nomeFontSize = 45;
@@ -564,7 +750,6 @@ async function _gerarPdfFisico({
 
   doc.text(nomeUsuario, { align: "center" });
 
-  // CPF
   if (cpfUsuario) {
     doc
       .font("BreeSerif")
@@ -572,7 +757,6 @@ async function _gerarPdfFisico({
       .text(`CPF: ${cpfUsuario}`, 0, doc.y - 5, { align: "center", width: doc.page.width });
   }
 
-  // Corpo
   const corpoTexto =
     tipo === "instrutor"
       ? mesmoDia
@@ -589,7 +773,6 @@ async function _gerarPdfFisico({
     width: 680,
   });
 
-  // Data de emissão
   doc.moveDown(1);
   doc.font("AlegreyaSans-Regular").fontSize(14).text(`Santos, ${dataHojeExtenso}.`, 100, doc.y + 10, {
     align: "right",
@@ -630,18 +813,16 @@ async function _gerarPdfFisico({
     const SIGN_BOX = { x: signX, y: signY, w: SIGN_W };
 
     let nomeInstrutor = "";
-    let assinaturaInstrutorBase64 = null;
+    let assinaturaInstrutorBase64 = assinaturaBase64 || null;
     let instrutorAssinanteId = null;
 
     try {
       const assinante = await obterAssinanteDaTurma(Number(turma_id), req);
       instrutorAssinanteId = assinante?.id ? Number(assinante.id) : null;
       nomeInstrutor = (assinante?.nome || "").trim();
-      assinaturaInstrutorBase64 = assinante?.imagem_base64 || null;
-
-      logDev("Assinante da turma:", assinante?.origem, instrutorAssinanteId, nomeInstrutor || "(vazio)");
+      assinaturaInstrutorBase64 = assinaturaInstrutorBase64 || assinante?.imagem_base64 || null;
     } catch (e) {
-      logWarn("⚠️ Erro ao obter assinante da turma:", e.message);
+      logWarn(mkRid("ASS"), "Erro ao obter assinante da turma", e.message);
     }
 
     if (nomeInstrutor || assinaturaInstrutorBase64) {
@@ -656,7 +837,7 @@ async function _gerarPdfFisico({
           doc.image(buf, SIGN_BOX.x, SIGN_BOX.y, { width: SIGN_BOX.w });
           desenhouAssinatura = true;
         } catch (e) {
-          logWarn("⚠️ Assinatura do instrutor inválida:", e.message);
+          logWarn(mkRid("ASS"), "Assinatura do instrutor inválida", e.message);
         }
       }
 
@@ -703,19 +884,11 @@ async function _gerarPdfFisico({
   return { nomeArquivo, caminho };
 }
 
-function hoursOrFallback(horasTotal, cargaHoraria) {
-  const h = Number(horasTotal || 0);
-  if (Number.isFinite(h) && h > 0) return h;
-  const ch = Number(cargaHoraria || 0);
-  if (Number.isFinite(ch) && ch > 0) return ch;
-  return 0;
-}
-
 /* =========================================================================
    Endpoints públicos
 =========================================================================== */
-
 async function gerarCertificado(req, res) {
+  const rid = reqRid(req);
   const db = getDb(req);
 
   const usuario_id = toIntId(req.body?.usuario_id);
@@ -733,32 +906,12 @@ async function gerarCertificado(req, res) {
   }
 
   try {
-    logDev("gerarCertificado:start", { usuario_id, evento_id, turma_id, tipo });
+    logInfo(rid, "gerarCertificado:start", { usuario_id, evento_id, turma_id, tipo });
 
-    const eventoResult = await db.query(
-      `
-      SELECT
-        e.titulo,
-        t.evento_id,
-        t.nome AS turma_nome,
-        t.horario_inicio,
-        t.horario_fim,
-        t.data_inicio,
-        t.data_fim,
-        t.carga_horaria
-      FROM eventos e
-      JOIN turmas t ON t.evento_id = e.id
-      WHERE e.id = $1 AND t.id = $2
-      LIMIT 1
-      `,
-      [evento_id, turma_id]
-    );
-
-    if (eventoResult.rowCount === 0) {
+    const TURMA = await obterContextoTurmaCertificado(db, evento_id, turma_id);
+    if (!TURMA) {
       return res.status(404).json({ erro: "Evento ou turma não encontrados." });
     }
-
-    const TURMA = eventoResult.rows[0];
 
     const pessoa = await db.query("SELECT nome, cpf, email FROM usuarios WHERE id = $1", [usuario_id]);
     if (pessoa.rowCount === 0) {
@@ -773,11 +926,7 @@ async function gerarCertificado(req, res) {
     if (tipo === "instrutor") {
       const vinculado = await instrutorVinculadoATurmaOuEvento(db, usuario_id, turma_id);
 
-      logDev("gerarCertificado:vinculo_instrutor", {
-        usuario_id,
-        turma_id,
-        vinculado,
-      });
+      logInfo(rid, "vínculo instrutor", { usuario_id, turma_id, vinculado });
 
       if (!vinculado) {
         return res.status(403).json({ erro: "Você não está vinculado como instrutor nesta turma/evento." });
@@ -791,14 +940,12 @@ async function gerarCertificado(req, res) {
       }
     }
 
-    const resumo = await resumoDatasTurma(turma_id, usuario_id, req);
-    const minData = resumo.min_data || TURMA.data_inicio;
-    const maxData = resumo.max_data || TURMA.data_fim;
-    const totalAulas = Number(resumo.total_aulas || 0);
-    const horasTotal = Number(resumo.horas_total || 0);
-    const presencasDistintas = Number(resumo.presencas_distintas || 0);
-
     if (tipo === "usuario") {
+      const inscrito = await usuarioEstaInscrito(usuario_id, turma_id, req);
+      if (!inscrito) {
+        return res.status(403).json({ erro: "Usuário não está inscrito nesta turma." });
+      }
+
       const encerrou = await turmaEncerradaSP(db, turma_id);
       if (!encerrou) {
         return res.status(400).json({
@@ -806,7 +953,18 @@ async function gerarCertificado(req, res) {
         });
       }
 
-      const taxa = totalAulas > 0 ? presencasDistintas / totalAulas : 0;
+      const totalAulas = await totalEncontrosTurma(db, turma_id);
+      const presencas = await presencasDistintasUsuarioTurma(db, usuario_id, turma_id);
+      const taxa = totalAulas > 0 ? presencas / totalAulas : 0;
+
+      logInfo(rid, "check elegibilidade usuário", {
+        usuario_id,
+        turma_id,
+        totalAulas,
+        presencas,
+        taxa,
+      });
+
       if (!(taxa >= 0.75)) {
         return res.status(403).json({ erro: "Presença insuficiente (mínimo de 75%)." });
       }
@@ -820,43 +978,68 @@ async function gerarCertificado(req, res) {
       }
     }
 
-    const { nomeArquivo } = await _gerarPdfFisico({
-      tipo,
-      usuario_id,
-      evento_id,
-      turma_id,
-      assinaturaBase64,
-      TURMA,
-      nomeUsuario,
-      cpfUsuario,
-      horasTotal,
-      minData,
-      maxData,
-      req,
+    const resumo = await resumoDatasTurma(turma_id, usuario_id, req);
+    const minData = resumo.min_data || TURMA.data_inicio;
+    const maxData = resumo.max_data || TURMA.data_fim;
+    const horasTotal = Number(resumo.horas_total || 0);
+
+    const result = await withTx(req, async ({ query: q }) => {
+      const txDb = { query: q };
+
+      const lockTurma = await q(`SELECT id FROM turmas WHERE id = $1 FOR UPDATE`, [turma_id]);
+      if (!lockTurma.rowCount) {
+        throw Object.assign(new Error("Turma não encontrada."), { statusCode: 404 });
+      }
+
+      const { nomeArquivo } = await _gerarPdfFisico({
+        tipo,
+        usuario_id,
+        evento_id,
+        turma_id,
+        assinaturaBase64,
+        TURMA,
+        nomeUsuario,
+        cpfUsuario,
+        horasTotal,
+        minData,
+        maxData,
+        req,
+      });
+
+      const upsert = await q(
+        `
+        INSERT INTO certificados (usuario_id, evento_id, turma_id, tipo, arquivo_pdf, gerado_em)
+        VALUES ($1, $2, $3, $4, $5, NOW())
+        ON CONFLICT (usuario_id, evento_id, turma_id, tipo)
+        DO UPDATE SET arquivo_pdf = EXCLUDED.arquivo_pdf, gerado_em = NOW()
+        RETURNING id
+        `,
+        [usuario_id, evento_id, turma_id, tipo, nomeArquivo]
+      );
+
+      return {
+        nomeArquivo,
+        certificado_id: upsert.rows?.[0]?.id || null,
+        txDb,
+      };
     });
 
-    const upsert = await db.query(
-      `
-      INSERT INTO certificados (usuario_id, evento_id, turma_id, tipo, arquivo_pdf, gerado_em)
-      VALUES ($1, $2, $3, $4, $5, NOW())
-      ON CONFLICT (usuario_id, evento_id, turma_id, tipo)
-      DO UPDATE SET arquivo_pdf = EXCLUDED.arquivo_pdf, gerado_em = NOW()
-      RETURNING id
-      `,
-      [usuario_id, evento_id, turma_id, tipo, nomeArquivo]
-    );
-
     try {
-      await gerarNotificacaoDeCertificado(usuario_id, turma_id);
+      if (typeof gerarNotificacaoDeCertificado === "function") {
+        await gerarNotificacaoDeCertificado(usuario_id, {
+          turma_id,
+          evento_id,
+          evento_titulo: TURMA.titulo || "evento",
+        });
+      }
     } catch (e) {
-      logWarn("⚠️ Notificação de certificado falhou:", e?.message || e);
+      logWarn(rid, "Notificação de certificado falhou", e?.message || e);
     }
 
     if (tipo === "usuario") {
       try {
-        const { rows } = await db.query("SELECT email, nome FROM usuarios WHERE id = $1", [usuario_id]);
-        const emailUsuario = rows[0]?.email?.trim();
-        const nomeUsuarioEmail = rows[0]?.nome?.trim() || "Aluno(a)";
+        const emailUsuario = pessoa.rows?.[0]?.email?.trim();
+        const nomeUsuarioEmail = pessoa.rows?.[0]?.nome?.trim() || "Aluno(a)";
 
         if (emailUsuario) {
           const { send } = require("../services/mailer");
@@ -891,34 +1074,37 @@ Equipe da Escola Municipal de Saúde`,
             `,
           });
         } else {
-          logWarn("⚠️ Usuário sem e-mail cadastrado:", { usuario_id });
+          logWarn(rid, "Usuário sem e-mail cadastrado", { usuario_id });
         }
       } catch (e) {
-        logWarn("⚠️ Envio de e-mail falhou (ignorado):", e.message);
+        logWarn(rid, "Envio de e-mail falhou (ignorado)", e.message);
       }
     }
 
-    logDev("gerarCertificado:sucesso", {
+    logInfo(rid, "gerarCertificado:sucesso", {
       usuario_id,
       evento_id,
       turma_id,
       tipo,
-      certificado_id: upsert.rows?.[0]?.id || null,
-      arquivo: nomeArquivo,
+      certificado_id: result.certificado_id,
+      arquivo: result.nomeArquivo,
     });
 
     return res.status(201).json({
       mensagem: "Certificado gerado com sucesso",
-      arquivo: nomeArquivo,
-      certificado_id: upsert.rows[0].id,
+      arquivo: result.nomeArquivo,
+      certificado_id: result.certificado_id,
     });
   } catch (error) {
-    logErr("❌ Erro ao gerar certificado:", IS_DEV ? error?.stack || error : error?.message || error);
-    if (!res.headersSent) return res.status(500).json({ erro: "Erro ao gerar certificado" });
+    logErr(rid, "Erro ao gerar certificado", error);
+    if (!res.headersSent) {
+      return res.status(500).json({ erro: "Erro ao gerar certificado" });
+    }
   }
 }
 
 async function listarCertificadoDoUsuario(req, res) {
+  const rid = reqRid(req);
   const db = getDb(req);
 
   try {
@@ -938,21 +1124,27 @@ async function listarCertificadoDoUsuario(req, res) {
         t.data_fim
       FROM certificados c
       JOIN eventos e ON e.id = c.evento_id
-      JOIN turmas  t ON t.id = c.turma_id
+      JOIN turmas t ON t.id = c.turma_id
       WHERE c.usuario_id = $1
       ORDER BY c.id DESC
       `,
       [usuario_id]
     );
 
+    logInfo(rid, "listarCertificadoDoUsuario OK", {
+      usuario_id,
+      total: result.rows?.length || 0,
+    });
+
     return res.json(result.rows);
   } catch (err) {
-    logErr("❌ Erro ao listar certificado do usuário:", IS_DEV ? err?.stack || err : err?.message || err);
+    logErr(rid, "Erro ao listar certificado do usuário", err);
     return res.status(500).json({ erro: "Erro ao listar certificados do usuário." });
   }
 }
 
 async function baixarCertificado(req, res) {
+  const rid = reqRid(req);
   const db = getDb(req);
 
   try {
@@ -994,31 +1186,12 @@ async function baixarCertificado(req, res) {
     let caminhoArquivo = path.join(CERT_DIR, nomeArquivo);
 
     if (!fs.existsSync(caminhoArquivo)) {
-      logDev("Arquivo ausente; regenerando certificado", { id: cert.id });
+      logInfo(rid, "Arquivo ausente; regenerando certificado", { certificado_id: cert.id });
 
-      const eventoResult = await db.query(
-        `
-        SELECT
-          e.titulo,
-          t.nome AS turma_nome,
-          t.horario_inicio,
-          t.horario_fim,
-          t.data_inicio,
-          t.data_fim,
-          t.carga_horaria
-        FROM eventos e
-        JOIN turmas t ON t.evento_id = e.id
-        WHERE e.id = $1 AND t.id = $2
-        LIMIT 1
-        `,
-        [cert.evento_id, cert.turma_id]
-      );
-
-      if (eventoResult.rowCount === 0) {
+      const TURMA = await obterContextoTurmaCertificado(db, cert.evento_id, cert.turma_id);
+      if (!TURMA) {
         return res.status(404).json({ erro: "Evento/Turma do certificado não encontrados." });
       }
-
-      const TURMA = eventoResult.rows[0];
 
       const pessoa = await db.query("SELECT nome, cpf FROM usuarios WHERE id = $1", [cert.usuario_id]);
       if (pessoa.rowCount === 0) {
@@ -1057,7 +1230,7 @@ async function baixarCertificado(req, res) {
       );
     }
 
-    logDev("baixarCertificado:ok", {
+    logInfo(rid, "baixarCertificado OK", {
       certificado_id: cert.id,
       usuario_id: cert.usuario_id,
       authUserId,
@@ -1072,12 +1245,13 @@ async function baixarCertificado(req, res) {
 
     return fs.createReadStream(caminhoArquivo).pipe(res);
   } catch (err) {
-    logErr("❌ Erro ao baixar certificado:", IS_DEV ? err?.stack || err : err?.message || err);
+    logErr(rid, "Erro ao baixar certificado", err);
     return res.status(500).json({ erro: "Erro ao baixar certificado." });
   }
 }
 
 async function revalidarCertificado(req, res) {
+  const rid = reqRid(req);
   const db = getDb(req);
 
   try {
@@ -1093,20 +1267,25 @@ async function revalidarCertificado(req, res) {
       return res.status(404).json({ erro: "Certificado não encontrado." });
     }
 
+    logInfo(rid, "revalidarCertificado OK", { certificado_id: id });
     return res.json({ mensagem: "✅ Certificado revalidado com sucesso!" });
   } catch (error) {
-    logErr("❌ Erro ao revalidar certificado:", IS_DEV ? error?.stack || error : error?.message || error);
+    logErr(rid, "Erro ao revalidar certificado", error);
     return res.status(500).json({ erro: "Erro ao revalidar certificado." });
   }
 }
 
 /** 🎓 Elegível (aluno) */
 async function listarElegivel(req, res) {
+  const rid = reqRid(req);
   const db = getDb(req);
 
   try {
     const usuario_id = toIntId(req?.usuario?.id ?? req?.user?.id) || toIntId(req.query?.usuario_id);
     if (!usuario_id) return res.status(400).json({ erro: "usuario_id ausente" });
+
+    const inscrTable = await resolveInscricaoTable(db);
+    const avaliacaoTable = await resolveAvaliacaoTable(db);
 
     const { rows } = await db.query(
       `
@@ -1123,32 +1302,40 @@ async function listarElegivel(req, res) {
           t.data_fim,
           t.horario_fim
         FROM certificados c
-        JOIN turmas  t ON t.id = c.turma_id
+        JOIN turmas t ON t.id = c.turma_id
         JOIN eventos e ON e.id = c.evento_id
         WHERE c.usuario_id = $1
           AND c.tipo = 'usuario'
       ),
-      encerrada AS (
+      fim_real AS (
         SELECT
           t.id AS turma_id,
-          t.evento_id,
-          t.nome AS nome_turma,
-          t.data_inicio,
-          t.data_fim,
-          t.horario_fim,
-          (
-            (NOW() AT TIME ZONE '${TZ}') >=
-            COALESCE(
-              (
-                SELECT (dt.data::date + COALESCE(dt.horario_fim::time, t.horario_fim::time, '23:59'::time))
-                FROM datas_turma dt
-                WHERE dt.turma_id = t.id
-                ORDER BY dt.data DESC, COALESCE(dt.horario_fim, t.horario_fim) DESC
-                LIMIT 1
-              ),
-              (t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
+          COALESCE(
+            (
+              SELECT (dt.data::date + COALESCE(dt.horario_fim::time, t.horario_fim::time, '23:59'::time))
+              FROM datas_turma dt
+              WHERE dt.turma_id = t.id
+              ORDER BY dt.data DESC, COALESCE(dt.horario_fim, t.horario_fim) DESC
+              LIMIT 1
+            ),
+            (t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
+          ) AS fim_local
+        FROM turmas t
+      ),
+      total_encontros AS (
+        SELECT
+          t.id AS turma_id,
+          CASE
+            WHEN EXISTS (
+              SELECT 1 FROM datas_turma dt WHERE dt.turma_id = t.id
             )
-          ) AS acabou
+              THEN (
+                SELECT COUNT(*)::int FROM datas_turma dt WHERE dt.turma_id = t.id
+              )
+            WHEN t.data_inicio IS NOT NULL AND t.data_fim IS NOT NULL
+              THEN 1
+            ELSE 0
+          END AS total
         FROM turmas t
       ),
       freq AS (
@@ -1163,38 +1350,40 @@ async function listarElegivel(req, res) {
       ),
       aval AS (
         SELECT DISTINCT turma_id
-        FROM avaliacoes
+        FROM ${avaliacaoTable}
         WHERE usuario_id = $1
       ),
       base AS (
         SELECT
           e.id AS evento_id,
           e.titulo AS evento,
-          en.turma_id,
-          en.nome_turma,
-          en.data_inicio,
-          en.data_fim,
-          en.horario_fim,
-          en.acabou,
+          t.id AS turma_id,
+          t.nome AS nome_turma,
+          t.data_inicio,
+          t.data_fim,
+          t.horario_fim,
+          te.total AS total_encontros,
           COALESCE(f.dias_presentes, 0) AS dias_presentes,
-          GREATEST(1, ((en.data_fim::date - en.data_inicio::date) + 1))::int AS dias_total,
           (av.turma_id IS NOT NULL) AS fez_avaliacao
-        FROM inscricoes i
-        JOIN encerrada en ON en.turma_id = i.turma_id
-        JOIN eventos e ON e.id = en.evento_id
+        FROM ${inscrTable} i
+        JOIN turmas t ON t.id = i.turma_id
+        JOIN eventos e ON e.id = t.evento_id
+        JOIN fim_real fr ON fr.turma_id = t.id
+        JOIN total_encontros te ON te.turma_id = t.id
         LEFT JOIN freq f
-          ON f.turma_id = en.turma_id
+          ON f.turma_id = t.id
          AND f.usuario_id = i.usuario_id
         LEFT JOIN aval av
-          ON av.turma_id = en.turma_id
+          ON av.turma_id = t.id
         WHERE i.usuario_id = $1
+          AND te.total > 0
+          AND (NOW() AT TIME ZONE '${TZ}') >= fr.fim_local
       ),
       elegivel AS (
         SELECT b.*
         FROM base b
-        WHERE b.acabou = TRUE
-          AND b.fez_avaliacao = TRUE
-          AND (b.dias_presentes::decimal / b.dias_total) >= 0.75
+        WHERE b.fez_avaliacao = TRUE
+          AND COALESCE(b.dias_presentes, 0) >= CEIL(0.75 * b.total_encontros)
       )
       SELECT
         g.turma_id,
@@ -1236,70 +1425,57 @@ async function listarElegivel(req, res) {
       [usuario_id]
     );
 
+    logInfo(rid, "listarElegivel OK", {
+      usuario_id,
+      total: rows?.length || 0,
+      inscrTable,
+      avaliacaoTable,
+    });
+
     return res.json(rows);
   } catch (err) {
-    logErr("❌ Erro ao buscar certificado elegível:", IS_DEV ? err?.stack || err : err?.message || err);
+    logErr(rid, "Erro ao buscar certificado elegível", err);
     return res.status(500).json({ erro: "Erro ao buscar certificados elegíveis." });
   }
 }
 
-/** 👩‍🏫 Elegível (instrutor) — considerando turma_instrutor OU evento_instrutor
- *  - Admin pode testar outro usuário via ?usuario_id=2742
- *  - Retorno padronizado com tipo/pode_gerar
- *  - Logs estratégicos
- */
+/** 👩‍🏫 Elegível (instrutor) */
 async function listarInstrutorElegivel(req, res) {
+  const rid = reqRid(req);
   const db = getDb(req);
 
   try {
     const authUserId = toIntId(
       req?.usuario?.id ??
-      req?.user?.id ??
-      req?.usuario?.usuario_id ??
-      req?.user?.usuario_id ??
-      req?.auth?.userId ??
-      req?.auth?.id ??
-      req?.auth?.sub
+        req?.user?.id ??
+        req?.usuario?.usuario_id ??
+        req?.user?.usuario_id ??
+        req?.auth?.userId ??
+        req?.auth?.id ??
+        req?.auth?.sub
     );
 
-    const perfisRaw =
-      req?.usuario?.perfis ??
-      req?.usuario?.perfil ??
-      req?.user?.perfis ??
-      req?.user?.perfil ??
-      "";
-
-    const perfis = Array.isArray(perfisRaw)
-      ? perfisRaw.map((p) => String(p).trim().toLowerCase()).filter(Boolean)
-      : String(perfisRaw)
-          .split(",")
-          .map((p) => p.trim().toLowerCase())
-          .filter(Boolean);
-
-    const isAdmin = perfis.includes("administrador");
-
+    const perfis = getPerfis(req);
+    const admin = perfis.includes("administrador");
     const queryUserId = toIntId(req?.query?.usuario_id);
 
-    const instrutor_id = isAdmin
-      ? (queryUserId || authUserId)
-      : authUserId;
+    const instrutor_id = admin ? queryUserId || authUserId : authUserId;
 
     if (!instrutor_id) {
       return res.status(400).json({ erro: "usuario_id ausente" });
     }
 
-    logDev("listarInstrutorElegivel:start", {
+    logInfo(rid, "listarInstrutorElegivel:start", {
       authUserId,
       queryUserId,
       instrutor_id,
-      isAdmin,
+      admin,
       perfis,
     });
 
     const result = await db.query(
       `
       WITH vinculos AS (
-        -- vínculo direto na turma
         SELECT DISTINCT
           t.id AS turma_id,
           t.evento_id
@@ -1309,7 +1485,6 @@ async function listarInstrutorElegivel(req, res) {
 
         UNION
 
-        -- vínculo no evento (vale para todas as turmas do evento)
         SELECT DISTINCT
           t.id AS turma_id,
           t.evento_id
@@ -1359,38 +1534,27 @@ async function listarInstrutorElegivel(req, res) {
       [instrutor_id]
     );
 
-    logDev("listarInstrutorElegivel:resultado", {
+    logInfo(rid, "listarInstrutorElegivel:resultado", {
       instrutor_id,
       total: result.rows?.length || 0,
-      itens: (result.rows || []).map((r) => ({
-        tipo: r.tipo,
-        turma_id: r.turma_id,
-        evento_id: r.evento_id,
-        certificado_id: r.certificado_id || null,
-        ja_gerado: r.ja_gerado,
-        pode_gerar: r.pode_gerar,
-      })),
     });
 
     return res.json(result.rows || []);
   } catch (err) {
-    logErr(
-      "❌ Erro ao buscar certificado de instrutor elegível:",
-      IS_DEV ? err?.stack || err : err?.message || err
-    );
+    logErr(rid, "Erro ao buscar certificado de instrutor elegível", err);
     return res.status(500).json({ erro: "Erro ao buscar certificados de instrutor elegíveis." });
   }
 }
+
 /** ♻️ Reset PDFs/arquivos por turma */
 async function resetTurma(req, res) {
+  const rid = reqRid(req);
   const db = getDb(req);
   const id = toIntId(req.params.turmaId);
 
   if (!id) return res.status(400).json({ erro: "turmaId inválido" });
 
   try {
-    console.log(`[RESET] Limpando certificados da turma ${id}`);
-
     await ensureDir(CERT_DIR);
 
     const { rows } = await db.query(
@@ -1418,10 +1582,10 @@ async function resetTurma(req, res) {
 
     await db.query("DELETE FROM certificados_cache WHERE turma_id = $1", [id]).catch(() => {});
 
-    console.log(`[RESET] Concluído para turma ${id}`);
+    logInfo(rid, "resetTurma OK", { turma_id: id });
     return res.json({ ok: true, turma_id: id, resetado: true });
   } catch (err) {
-    logErr("Erro ao resetar certificados:", IS_DEV ? err?.stack || err : err?.message || err);
+    logErr(rid, "Erro ao resetar certificados", err);
     return res.status(500).json({
       erro: "Falha ao resetar certificados",
       detalhes: IS_DEV ? err.message : undefined,
@@ -1432,8 +1596,8 @@ async function resetTurma(req, res) {
 /* =========================================================================
    Endpoints ADMIN
 =========================================================================== */
-
 async function listarArvore(req, res) {
+  const rid = reqRid(req);
   const db = getDb(req);
 
   try {
@@ -1525,28 +1689,46 @@ async function listarArvore(req, res) {
 
       eventosMap.get(evId).turmas.push({
         turma_id: row.turma_id,
-        turma_nome: row.turma_nome,
+               turma_nome: row.turma_nome,
         data_inicio: row.data_inicio,
         data_fim: row.data_fim,
-        totais: { presentes, emitidos, pendentes },
+        totais: {
+          presentes,
+          emitidos,
+          pendentes,
+        },
         participantes,
       });
     }
 
-    return res.json(Array.from(eventosMap.values()));
+    const payload = Array.from(eventosMap.values());
+
+    logInfo(rid, "listarArvore OK", {
+      eventoId: eventoId ?? null,
+      turmaId: turmaId ?? null,
+      total_eventos: payload.length,
+      total_turmas: payload.reduce((acc, ev) => acc + (ev.turmas?.length || 0), 0),
+    });
+
+    return res.json(payload);
   } catch (err) {
-    logErr("Erro listarArvore:", IS_DEV ? err : err?.message);
+    logErr(rid, "Erro listarArvore", err);
     return res.status(500).json({ erro: "Falha ao carregar árvore de certificados." });
   }
 }
 
 async function resetTurmaAdmin(req, res) {
+  const rid = reqRid(req, "CERTADM");
   const db = getDb(req);
   const turmaId = toIntId(req.params.turmaId);
 
-  if (!turmaId) return res.status(400).json({ erro: "turmaId inválido." });
+  if (!turmaId) {
+    return res.status(400).json({ erro: "turmaId inválido." });
+  }
 
   try {
+    await ensureDir(CERT_DIR);
+
     const arquivos = await db.query(
       `
       SELECT id, arquivo_pdf
@@ -1557,33 +1739,49 @@ async function resetTurmaAdmin(req, res) {
       [turmaId]
     );
 
-    await ensureDir(CERT_DIR);
-
     let pdfsRemovidos = 0;
+
     for (const r of arquivos.rows || []) {
       const nome = r.arquivo_pdf;
       if (!nome) continue;
+
       const p = path.join(CERT_DIR, nome);
       if (!p.startsWith(path.resolve(CERT_DIR))) continue;
-      const ok = await fsp.unlink(p).then(() => true).catch(() => false);
+
+      const ok = await fsp
+        .unlink(p)
+        .then(() => true)
+        .catch(() => false);
+
       if (ok) pdfsRemovidos += 1;
     }
 
     const del = await db.query(
-      `DELETE FROM certificados WHERE turma_id = $1 AND tipo = 'usuario' RETURNING id`,
+      `
+      DELETE FROM certificados
+      WHERE turma_id = $1
+        AND tipo = 'usuario'
+      RETURNING id
+      `,
       [turmaId]
     );
 
-    await db.query("DELETE FROM certificados_cache WHERE turma_id = $1", [turmaId]).catch(() => {});
+    await db.query(`DELETE FROM certificados_cache WHERE turma_id = $1`, [turmaId]).catch(() => {});
+
+    logInfo(rid, "resetTurmaAdmin OK", {
+      turma_id: turmaId,
+      pdfs_removidos: pdfsRemovidos,
+      registros_apagados: del.rowCount || 0,
+    });
 
     return res.json({
       ok: true,
       turma_id: turmaId,
       pdfs_removidos: pdfsRemovidos,
-      registros_apagados: del.rowCount,
+      registros_apagados: del.rowCount || 0,
     });
   } catch (err) {
-    logErr("Erro resetTurmaAdmin:", IS_DEV ? err : err?.message);
+    logErr(rid, "Erro resetTurmaAdmin", err);
     return res.status(500).json({ erro: "Falha ao resetar certificados da turma." });
   }
 }
@@ -1591,7 +1789,6 @@ async function resetTurmaAdmin(req, res) {
 /* =========================================================================
    Exports
 =========================================================================== */
-
 module.exports = {
   gerarCertificado,
   listarCertificadoDoUsuario,
