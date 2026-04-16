@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-// ✅ src/controllers/turmaController.js — PREMIUM/UNIFICADO (date-only safe)
+// ✅ src/controllers/turmaController.js — PREMIUM+++ (unificado, robusto, date-only safe)
 "use strict";
 
 /* =========================================================
@@ -9,11 +9,10 @@ const dbModule = require("../db");
 const dbFallback = dbModule?.db ?? dbModule;
 
 function getDb(req) {
-  // server pode injetar req.db
   return req?.db ?? dbFallback;
 }
 
-async function query(reqOrDb, sql, params) {
+async function query(reqOrDb, sql, params = []) {
   const db = typeof reqOrDb?.query === "function" ? reqOrDb : getDb(reqOrDb);
   if (typeof db?.query === "function") return db.query(sql, params);
   throw new Error("DB adapter inválido: db.query não encontrado.");
@@ -24,17 +23,20 @@ async function getClient(req) {
 
   if (typeof db?.getClient === "function") return db.getClient();
   if (db?.pool?.connect) return db.pool.connect();
-  if (typeof db?.connect === "function") return db.connect(); // fallback raro
+  if (typeof db?.connect === "function") return db.connect();
   throw new Error("DB adapter inválido: db.getClient/pool.connect não encontrado.");
 }
 
 /* ───────────────── Config & Utils ───────────────── */
 const IS_DEV = process.env.NODE_ENV !== "production";
+const TZ = "America/Sao_Paulo";
+
 const logT = (...a) => IS_DEV && console.log("[TURMA]", ...a);
 const warnT = (...a) => IS_DEV && console.warn("[TURMA]", ...a);
 const errT = (...a) => console.error("[TURMA]", ...a);
 
 const LIMITE_NOME_TURMA = 100;
+
 const len = (s) => String(s ?? "").trim().length;
 const nomeOk = (s) => len(s) <= LIMITE_NOME_TURMA;
 
@@ -54,10 +56,19 @@ function assert(cond, msg, status = 400) {
   }
 }
 
+function mkRid(prefix = "TURMA") {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function reqRid(req, prefix = "TURMA") {
+  return req?.requestId || req?.rid || mkRid(prefix);
+}
+
 function validarDatasPayload(datas) {
   if (!Array.isArray(datas) || datas.length === 0) {
     return { ok: false, msg: "Envie ao menos 1 data." };
   }
+
   for (const d of datas) {
     if (!d?.data || !isISODate(d.data)) {
       return { ok: false, msg: "Campo 'data' deve estar em formato YYYY-MM-DD." };
@@ -68,7 +79,16 @@ function validarDatasPayload(datas) {
     if (d.horario_fim && !isHHMM(d.horario_fim)) {
       return { ok: false, msg: "Campo 'horario_fim' deve estar em HH:MM." };
     }
+    if (d.horario_inicio && d.horario_fim && String(d.horario_fim) <= String(d.horario_inicio)) {
+      return { ok: false, msg: "horario_fim deve ser maior que horario_inicio em cada encontro." };
+    }
   }
+
+  const unicas = new Set(datas.map((d) => String(d.data)));
+  if (unicas.size !== datas.length) {
+    return { ok: false, msg: "Há datas duplicadas na lista de encontros." };
+  }
+
   return { ok: true };
 }
 
@@ -78,8 +98,10 @@ function ordenarDatas(datas = []) {
 
 function minutesBetween(hhmmIni, hhmmFim) {
   if (!hhmmIni || !hhmmFim) return 0;
+
   const [h1, m1] = String(hhmmIni).split(":").map(Number);
   const [h2, m2] = String(hhmmFim).split(":").map(Number);
+
   if (![h1, m1, h2, m2].every(Number.isFinite)) return 0;
   return h2 * 60 + m2 - (h1 * 60 + m1);
 }
@@ -87,33 +109,82 @@ function minutesBetween(hhmmIni, hhmmFim) {
 // regra: se um encontro tiver ≥6h (360min), desconta 1h de almoço
 function somaHorasDatas(datas = []) {
   let totalMin = 0;
+
   for (const d of datas) {
     const mins = minutesBetween(d.horario_inicio, d.horario_fim);
     if (mins > 0) totalMin += mins >= 360 ? mins - 60 : mins;
   }
+
   return totalMin / 60;
 }
 
-// moda simples
 function moda(values = []) {
   const cnt = new Map();
+
   for (const v of values) {
     if (!v) continue;
     cnt.set(v, (cnt.get(v) || 0) + 1);
   }
+
   let best = null;
   let bestN = -1;
+
   for (const [v, n] of cnt.entries()) {
     if (n > bestN || (n === bestN && String(v) < String(best))) {
       best = v;
       bestN = n;
     }
   }
+
   return best;
+}
+
+function localNowParts() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  })
+    .formatToParts(new Date())
+    .reduce((acc, p) => {
+      acc[p.type] = p.value;
+      return acc;
+    }, {});
+
+  return parts;
+}
+
+function nowYMDHMS() {
+  const p = localNowParts();
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+}
+
+/* ───────────────── Compat de tabela singular/plural ───────────────── */
+let _inscricaoTableCache = null;
+
+async function resolveInscricaoTable(reqOrDb) {
+  if (_inscricaoTableCache) return _inscricaoTableCache;
+
+  try {
+    await query(reqOrDb, `SELECT 1 FROM inscricoes LIMIT 1`);
+    _inscricaoTableCache = "inscricoes";
+    return _inscricaoTableCache;
+  } catch (_) {}
+
+  await query(reqOrDb, `SELECT 1 FROM inscricao LIMIT 1`);
+  _inscricaoTableCache = "inscricao";
+  return _inscricaoTableCache;
 }
 
 /* ───────────────── Flag de assinante no vínculo turma_instrutor ───────────────── */
 let _hasIsAssinanteTI = null;
+let _hasInstrutorAssinanteTurmas = null;
+let _hasAssinanteInstrutorTurmas = null;
 
 async function hasIsAssinanteCol(client) {
   if (_hasIsAssinanteTI === null) {
@@ -126,43 +197,202 @@ async function hasIsAssinanteCol(client) {
           AND table_name='turma_instrutor'
           AND column_name='is_assinante'
       ) AS ok;
-    `
+      `
     );
     _hasIsAssinanteTI = !!q.rows?.[0]?.ok;
     logT("is_assinante em turma_instrutor:", _hasIsAssinanteTI ? "SIM" : "NÃO");
   }
+
   return _hasIsAssinanteTI;
+}
+
+async function hasTurmasInstrutorAssinanteId(client) {
+  if (_hasInstrutorAssinanteTurmas === null) {
+    const q = await client.query(
+      `
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema='public'
+          AND table_name='turmas'
+          AND column_name='instrutor_assinante_id'
+      ) AS ok;
+      `
+    );
+    _hasInstrutorAssinanteTurmas = !!q.rows?.[0]?.ok;
+  }
+
+  return _hasInstrutorAssinanteTurmas;
+}
+
+async function hasTurmasAssinanteInstrutorId(client) {
+  if (_hasAssinanteInstrutorTurmas === null) {
+    const q = await client.query(
+      `
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema='public'
+          AND table_name='turmas'
+          AND column_name='assinante_instrutor_id'
+      ) AS ok;
+      `
+    );
+    _hasAssinanteInstrutorTurmas = !!q.rows?.[0]?.ok;
+  }
+
+  return _hasAssinanteInstrutorTurmas;
 }
 
 async function marcarAssinanteEmTurmaInstrutor(client, turmaId, instrutorId) {
   const tid = toIntOrNull(turmaId);
   const iid = toIntOrNull(instrutorId);
-  if (!tid || !iid) return;
+
+  if (!tid) return;
   if (!(await hasIsAssinanteCol(client))) return;
 
   await client.query(`UPDATE turma_instrutor SET is_assinante = FALSE WHERE turma_id = $1`, [tid]);
-  await client.query(
-    `UPDATE turma_instrutor SET is_assinante = TRUE WHERE turma_id = $1 AND instrutor_id = $2`,
-    [tid, iid]
-  );
+
+  if (iid) {
+    await client.query(
+      `UPDATE turma_instrutor SET is_assinante = TRUE WHERE turma_id = $1 AND instrutor_id = $2`,
+      [tid, iid]
+    );
+  }
 }
 
 async function setAssinanteSilencioso(client, turmaId, instrutorAssinanteId) {
   const tid = toIntOrNull(turmaId);
   const iid = toIntOrNull(instrutorAssinanteId);
+
   if (!tid) return;
 
-  const v = iid || null;
-
-  // tentativas compat com schemas diferentes
-  try {
-    await client.query(`UPDATE turmas SET instrutor_assinante_id = $2 WHERE id = $1`, [tid, v]);
+  if (await hasTurmasInstrutorAssinanteId(client)) {
+    await client.query(`UPDATE turmas SET instrutor_assinante_id = $2 WHERE id = $1`, [tid, iid || null]);
     return;
+  }
+
+  if (await hasTurmasAssinanteInstrutorId(client)) {
+    await client.query(`UPDATE turmas SET assinante_instrutor_id = $2 WHERE id = $1`, [tid, iid || null]);
+  }
+}
+
+async function getAssinanteDaTurma(client, turmaId) {
+  const tid = toIntOrNull(turmaId);
+  if (!tid) return null;
+
+  try {
+    if (await hasTurmasInstrutorAssinanteId(client)) {
+      const q = await client.query(
+        `
+        SELECT u.id, u.nome
+        FROM turmas t
+        JOIN usuarios u ON u.id = t.instrutor_assinante_id
+        WHERE t.id = $1
+        LIMIT 1
+        `,
+        [tid]
+      );
+      if (q.rowCount) return q.rows[0];
+    }
   } catch (_) {}
 
   try {
-    await client.query(`UPDATE turmas SET assinante_instrutor_id = $2 WHERE id = $1`, [tid, v]);
+    if (await hasTurmasAssinanteInstrutorId(client)) {
+      const q = await client.query(
+        `
+        SELECT u.id, u.nome
+        FROM turmas t
+        JOIN usuarios u ON u.id = t.assinante_instrutor_id
+        WHERE t.id = $1
+        LIMIT 1
+        `,
+        [tid]
+      );
+      if (q.rowCount) return q.rows[0];
+    }
   } catch (_) {}
+
+  try {
+    if (await hasIsAssinanteCol(client)) {
+      const q = await client.query(
+        `
+        SELECT u.id, u.nome
+        FROM turma_instrutor ti
+        JOIN usuarios u ON u.id = ti.instrutor_id
+        WHERE ti.turma_id = $1
+          AND ti.is_assinante = TRUE
+        LIMIT 1
+        `,
+        [tid]
+      );
+      if (q.rowCount) return q.rows[0];
+    }
+  } catch (_) {}
+
+  return null;
+}
+
+/* ───────────────── Helpers de leitura premium ───────────────── */
+async function carregarDatasDaTurma(reqOrDb, turmaId) {
+  const { rows } = await query(
+    reqOrDb,
+    `
+    SELECT
+      to_char(data::date, 'YYYY-MM-DD') AS data,
+      to_char(horario_inicio, 'HH24:MI') AS horario_inicio,
+      to_char(horario_fim,   'HH24:MI')  AS horario_fim
+    FROM datas_turma
+    WHERE turma_id = $1
+    ORDER BY data
+    `,
+    [turmaId]
+  );
+
+  return (rows || []).map((r) => ({
+    data: r.data,
+    horario_inicio: r.horario_inicio || null,
+    horario_fim: r.horario_fim || null,
+  }));
+}
+
+async function carregarInstrutoresDaTurma(reqOrDb, turmaId) {
+  const { rows } = await query(
+    reqOrDb,
+    `
+    SELECT u.id, u.nome, u.email
+    FROM turma_instrutor ti
+    JOIN usuarios u ON u.id = ti.instrutor_id
+    WHERE ti.turma_id = $1
+    ORDER BY u.nome
+    `,
+    [turmaId]
+  );
+
+  return rows || [];
+}
+
+function resumirTurmaComDatas(baseTurma, datas = [], instrutores = [], assinante = null) {
+  const min = datas[0]?.data || baseTurma.data_inicio || null;
+  const max = datas[datas.length - 1]?.data || baseTurma.data_fim || null;
+
+  const hiModa = moda(datas.map((d) => d.horario_inicio).filter(Boolean));
+  const hfModa = moda(datas.map((d) => d.horario_fim).filter(Boolean));
+
+  return {
+    ...baseTurma,
+    data_inicio: min,
+    data_fim: max,
+    horario_inicio: hiModa || baseTurma.horario_inicio || null,
+    horario_fim: hfModa || baseTurma.horario_fim || null,
+    carga_horaria_real: somaHorasDatas(datas),
+    datas,
+    instrutores,
+    instrutor_assinante_id: assinante?.id ?? baseTurma.instrutor_assinante_id ?? null,
+    assinante_id: assinante?.id ?? baseTurma.instrutor_assinante_id ?? null,
+    assinante_nome: assinante?.nome ?? null,
+    assinante_por_vinculo: assinante || null,
+  };
 }
 
 /* =========================================================
@@ -171,7 +401,9 @@ async function setAssinanteSilencioso(client, turmaId, instrutorAssinanteId) {
 
 /** POST /api/turma (ou /api/turmas legado) */
 async function criar(req, res) {
+  const rid = reqRid(req);
   const client = await getClient(req);
+
   try {
     const {
       evento_id,
@@ -181,7 +413,7 @@ async function criar(req, res) {
       // opcional:
       datas, // [{data:'YYYY-MM-DD', horario_inicio:'HH:MM', horario_fim:'HH:MM'}]
 
-      // NOVO: campos diretos (quando não há 'datas')
+      // campos diretos (quando não há datas)
       data_inicio: di_payload,
       data_fim: df_payload,
       horario_inicio: hi_payload,
@@ -191,7 +423,7 @@ async function criar(req, res) {
       instrutor_assinante_id,
     } = req.body || {};
 
-    logT("criar body:", {
+    logT("[RID=%s] criar body:", rid, {
       keys: Object.keys(req.body || {}),
       evento_id,
       nomeLen: len(nome),
@@ -202,6 +434,8 @@ async function criar(req, res) {
     });
 
     const eventoId = toIntOrNull(evento_id);
+    const vagasTotalInt = vagas_total == null || vagas_total === "" ? null : toIntOrNull(vagas_total);
+
     assert(eventoId, "Evento e nome são obrigatórios.");
     assert(nome && String(nome).trim(), "Evento e nome são obrigatórios.");
 
@@ -213,6 +447,10 @@ async function criar(req, res) {
         recebido: len(nome),
         mensagem: `O nome da turma pode ter no máximo ${LIMITE_NOME_TURMA} caracteres (recebido: ${len(nome)}).`,
       });
+    }
+
+    if (vagasTotalInt != null) {
+      assert(vagasTotalInt > 0, "vagas_total deve ser maior que zero.");
     }
 
     let datasOrdenadas = [];
@@ -240,14 +478,31 @@ async function criar(req, res) {
       if (hi_payload != null) assert(isHHMM(hi_payload), "horario_inicio deve ser HH:MM.");
       if (hf_payload != null) assert(isHHMM(hf_payload), "horario_fim deve ser HH:MM.");
 
+      if (di_payload && df_payload) {
+        assert(String(df_payload) >= String(di_payload), "data_fim deve ser maior ou igual a data_inicio.");
+      }
+
+      if (hi_payload && hf_payload) {
+        assert(String(hf_payload) > String(hi_payload), "horario_fim deve ser maior que horario_inicio.");
+      }
+
       data_inicio = di_payload ?? null;
       data_fim = df_payload ?? di_payload ?? null;
       horario_inicio = hi_payload ?? null;
       horario_fim = hf_payload ?? null;
-      carga_int = null;
+      carga_int =
+        hi_payload && hf_payload
+          ? Math.max(0, Math.round((minutesBetween(hi_payload, hf_payload) >= 360
+              ? minutesBetween(hi_payload, hf_payload) - 60
+              : minutesBetween(hi_payload, hf_payload)
+            ) / 60))
+          : null;
     }
 
     await client.query("BEGIN");
+
+    const evCheck = await client.query(`SELECT id FROM eventos WHERE id = $1 LIMIT 1`, [eventoId]);
+    assert(evCheck.rowCount > 0, "Evento não encontrado.", 404);
 
     const { rows: insTurma } = await client.query(
       `
@@ -265,73 +520,91 @@ async function criar(req, res) {
         data_fim,
         horario_inicio,
         horario_fim,
-        vagas_total,
+        vagasTotalInt,
         carga_int,
       ]
     );
-    
+
     const turma_id = insTurma?.[0]?.id ?? null;
     assert(turma_id, "Falha ao criar turma (id não retornado).", 500);
-    logT("criar -> turma_id:", turma_id);
 
     if (temDatas) {
       const insertData = `
         INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
         VALUES ($1, $2, $3, $4)
       `;
+
       for (const d of datasOrdenadas) {
-        await client.query(insertData, [
-          turma_id,
-          d.data,
-          d.horario_inicio || null,
-          d.horario_fim || null,
-        ]);
+        await client.query(insertData, [turma_id, d.data, d.horario_inicio || null, d.horario_fim || null]);
       }
-      logT("criar -> datas gravadas:", datasOrdenadas.length);
-    } else {
-      logT("criar -> criada sem encontros (datas_turma).");
     }
 
     if (Array.isArray(instrutores) && instrutores.length > 0) {
-      for (const instrutorId of instrutores) {
-        const iid = toIntOrNull(instrutorId);
-        if (!iid) continue;
+      const normalizados = [...new Set(instrutores.map(toIntOrNull).filter(Boolean))];
+
+      for (const iid of normalizados) {
         await client.query(
-          `INSERT INTO turma_instrutor (turma_id, instrutor_id)
-           VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+          `
+          INSERT INTO turma_instrutor (turma_id, instrutor_id)
+          VALUES ($1,$2)
+          ON CONFLICT DO NOTHING
+          `,
           [turma_id, iid]
         );
       }
-      logT("criar -> instrutores vinculados:", instrutores.length);
     }
 
     if (instrutor_assinante_id != null) {
       await setAssinanteSilencioso(client, turma_id, instrutor_assinante_id);
       await marcarAssinanteEmTurmaInstrutor(client, turma_id, instrutor_assinante_id);
-      logT("criar -> assinante set:", instrutor_assinante_id);
     }
 
     await client.query("COMMIT");
+
+    logT("[RID=%s] criar OK", rid, {
+      turma_id,
+      evento_id: eventoId,
+      nome: String(nome).trim(),
+      datas: datasOrdenadas.length,
+    });
+
     return res.status(201).json({ turma_id });
   } catch (e) {
-    try { await client.query("ROLLBACK"); } catch {}
-    errT("criar erro:", e);
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+
+    errT(`[RID=${rid}] criar erro:`, e);
     return res.status(e.status || 500).json({ erro: e.message || "Erro ao criar turma." });
   } finally {
-    try { client.release?.(); } catch {}
+    try {
+      client.release?.();
+    } catch {}
   }
 }
 
 /** PUT /api/turma/:id (parcial; datas opcionais) */
 async function atualizar(req, res) {
+  const rid = reqRid(req);
   const client = await getClient(req);
+
   try {
     const turma_id = toIntOrNull(req.params.id);
     assert(turma_id, "TURMA_ID_INVALIDO");
 
-    const { nome, vagas_total = null, datas, instrutores, instrutor_assinante_id } = req.body || {};
+    const {
+      nome,
+      vagas_total = null,
+      datas,
+      instrutores,
+      instrutor_assinante_id,
+      data_inicio: di_payload,
+      data_fim: df_payload,
+      horario_inicio: hi_payload,
+      horario_fim: hf_payload,
+    } = req.body || {};
 
-    logT("atualizar:", {
+    logT("[RID=%s] atualizar", rid, {
       turma_id,
       bodyKeys: Object.keys(req.body || {}),
       datasCount: Array.isArray(datas) ? datas.length : "(nao enviado)",
@@ -345,6 +618,11 @@ async function atualizar(req, res) {
         recebido: len(nome),
         mensagem: `O nome da turma pode ter no máximo ${LIMITE_NOME_TURMA} caracteres (recebido: ${len(nome)}).`,
       });
+    }
+
+    const vagasTotalInt = vagas_total == null || vagas_total === "" ? null : toIntOrNull(vagas_total);
+    if (vagas_total != null && vagas_total !== "") {
+      assert(vagasTotalInt && vagasTotalInt > 0, "vagas_total deve ser maior que zero.");
     }
 
     const veioDatas = Array.isArray(datas) && datas.length > 0;
@@ -366,9 +644,45 @@ async function atualizar(req, res) {
       horario_inicio = datasOrdenadas[0]?.horario_inicio || null;
       horario_fim = datasOrdenadas[0]?.horario_fim || null;
       carga_int = Math.round(somaHorasDatas(datasOrdenadas));
+    } else if (
+      di_payload !== undefined ||
+      df_payload !== undefined ||
+      hi_payload !== undefined ||
+      hf_payload !== undefined
+    ) {
+      if (di_payload != null) assert(isISODate(di_payload), "data_inicio deve ser YYYY-MM-DD.");
+      if (df_payload != null) assert(isISODate(df_payload), "data_fim deve ser YYYY-MM-DD.");
+      if (hi_payload != null) assert(isHHMM(hi_payload), "horario_inicio deve ser HH:MM.");
+      if (hf_payload != null) assert(isHHMM(hf_payload), "horario_fim deve ser HH:MM.");
+
+      if (di_payload && df_payload) {
+        assert(String(df_payload) >= String(di_payload), "data_fim deve ser maior ou igual a data_inicio.");
+      }
+
+      if (hi_payload && hf_payload) {
+        assert(String(hf_payload) > String(hi_payload), "horario_fim deve ser maior que horario_inicio.");
+      }
+
+      data_inicio = di_payload ?? null;
+      data_fim = df_payload ?? di_payload ?? null;
+      horario_inicio = hi_payload ?? null;
+      horario_fim = hf_payload ?? null;
+      carga_int =
+        hi_payload && hf_payload
+          ? Math.max(0, Math.round((minutesBetween(hi_payload, hf_payload) >= 360
+              ? minutesBetween(hi_payload, hf_payload) - 60
+              : minutesBetween(hi_payload, hf_payload)
+            ) / 60))
+          : null;
     }
 
     await client.query("BEGIN");
+
+    const exists = await client.query(`SELECT id FROM turmas WHERE id = $1 FOR UPDATE`, [turma_id]);
+    if (!exists.rowCount) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ erro: "Turma não encontrada." });
+    }
 
     const setCols = [];
     const params = [turma_id];
@@ -377,201 +691,187 @@ async function atualizar(req, res) {
       setCols.push(`nome = $${params.length + 1}`);
       params.push(String(nome).trim());
     }
+
     if (vagas_total != null) {
       setCols.push(`vagas_total = $${params.length + 1}`);
-      params.push(vagas_total);
+      params.push(vagasTotalInt);
     }
+
     if (veioDatas) {
-      setCols.push(`data_inicio = $${params.length + 1}`); params.push(data_inicio);
-      setCols.push(`data_fim = $${params.length + 1}`);    params.push(data_fim);
-      setCols.push(`horario_inicio = $${params.length + 1}`); params.push(horario_inicio);
-      setCols.push(`horario_fim = $${params.length + 1}`);    params.push(horario_fim);
-      setCols.push(`carga_horaria = $${params.length + 1}`);   params.push(carga_int);
+      setCols.push(`data_inicio = $${params.length + 1}`);
+      params.push(data_inicio);
+
+      setCols.push(`data_fim = $${params.length + 1}`);
+      params.push(data_fim);
+
+      setCols.push(`horario_inicio = $${params.length + 1}`);
+      params.push(horario_inicio);
+
+      setCols.push(`horario_fim = $${params.length + 1}`);
+      params.push(horario_fim);
+
+      setCols.push(`carga_horaria = $${params.length + 1}`);
+      params.push(carga_int);
+    } else if (
+      di_payload !== undefined ||
+      df_payload !== undefined ||
+      hi_payload !== undefined ||
+      hf_payload !== undefined
+    ) {
+      setCols.push(`data_inicio = $${params.length + 1}`);
+      params.push(data_inicio);
+
+      setCols.push(`data_fim = $${params.length + 1}`);
+      params.push(data_fim);
+
+      setCols.push(`horario_inicio = $${params.length + 1}`);
+      params.push(horario_inicio);
+
+      setCols.push(`horario_fim = $${params.length + 1}`);
+      params.push(horario_fim);
+
+      setCols.push(`carga_horaria = $${params.length + 1}`);
+      params.push(carga_int);
     }
 
     if (setCols.length) {
-      const up = await client.query(`UPDATE turmas SET ${setCols.join(", ")} WHERE id = $1`, params);
-      logT("atualizar UPDATE rowCount:", up.rowCount, "| set:", setCols);
-    } else {
-      logT("atualizar: nada para atualizar em turmas.");
+      await client.query(`UPDATE turmas SET ${setCols.join(", ")} WHERE id = $1`, params);
     }
 
     if (veioDatas) {
-      await client.query(`DELETE FROM datas_turma WHERE turma_id=$1`, [turma_id]);
+      await client.query(`DELETE FROM datas_turma WHERE turma_id = $1`, [turma_id]);
+
       const insertData = `
         INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
         VALUES ($1, $2, $3, $4)
       `;
+
       for (const d of datasOrdenadas) {
-        await client.query(insertData, [
-          turma_id,
-          d.data,
-          d.horario_inicio || null,
-          d.horario_fim || null,
-        ]);
+        await client.query(insertData, [turma_id, d.data, d.horario_inicio || null, d.horario_fim || null]);
       }
-      logT("atualizar -> datas regravadas:", datasOrdenadas.length);
     }
 
     if (Array.isArray(instrutores)) {
-      await client.query(`DELETE FROM turma_instrutor WHERE turma_id=$1`, [turma_id]);
-      let added = 0;
-      for (const instrutorId of instrutores) {
-        const iid = toIntOrNull(instrutorId);
-        if (!iid) continue;
+      await client.query(`DELETE FROM turma_instrutor WHERE turma_id = $1`, [turma_id]);
+
+      const normalizados = [...new Set(instrutores.map(toIntOrNull).filter(Boolean))];
+      for (const iid of normalizados) {
         await client.query(
-          `INSERT INTO turma_instrutor (turma_id, instrutor_id)
-           VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+          `
+          INSERT INTO turma_instrutor (turma_id, instrutor_id)
+          VALUES ($1,$2)
+          ON CONFLICT DO NOTHING
+          `,
           [turma_id, iid]
         );
-        added++;
       }
-      logT("atualizar -> instrutores set:", added);
     }
 
     if (instrutor_assinante_id !== undefined) {
       await setAssinanteSilencioso(client, turma_id, instrutor_assinante_id);
       await marcarAssinanteEmTurmaInstrutor(client, turma_id, instrutor_assinante_id);
-      logT("atualizar -> assinante set:", instrutor_assinante_id);
     }
 
     await client.query("COMMIT");
+
+    logT("[RID=%s] atualizar OK", rid, {
+      turma_id,
+      veioDatas,
+      instrutoresAtualizados: Array.isArray(instrutores),
+    });
+
     return res.json({ ok: true });
   } catch (e) {
-    try { await client.query("ROLLBACK"); } catch {}
-    errT("atualizar erro:", e);
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+
+    errT(`[RID=${rid}] atualizar erro:`, e);
     return res.status(e.status || 500).json({ erro: e.message || "Erro ao atualizar turma." });
   } finally {
-    try { client.release?.(); } catch {}
+    try {
+      client.release?.();
+    } catch {}
   }
 }
 
 /** GET /api/turma/:id → turma completa p/ editar */
 async function obter(req, res) {
+  const rid = reqRid(req);
   const turma_id = toIntOrNull(req.params.id);
+
   if (!turma_id) return res.status(400).json({ erro: "TURMA_ID_INVALIDO" });
 
   try {
     const base = await query(
       req,
       `
-      SELECT 
-  t.id,
-  t.evento_id,
-  t.nome,
-  to_char(t.data_inicio::date, 'YYYY-MM-DD') AS data_inicio,
-  to_char(t.data_fim::date,    'YYYY-MM-DD') AS data_fim,
-  to_char(t.horario_inicio, 'HH24:MI') AS horario_inicio,
-  to_char(t.horario_fim,    'HH24:MI') AS horario_fim,
-  t.vagas_total,
-  t.carga_horaria
-FROM turmas t
-WHERE t.id = $1
+      SELECT
+        t.id,
+        t.evento_id,
+        t.nome,
+        to_char(t.data_inicio::date, 'YYYY-MM-DD') AS data_inicio,
+        to_char(t.data_fim::date,    'YYYY-MM-DD') AS data_fim,
+        to_char(t.horario_inicio, 'HH24:MI') AS horario_inicio,
+        to_char(t.horario_fim,    'HH24:MI') AS horario_fim,
+        t.vagas_total,
+        t.carga_horaria
+      FROM turmas t
+      WHERE t.id = $1
       `,
       [turma_id]
     );
 
     if (!base.rowCount) return res.status(404).json({ erro: "Turma não encontrada." });
+
     const t = base.rows[0];
+    const client = await getClient(req);
 
-    const datasResult = await query(
-      req,
-      `
-      SELECT
-        to_char(data::date, 'YYYY-MM-DD') AS data,
-        to_char(horario_inicio, 'HH24:MI') AS horario_inicio,
-        to_char(horario_fim,   'HH24:MI')  AS horario_fim
-      FROM datas_turma
-      WHERE turma_id = $1
-      ORDER BY data
-      `,
-      [turma_id]
-    );
-
-    const datas = datasResult.rows.map((d) => ({
-      data: d.data,
-      horario_inicio: d.horario_inicio || null,
-      horario_fim: d.horario_fim || null,
-    }));
-
-    const instrutoresResult = await query(
-      req,
-      `
-      SELECT u.id, u.nome, u.email
-      FROM turma_instrutor ti
-      JOIN usuarios u ON u.id = ti.instrutor_id
-      WHERE ti.turma_id = $1
-      ORDER BY u.nome
-      `,
-      [turma_id]
-    );
-
-    let assinante_por_vinculo = null;
     try {
-      const assinTI = await query(
-        req,
-        `
-        SELECT u.id, u.nome
-        FROM turma_instrutor ti
-        JOIN usuarios u ON u.id = ti.instrutor_id
-        WHERE ti.turma_id = $1 AND ti.is_assinante = TRUE
-        LIMIT 1
-        `,
-        [turma_id]
-      );
-      assinante_por_vinculo = assinTI.rows?.[0] || null;
-    } catch (_) {}
+      const datas = await carregarDatasDaTurma(client, turma_id);
+      const instrutores = await carregarInstrutoresDaTurma(client, turma_id);
+      const assinante = await getAssinanteDaTurma(client, turma_id);
 
-    return res.json({
-      ...t,
-      instrutor_assinante_id: assinante_por_vinculo?.id ?? null,
-      assinante_id: assinante_por_vinculo?.id ?? null,
-      assinante_nome: assinante_por_vinculo?.nome ?? null,
-      assinante_por_vinculo,
-      datas,
-      instrutores: instrutoresResult.rows,
-    });
+      const payload = resumirTurmaComDatas(t, datas, instrutores, assinante);
+
+      logT("[RID=%s] obter OK", rid, {
+        turma_id,
+        datas: payload.datas.length,
+        instrutores: payload.instrutores.length,
+      });
+
+      return res.json(payload);
+    } finally {
+      try {
+        client.release?.();
+      } catch {}
+    }
   } catch (err) {
-    errT("obter erro:", err);
+    errT(`[RID=${rid}] obter erro:`, err);
     return res.status(500).json({ erro: "Erro ao obter turma." });
   }
 }
 
 /** GET /api/turma/:id/datas */
 async function listarData(req, res) {
+  const rid = reqRid(req);
   const turmaId = toIntOrNull(req.params.id);
+
   if (!turmaId) return res.status(400).json({ erro: "TURMA_ID_INVALIDO" });
 
   try {
-    const { rows } = await query(
-      req,
-      `
-      SELECT 
-        to_char(data::date, 'YYYY-MM-DD') AS data,
-        to_char(horario_inicio, 'HH24:MI') AS horario_inicio,
-        to_char(horario_fim,   'HH24:MI')  AS horario_fim
-      FROM datas_turma
-      WHERE turma_id = $1
-      ORDER BY data
-      `,
-      [turmaId]
-    );
-
-    const datas = rows.map((r) => ({
-      data: r.data,
-      horario_inicio: r.horario_inicio || null,
-      horario_fim: r.horario_fim || null,
-    }));
-
+    const datas = await carregarDatasDaTurma(req, turmaId);
+    logT("[RID=%s] listarData OK", rid, { turmaId, total: datas.length });
     return res.json(datas);
   } catch (err) {
-    errT("listarData erro:", err);
+    errT(`[RID=${rid}] listarData erro:`, err);
     return res.status(500).json({ erro: "Erro ao buscar datas da turma." });
   }
 }
 
 /** POST /api/turma/:id/instrutor */
 async function adicionarInstrutor(req, res) {
+  const rid = reqRid(req);
   const turma_id = toIntOrNull(req.params.id);
   const instrutores = req.body?.instrutores;
 
@@ -584,37 +884,42 @@ async function adicionarInstrutor(req, res) {
     const t = await query(req, `SELECT id FROM turmas WHERE id = $1`, [turma_id]);
     if (!t.rowCount) return res.status(404).json({ erro: "Turma não encontrada." });
 
+    const normalizados = [...new Set(instrutores.map(toIntOrNull).filter(Boolean))];
     let added = 0;
-    for (const instrutor_id of instrutores) {
-      const iid = toIntOrNull(instrutor_id);
-      if (!iid) continue;
+
+    for (const iid of normalizados) {
       await query(
         req,
-        `INSERT INTO turma_instrutor (turma_id, instrutor_id)
-         VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        `
+        INSERT INTO turma_instrutor (turma_id, instrutor_id)
+        VALUES ($1, $2)
+        ON CONFLICT DO NOTHING
+        `,
         [turma_id, iid]
       );
       added++;
     }
 
-    logT("adicionarInstrutor -> adições:", added);
+    logT("[RID=%s] adicionarInstrutor OK", rid, { turma_id, added });
     return res.status(201).json({ mensagem: "Instrutor(es) adicionados à turma com sucesso." });
   } catch (err) {
-    errT("adicionarInstrutor erro:", err);
+    errT(`[RID=${rid}] adicionarInstrutor erro:`, err);
     return res.status(500).json({ erro: "Erro ao adicionar instrutor à turma." });
   }
 }
 
 /** GET /api/evento/:evento_id/turma (com datas e instrutores) */
 async function listarPorEvento(req, res) {
+  const rid = reqRid(req);
   const evento_id = toIntOrNull(req.params.evento_id);
+
   if (!evento_id) return res.status(400).json({ erro: "EVENTO_ID_INVALIDO" });
 
   try {
     const turmasResult = await query(
       req,
       `
-      SELECT 
+      SELECT
         t.id,
         t.nome,
         to_char(t.data_inicio::date, 'YYYY-MM-DD') AS data_inicio,
@@ -632,7 +937,7 @@ async function listarPorEvento(req, res) {
       [evento_id]
     );
 
-    const turmas = turmasResult.rows;
+    const turmas = turmasResult.rows || [];
     if (!turmas.length) return res.json([]);
 
     const turmaIds = turmas.map((t) => t.id);
@@ -653,7 +958,7 @@ async function listarPorEvento(req, res) {
     );
 
     const datasPorTurma = {};
-    for (const r of datasResult.rows) {
+    for (const r of datasResult.rows || []) {
       if (!datasPorTurma[r.turma_id]) datasPorTurma[r.turma_id] = [];
       datasPorTurma[r.turma_id].push({
         data: r.data,
@@ -675,7 +980,7 @@ async function listarPorEvento(req, res) {
     );
 
     const instrPorTurma = {};
-    for (const r of instrutoresResult.rows) {
+    for (const r of instrutoresResult.rows || []) {
       if (!instrPorTurma[r.turma_id]) instrPorTurma[r.turma_id] = [];
       instrPorTurma[r.turma_id].push({ id: r.id, nome: r.nome, email: r.email });
     }
@@ -683,190 +988,145 @@ async function listarPorEvento(req, res) {
     const resposta = turmas
       .map((t) => {
         const datas = datasPorTurma[t.id] || [];
-        const carga_horaria_real = somaHorasDatas(datas);
-
-        const min = datas[0]?.data || t.data_inicio || null;
-        const max = datas[datas.length - 1]?.data || t.data_fim || null;
-
-        const hiModa = moda(datas.map((d) => d.horario_inicio).filter(Boolean));
-        const hfModa = moda(datas.map((d) => d.horario_fim).filter(Boolean));
-
-        return {
+        const baseTurma = {
           id: t.id,
           nome: t.nome,
           evento_titulo: t.evento_titulo,
-          data_inicio: min,
-          data_fim: max,
-          horario_inicio: hiModa || t.horario_inicio || null,
-          horario_fim: hfModa || t.horario_fim || null,
+          data_inicio: t.data_inicio || null,
+          data_fim: t.data_fim || null,
+          horario_inicio: t.horario_inicio || null,
+          horario_fim: t.horario_fim || null,
           vagas_total: Number(t.vagas_total ?? 0),
           carga_horaria: t.carga_horaria,
-          carga_horaria_real,
-          datas,
-          instrutores: instrPorTurma[t.id] || [],
         };
+
+        return resumirTurmaComDatas(baseTurma, datas, instrPorTurma[t.id] || [], null);
       })
       .sort((a, b) => String(a.data_inicio || "").localeCompare(String(b.data_inicio || "")));
 
+    logT("[RID=%s] listarPorEvento OK", rid, { evento_id, total: resposta.length });
     return res.json(resposta);
   } catch (err) {
-    errT("listarPorEvento erro:", err);
+    errT(`[RID=${rid}] listarPorEvento erro:`, err);
     return res.status(500).json({ erro: "Erro ao buscar turmas." });
   }
 }
 
 /** GET /api/evento/:evento_id/turma-simples (legado) */
 async function listarPorEventoSimples(req, res) {
+  const rid = reqRid(req);
   const evento_id = toIntOrNull(req.params.evento_id);
+
   if (!evento_id) return res.status(400).json({ erro: "EVENTO_ID_INVALIDO" });
 
   try {
-    const { rows } = await query(
-      req,
-      `
-      SELECT 
-        t.id,
-        t.nome,
-        to_char(t.data_inicio::date, 'YYYY-MM-DD') AS data_inicio,
-        to_char(t.data_fim::date,    'YYYY-MM-DD') AS data_fim,
-        to_char(t.horario_inicio, 'HH24:MI') AS horario_inicio,
-        to_char(t.horario_fim,    'HH24:MI') AS horario_fim,
-        t.vagas_total,
-        t.carga_horaria,
-        t.instrutor_assinante_id
-      FROM turmas t
-      WHERE t.evento_id = $1
-      ORDER BY t.data_inicio NULLS LAST, t.horario_inicio NULLS LAST
-      `,
-      [evento_id]
-    );
+    const client = await getClient(req);
 
-    const turmaIds = rows.map((t) => t.id);
-    if (!turmaIds.length) return res.json([]);
+    try {
+      const { rows } = await client.query(
+        `
+        SELECT
+          t.id,
+          t.nome,
+          to_char(t.data_inicio::date, 'YYYY-MM-DD') AS data_inicio,
+          to_char(t.data_fim::date,    'YYYY-MM-DD') AS data_fim,
+          to_char(t.horario_inicio, 'HH24:MI') AS horario_inicio,
+          to_char(t.horario_fim,    'HH24:MI') AS horario_fim,
+          t.vagas_total,
+          t.carga_horaria,
+          e.titulo AS evento_titulo
+        FROM turmas t
+        JOIN eventos e ON e.id = t.evento_id
+        WHERE t.evento_id = $1
+        ORDER BY t.data_inicio NULLS LAST, t.horario_inicio NULLS LAST, t.id
+        `,
+        [evento_id]
+      );
 
-    const datasResult = await query(
-      req,
-      `
-      SELECT
-        turma_id,
-        to_char(data::date, 'YYYY-MM-DD') AS data,
-        to_char(horario_inicio, 'HH24:MI') AS horario_inicio,
-        to_char(horario_fim,   'HH24:MI')  AS horario_fim
-      FROM datas_turma
-      WHERE turma_id = ANY($1::int[])
-      ORDER BY turma_id, data
-      `,
-      [turmaIds]
-    );
+      const resposta = [];
+      for (const t of rows || []) {
+        const datas = await carregarDatasDaTurma(client, t.id);
+        const instrutores = await carregarInstrutoresDaTurma(client, t.id);
+        const assinante = await getAssinanteDaTurma(client, t.id);
 
-    const datasPorTurma = {};
-    for (const d of datasResult.rows) {
-      if (!datasPorTurma[d.turma_id]) datasPorTurma[d.turma_id] = [];
-      datasPorTurma[d.turma_id].push({
-        data: d.data,
-        horario_inicio: d.horario_inicio || null,
-        horario_fim: d.horario_fim || null,
-      });
+        const baseTurma = {
+          id: t.id,
+          nome: t.nome,
+          evento_titulo: t.evento_titulo,
+          data_inicio: t.data_inicio || null,
+          data_fim: t.data_fim || null,
+          horario_inicio: t.horario_inicio || null,
+          horario_fim: t.horario_fim || null,
+          vagas_total: Number(t.vagas_total ?? 0),
+          carga_horaria: t.carga_horaria,
+        };
+
+        const resumida = resumirTurmaComDatas(baseTurma, datas, instrutores, assinante);
+
+        resposta.push({
+          ...resumida,
+          encontros: resumida.datas.map((d) => ({
+            data: d.data,
+            inicio: d.horario_inicio || resumida.horario_inicio || null,
+            fim: d.horario_fim || resumida.horario_fim || null,
+          })),
+          qtd_encontros: resumida.datas.length,
+        });
+      }
+
+      logT("[RID=%s] listarPorEventoSimples OK", rid, { evento_id, total: resposta.length });
+      return res.json(resposta);
+    } finally {
+      try {
+        client.release?.();
+      } catch {}
     }
-
-    const instrutoresResult = await query(
-      req,
-      `
-      SELECT ti.turma_id, u.id, u.nome
-      FROM turma_instrutor ti
-      JOIN usuarios u ON u.id = ti.instrutor_id
-      WHERE ti.turma_id = ANY($1::int[])
-      ORDER BY ti.turma_id, u.nome
-      `,
-      [turmaIds]
-    );
-
-    const instrPorTurma = {};
-    for (const r of instrutoresResult.rows) {
-      if (!instrPorTurma[r.turma_id]) instrPorTurma[r.turma_id] = [];
-      instrPorTurma[r.turma_id].push({ id: r.id, nome: r.nome });
-    }
-
-    const resposta = rows.map((t) => {
-      const datas = datasPorTurma[t.id] || [];
-
-      const encontros = datas.map((d) => ({
-        data: d.data,
-        inicio: d.horario_inicio || t.horario_inicio || null,
-        fim: d.horario_fim || t.horario_fim || null,
-      }));
-
-      const hiModa = moda(datas.map((d) => d.horario_inicio).filter(Boolean));
-      const hfModa = moda(datas.map((d) => d.horario_fim).filter(Boolean));
-
-      return {
-        id: t.id,
-        nome: t.nome,
-        data_inicio: t.data_inicio || null,
-        data_fim: t.data_fim || null,
-        horario_inicio: hiModa || t.horario_inicio || null,
-        horario_fim: hfModa || t.horario_fim || null,
-        vagas_total: Number(t.vagas_total ?? 0),
-        carga_horaria: t.carga_horaria,
-        datas,
-        encontros,
-        instrutores: instrPorTurma[t.id] || [],
-        qtd_encontros: datas.length,
-        instrutor_assinante_id: t.instrutor_assinante_id ?? null,
-        assinante_id: t.instrutor_assinante_id ?? null,
-      };
-    });
-
-    return res.json(resposta);
   } catch (err) {
-    errT("listarPorEventoSimples erro:", err);
+    errT(`[RID=${rid}] listarPorEventoSimples erro:`, err);
     return res.status(500).json({ erro: "Erro ao buscar turmas do evento." });
   }
 }
 
 /** GET /api/turma/:id/instrutor */
 async function listarInstrutor(req, res) {
+  const rid = reqRid(req);
   const turma_id = toIntOrNull(req.params.id);
+
   if (!turma_id) return res.status(400).json({ erro: "TURMA_ID_INVALIDO" });
 
   try {
     const t = await query(req, `SELECT id FROM turmas WHERE id = $1`, [turma_id]);
     if (!t.rowCount) return res.status(404).json({ erro: "Turma não encontrada." });
 
-    const resultado = await query(
-      req,
-      `
-      SELECT u.id, u.nome, u.email
-      FROM turma_instrutor ti
-      JOIN usuarios u ON ti.instrutor_id = u.id
-      WHERE ti.turma_id = $1
-      ORDER BY u.nome
-      `,
-      [turma_id]
-    );
+    const resultado = await carregarInstrutoresDaTurma(req, turma_id);
 
-    return res.json(resultado.rows);
+    logT("[RID=%s] listarInstrutor OK", rid, { turma_id, total: resultado.length });
+    return res.json(resultado);
   } catch (err) {
-    errT("listarInstrutor erro:", err);
+    errT(`[RID=${rid}] listarInstrutor erro:`, err);
     return res.status(500).json({ erro: "Erro ao listar instrutor(es) da turma." });
   }
 }
 
 async function obterDetalhe(req, res) {
+  const rid = reqRid(req);
   const turmaId = toIntOrNull(req.params.id);
+
   if (!turmaId) return res.status(400).json({ erro: "TURMA_ID_INVALIDO" });
 
   try {
     const resultado = await query(
       req,
       `
-      SELECT 
+      SELECT
         e.titulo AS titulo_evento,
         COALESCE(
-          (SELECT string_agg(DISTINCT u.nome, ', ' ORDER BY u.nome)
-           FROM turma_instrutor ti
-           JOIN usuarios u ON u.id = ti.instrutor_id
-           WHERE ti.turma_id = t.id),
+          (
+            SELECT string_agg(DISTINCT u.nome, ', ' ORDER BY u.nome)
+            FROM turma_instrutor ti
+            JOIN usuarios u ON u.id = ti.instrutor_id
+            WHERE ti.turma_id = t.id
+          ),
           'Instrutor não definido'
         ) AS nome_instrutor
       FROM turmas t
@@ -877,25 +1137,35 @@ async function obterDetalhe(req, res) {
     );
 
     if (!resultado.rowCount) return res.status(404).json({ erro: "Turma não encontrada." });
+
+    logT("[RID=%s] obterDetalhe OK", rid, { turmaId });
     return res.json(resultado.rows[0]);
   } catch (err) {
-    errT("obterDetalhe erro:", err);
+    errT(`[RID=${rid}] obterDetalhe erro:`, err);
     return res.status(500).json({ erro: "Erro ao obter detalhes da turma." });
   }
 }
 
 async function listarComUsuario(req, res) {
+  const rid = reqRid(req);
+
   try {
+    const inscrTable = await resolveInscricaoTable(req);
+
     const turmasResult = await query(
       req,
       `
-      SELECT t.id, t.nome, t.evento_id, e.titulo AS titulo_evento
+      SELECT
+        t.id,
+        t.nome,
+        t.evento_id,
+        e.titulo AS titulo_evento
       FROM turmas t
       JOIN eventos e ON e.id = t.evento_id
       `
     );
 
-    const turmas = turmasResult.rows;
+    const turmas = turmasResult.rows || [];
     if (!turmas.length) return res.json([]);
 
     const turmaIds = turmas.map((t) => t.id);
@@ -913,7 +1183,7 @@ async function listarComUsuario(req, res) {
 
     const minDataPorTurma = {};
     const maxDataPorTurma = {};
-    for (const r of datasResult.rows) {
+    for (const r of datasResult.rows || []) {
       if (!minDataPorTurma[r.turma_id]) minDataPorTurma[r.turma_id] = r.data;
       maxDataPorTurma[r.turma_id] = r.data;
     }
@@ -923,19 +1193,20 @@ async function listarComUsuario(req, res) {
       inscritosResult = await query(
         req,
         `
-        SELECT 
+        SELECT
           i.turma_id,
           u.id AS usuario_id,
           u.nome,
           u.email,
           u.cpf,
           EXISTS (
-            SELECT 1 FROM presencas p
+            SELECT 1
+            FROM presencas p
             WHERE p.usuario_id = u.id
               AND p.turma_id = i.turma_id
               AND p.presente = TRUE
           ) AS presente
-        FROM inscricoes i
+        FROM ${inscrTable} i
         JOIN usuarios u ON u.id = i.usuario_id
         WHERE i.turma_id = ANY($1::int[])
         ORDER BY u.nome
@@ -943,12 +1214,12 @@ async function listarComUsuario(req, res) {
         [turmaIds]
       );
     } catch (e) {
-      warnT("listarComUsuario: fallback sem presencas/presente", e?.code);
+      warnT(`[RID=${rid}] listarComUsuario fallback sem presencas/presente`, e?.code);
       inscritosResult = await query(
         req,
         `
         SELECT i.turma_id, u.id AS usuario_id, u.nome, u.email, u.cpf, FALSE AS presente
-        FROM inscricoes i
+        FROM ${inscrTable} i
         JOIN usuarios u ON u.id = i.usuario_id
         WHERE i.turma_id = ANY($1::int[])
         ORDER BY u.nome
@@ -958,7 +1229,7 @@ async function listarComUsuario(req, res) {
     }
 
     const inscritosPorTurma = {};
-    for (const row of inscritosResult.rows) {
+    for (const row of inscritosResult.rows || []) {
       if (!inscritosPorTurma[row.turma_id]) inscritosPorTurma[row.turma_id] = [];
       inscritosPorTurma[row.turma_id].push({
         id: row.usuario_id,
@@ -981,37 +1252,45 @@ async function listarComUsuario(req, res) {
       }))
       .sort((a, b) => String(b.data_inicio || "").localeCompare(String(a.data_inicio || "")));
 
+    logT("[RID=%s] listarComUsuario OK", rid, {
+      total_turmas: resposta.length,
+      inscrTable,
+    });
+
     return res.json(resposta);
   } catch (err) {
-    errT("listarComUsuario erro:", err);
+    errT(`[RID=${rid}] listarComUsuario erro:`, err);
     return res.status(500).json({ erro: "Erro interno ao buscar turmas com usuarios." });
   }
 }
 
 /** DELETE /api/turma/:id */
 async function excluir(req, res) {
+  const rid = reqRid(req);
   const turmaId = toIntOrNull(req.params.id);
+
   if (!turmaId) return res.status(400).json({ erro: "TURMA_ID_INVALIDO" });
 
   const client = await getClient(req);
+
   try {
+    const inscrTable = await resolveInscricaoTable(client);
+
     await client.query("BEGIN");
 
-    const checkTurma = await client.query(`SELECT id FROM turmas WHERE id = $1`, [turmaId]);
+    const checkTurma = await client.query(`SELECT id FROM turmas WHERE id = $1 FOR UPDATE`, [turmaId]);
     if (!checkTurma.rowCount) {
       await client.query("ROLLBACK");
       return res.status(404).json({ erro: "Turma não encontrada." });
     }
 
-    const { rows: [agg] } = await client.query(
-      `
+    const aggSql = `
       SELECT
         (SELECT COUNT(*)::int FROM presencas    WHERE turma_id = $1) AS presencas,
         (SELECT COUNT(*)::int FROM certificados WHERE turma_id = $1) AS certificados,
-        (SELECT COUNT(*)::int FROM inscricoes   WHERE turma_id = $1) AS inscricao
-      `,
-      [turmaId]
-    );
+        (SELECT COUNT(*)::int FROM ${inscrTable} WHERE turma_id = $1) AS inscricao
+    `;
+    const { rows: [agg] } = await client.query(aggSql, [turmaId]);
 
     if ((agg?.presencas ?? 0) > 0 || (agg?.certificados ?? 0) > 0) {
       await client.query("ROLLBACK");
@@ -1023,26 +1302,28 @@ async function excluir(req, res) {
     }
 
     if ((agg?.inscricao ?? 0) > 0) {
-      await client.query(`DELETE FROM inscricoes WHERE turma_id = $1`, [turmaId]);
+      await client.query(`DELETE FROM ${inscrTable} WHERE turma_id = $1`, [turmaId]);
     }
 
     await client.query(`DELETE FROM turma_instrutor WHERE turma_id = $1`, [turmaId]);
-    try { await client.query(`DELETE FROM datas_turma WHERE turma_id = $1`, [turmaId]); } catch (_) {}
-
-    const delTurma = await client.query(`DELETE FROM turmas WHERE id = $1`, [turmaId]);
-    if (!delTurma.rowCount) {
-      await client.query("ROLLBACK");
-      return res.status(404).json({ erro: "Turma não encontrada." });
-    }
+    await client.query(`DELETE FROM datas_turma WHERE turma_id = $1`, [turmaId]).catch(() => {});
+    await client.query(`DELETE FROM turmas WHERE id = $1`, [turmaId]);
 
     await client.query("COMMIT");
+
+    logT("[RID=%s] excluir OK", rid, { turmaId });
     return res.json({ ok: true, mensagem: "Turma excluída com sucesso.", turma_id: turmaId });
   } catch (err) {
-    errT("excluir erro:", err);
-    try { await client.query("ROLLBACK"); } catch {}
+    errT(`[RID=${rid}] excluir erro:`, err);
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+
     return res.status(500).json({ erro: "Erro ao excluir turma." });
   } finally {
-    try { client.release?.(); } catch {}
+    try {
+      client.release?.();
+    } catch {}
   }
 }
 
@@ -1051,74 +1332,85 @@ async function excluir(req, res) {
    GET /api/administrador/turma
 ========================================================= */
 async function listarAdmin(req, res) {
+  const rid = reqRid(req);
   const db = getDb(req);
 
   try {
+    const inscrTable = await resolveInscricaoTable(db);
+
     const sql = `
       WITH instrutores_por_turma AS (
-  SELECT
-    t.id AS turma_id,
-    COALESCE(
-      json_agg(DISTINCT jsonb_build_object('id', u.id, 'nome', u.nome))
-        FILTER (WHERE u.id IS NOT NULL),
-      '[]'::json
-    ) AS instrutores
-  FROM turmas t
-  LEFT JOIN turma_instrutor ti ON ti.turma_id = t.id
-  LEFT JOIN evento_instrutor ei ON ei.evento_id = t.evento_id
-  LEFT JOIN usuarios u ON u.id = COALESCE(ti.instrutor_id, ei.instrutor_id)
-  GROUP BY t.id
-),
-inscricao_por_turma AS (
-  SELECT i.turma_id, COUNT(DISTINCT i.id)::int AS vagas_ocupadas
-  FROM inscricoes i
-  GROUP BY i.turma_id
-)
-SELECT
-  t.id,
-  t.nome,
-  to_char(t.data_inicio, 'YYYY-MM-DD') AS data_inicio,
-  to_char(t.data_fim,    'YYYY-MM-DD') AS data_fim,
+        SELECT
+          t.id AS turma_id,
+          COALESCE(
+            json_agg(DISTINCT jsonb_build_object('id', u.id, 'nome', u.nome))
+              FILTER (WHERE u.id IS NOT NULL),
+            '[]'::json
+          ) AS instrutores
+        FROM turmas t
+        LEFT JOIN turma_instrutor ti ON ti.turma_id = t.id
+        LEFT JOIN evento_instrutor ei ON ei.evento_id = t.evento_id
+        LEFT JOIN usuarios u ON u.id = COALESCE(ti.instrutor_id, ei.instrutor_id)
+        GROUP BY t.id
+      ),
+      inscricao_por_turma AS (
+        SELECT i.turma_id, COUNT(DISTINCT i.id)::int AS vagas_ocupadas
+        FROM ${inscrTable} i
+        GROUP BY i.turma_id
+      )
+      SELECT
+        t.id,
+        t.nome,
+        to_char(t.data_inicio, 'YYYY-MM-DD') AS data_inicio,
+        to_char(t.data_fim,    'YYYY-MM-DD') AS data_fim,
 
-  to_char(COALESCE(t.horario_inicio, '08:00'::time), 'HH24:MI') AS horario_inicio,
-  to_char(COALESCE(t.horario_fim,    '17:00'::time), 'HH24:MI') AS horario_fim,
+        to_char(COALESCE(t.horario_inicio, '08:00'::time), 'HH24:MI') AS horario_inicio,
+        to_char(COALESCE(t.horario_fim,    '17:00'::time), 'HH24:MI') AS horario_fim,
 
-  (
-    to_char(COALESCE(t.horario_inicio, '08:00'::time), 'HH24:MI')
-    || ' - ' ||
-    to_char(COALESCE(t.horario_fim,    '17:00'::time), 'HH24:MI')
-  ) AS horario,
+        (
+          to_char(COALESCE(t.horario_inicio, '08:00'::time), 'HH24:MI')
+          || ' - ' ||
+          to_char(COALESCE(t.horario_fim,    '17:00'::time), 'HH24:MI')
+        ) AS horario,
 
-  t.vagas_total::int AS vagas_total,
-  COALESCE(ip.vagas_ocupadas, 0) AS vagas_ocupadas,
+        t.vagas_total::int AS vagas_total,
+        COALESCE(ip.vagas_ocupadas, 0) AS vagas_ocupadas,
 
-  e.id     AS evento_id,
-  e.titulo AS evento_titulo,
+        e.id     AS evento_id,
+        e.titulo AS evento_titulo,
 
-  COALESCE(it.instrutores, '[]'::json) AS instrutores,
+        COALESCE(it.instrutores, '[]'::json) AS instrutores,
 
-  CASE
-    WHEN now() < (t.data_inicio::timestamp + COALESCE(t.horario_inicio, '08:00'::time)) THEN 'programado'
-    WHEN now() > (t.data_fim::timestamp    + COALESCE(t.horario_fim,    '17:00'::time)) THEN 'encerrado'
-    ELSE 'andamento'
-  END AS status
+        CASE
+          WHEN (NOW() AT TIME ZONE '${TZ}') < (t.data_inicio::timestamp + COALESCE(t.horario_inicio, '08:00'::time)) THEN 'programado'
+          WHEN (NOW() AT TIME ZONE '${TZ}') > (t.data_fim::timestamp + COALESCE(t.horario_fim,    '17:00'::time)) THEN 'encerrado'
+          ELSE 'andamento'
+        END AS status
 
-FROM turmas t
-JOIN eventos e ON e.id = t.evento_id
-LEFT JOIN instrutores_por_turma it ON it.turma_id = t.id
-LEFT JOIN inscricao_por_turma ip ON ip.turma_id = t.id
-ORDER BY t.data_inicio ASC, COALESCE(t.horario_inicio, '08:00'::time) ASC, t.id ASC;
+      FROM turmas t
+      JOIN eventos e ON e.id = t.evento_id
+      LEFT JOIN instrutores_por_turma it ON it.turma_id = t.id
+      LEFT JOIN inscricao_por_turma ip ON ip.turma_id = t.id
+      ORDER BY t.data_inicio ASC, COALESCE(t.horario_inicio, '08:00'::time) ASC, t.id ASC;
     `;
 
     const { rows } = await db.query(sql);
+
+    logT("[RID=%s] listarAdmin OK", rid, {
+      total: rows?.length || 0,
+      inscrTable,
+      now_sp: nowYMDHMS(),
+    });
+
     return res.status(200).json(rows || []);
   } catch (error) {
     console.error("[turmaController][listarAdmin] Erro ao carregar turmas:", {
-      rid: req?.requestId,
+      rid,
       message: error?.message,
       code: error?.code,
       detail: error?.detail,
     });
+
     return res.status(500).json({
       erro: "Erro ao buscar turmas para o painel administrador.",
       requestId: res.getHeader?.("X-Request-Id"),
@@ -1130,7 +1422,7 @@ ORDER BY t.data_inicio ASC, COALESCE(t.horario_inicio, '08:00'::time) ASC, t.id 
    EXPORTS (singular) + aliases retrocompat
 ========================================================= */
 module.exports = {
-  // ✅ singular (novo padrão)
+  // padrão singular
   criar,
   atualizar,
   excluir,
@@ -1144,7 +1436,7 @@ module.exports = {
   listarComUsuario,
   listarAdmin,
 
-  // ♻️ aliases (retrocompat com seus nomes atuais)
+  // aliases retrocompat
   criarTurma: criar,
   atualizarTurma: atualizar,
   editarTurma: atualizar,

@@ -697,37 +697,36 @@ async function listarEventos(req, res) {
       (SELECT MIN(t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id) AS horario_inicio_geral,
       (SELECT MAX(t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
       CASE
-        CASE
-  WHEN CURRENT_TIMESTAMP::timestamp < COALESCE(
-    (
-      SELECT MIN(dt.data::date + COALESCE(dt.horario_inicio, '00:00'::time))
-      FROM turmas t
-      JOIN datas_turma dt ON dt.turma_id = t.id
-      WHERE t.evento_id = e.id
-    ),
-    (
-      SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time, '00:00'::time))
-      FROM turmas t
-      WHERE t.evento_id = e.id
-    )
-  ) THEN 'programado'
+        WHEN CURRENT_TIMESTAMP::timestamp < COALESCE(
+          (
+            SELECT MIN(dt.data::date + COALESCE(dt.horario_inicio, '00:00'::time))
+            FROM turmas t
+            JOIN datas_turma dt ON dt.turma_id = t.id
+            WHERE t.evento_id = e.id
+          ),
+          (
+            SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time, '00:00'::time))
+            FROM turmas t
+            WHERE t.evento_id = e.id
+          )
+        ) THEN 'programado'
 
-  WHEN CURRENT_TIMESTAMP::timestamp <= COALESCE(
-    (
-      SELECT MAX(dt.data::date + COALESCE(dt.horario_fim, '23:59'::time))
-      FROM turmas t
-      JOIN datas_turma dt ON dt.turma_id = t.id
-      WHERE t.evento_id = e.id
-    ),
-    (
-      SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
-      FROM turmas t
-      WHERE t.evento_id = e.id
-    )
-  ) THEN 'andamento'
+        WHEN CURRENT_TIMESTAMP::timestamp <= COALESCE(
+          (
+            SELECT MAX(dt.data::date + COALESCE(dt.horario_fim, '23:59'::time))
+            FROM turmas t
+            JOIN datas_turma dt ON dt.turma_id = t.id
+            WHERE t.evento_id = e.id
+          ),
+          (
+            SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
+            FROM turmas t
+            WHERE t.evento_id = e.id
+          )
+        ) THEN 'andamento'
 
-  ELSE 'encerrado'
-END AS status
+        ELSE 'encerrado'
+      END AS status,
       (
         SELECT COUNT(*) > 0
         FROM inscricoes i
@@ -770,37 +769,36 @@ END AS status
     (SELECT MAX(t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
 
     CASE
-      CASE
-  WHEN CURRENT_TIMESTAMP::timestamp < COALESCE(
-    (
-      SELECT MIN(dt.data::date + COALESCE(dt.horario_inicio, '00:00'::time))
-      FROM turmas t
-      JOIN datas_turma dt ON dt.turma_id = t.id
-      WHERE t.evento_id = e.id
-    ),
-    (
-      SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time, '00:00'::time))
-      FROM turmas t
-      WHERE t.evento_id = e.id
-    )
-  ) THEN 'programado'
+      WHEN CURRENT_TIMESTAMP::timestamp < COALESCE(
+        (
+          SELECT MIN(dt.data::date + COALESCE(dt.horario_inicio, '00:00'::time))
+          FROM turmas t
+          JOIN datas_turma dt ON dt.turma_id = t.id
+          WHERE t.evento_id = e.id
+        ),
+        (
+          SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time, '00:00'::time))
+          FROM turmas t
+          WHERE t.evento_id = e.id
+        )
+      ) THEN 'programado'
 
-  WHEN CURRENT_TIMESTAMP::timestamp <= COALESCE(
-    (
-      SELECT MAX(dt.data::date + COALESCE(dt.horario_fim, '23:59'::time))
-      FROM turmas t
-      JOIN datas_turma dt ON dt.turma_id = t.id
-      WHERE t.evento_id = e.id
-    ),
-    (
-      SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
-      FROM turmas t
-      WHERE t.evento_id = e.id
-    )
-  ) THEN 'andamento'
+      WHEN CURRENT_TIMESTAMP::timestamp <= COALESCE(
+        (
+          SELECT MAX(dt.data::date + COALESCE(dt.horario_fim, '23:59'::time))
+          FROM turmas t
+          JOIN datas_turma dt ON dt.turma_id = t.id
+          WHERE t.evento_id = e.id
+        ),
+        (
+          SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
+          FROM turmas t
+          WHERE t.evento_id = e.id
+        )
+      ) THEN 'andamento'
 
-  ELSE 'encerrado'
-END AS status
+      ELSE 'encerrado'
+    END AS status
   FROM eventos e
   ORDER BY (SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time,'23:59'::time))
             FROM turmas t WHERE t.evento_id = e.id) DESC NULLS LAST,
@@ -907,37 +905,36 @@ async function listarEventosParaMim(req, res) {
     (SELECT MAX(t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
 
     CASE
-      CASE
-  WHEN CURRENT_TIMESTAMP::timestamp < COALESCE(
-    (
-      SELECT MIN(dt.data::date + COALESCE(dt.horario_inicio, '00:00'::time))
-      FROM turmas t
-      JOIN datas_turma dt ON dt.turma_id = t.id
-      WHERE t.evento_id = e.id
-    ),
-    (
-      SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time, '00:00'::time))
-      FROM turmas t
-      WHERE t.evento_id = e.id
-    )
-  ) THEN 'programado'
+      WHEN CURRENT_TIMESTAMP::timestamp < COALESCE(
+        (
+          SELECT MIN(dt.data::date + COALESCE(dt.horario_inicio, '00:00'::time))
+          FROM turmas t
+          JOIN datas_turma dt ON dt.turma_id = t.id
+          WHERE t.evento_id = e.id
+        ),
+        (
+          SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time, '00:00'::time))
+          FROM turmas t
+          WHERE t.evento_id = e.id
+        )
+      ) THEN 'programado'
 
-  WHEN CURRENT_TIMESTAMP::timestamp <= COALESCE(
-    (
-      SELECT MAX(dt.data::date + COALESCE(dt.horario_fim, '23:59'::time))
-      FROM turmas t
-      JOIN datas_turma dt ON dt.turma_id = t.id
-      WHERE t.evento_id = e.id
-    ),
-    (
-      SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
-      FROM turmas t
-      WHERE t.evento_id = e.id
-    )
-  ) THEN 'andamento'
+      WHEN CURRENT_TIMESTAMP::timestamp <= COALESCE(
+        (
+          SELECT MAX(dt.data::date + COALESCE(dt.horario_fim, '23:59'::time))
+          FROM turmas t
+          JOIN datas_turma dt ON dt.turma_id = t.id
+          WHERE t.evento_id = e.id
+        ),
+        (
+          SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
+          FROM turmas t
+          WHERE t.evento_id = e.id
+        )
+      ) THEN 'andamento'
 
-  ELSE 'encerrado'
-END AS status
+      ELSE 'encerrado'
+    END AS status,
 
     (
       SELECT COUNT(*) > 0
@@ -2350,40 +2347,39 @@ async function listarEventosDoinstrutor(req, res) {
   try {
     const eventosResult = await client.query(
       `
-      SELECT DISTINCT
+            SELECT DISTINCT
         e.*,
         CASE
-          CASE
-  WHEN CURRENT_TIMESTAMP::timestamp < COALESCE(
-    (
-      SELECT MIN(dt.data::date + COALESCE(dt.horario_inicio, '00:00'::time))
-      FROM turmas t
-      JOIN datas_turma dt ON dt.turma_id = t.id
-      WHERE t.evento_id = e.id
-    ),
-    (
-      SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time, '00:00'::time))
-      FROM turmas t
-      WHERE t.evento_id = e.id
-    )
-  ) THEN 'programado'
+          WHEN CURRENT_TIMESTAMP::timestamp < COALESCE(
+            (
+              SELECT MIN(dt.data::date + COALESCE(dt.horario_inicio, '00:00'::time))
+              FROM turmas t
+              JOIN datas_turma dt ON dt.turma_id = t.id
+              WHERE t.evento_id = e.id
+            ),
+            (
+              SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time, '00:00'::time))
+              FROM turmas t
+              WHERE t.evento_id = e.id
+            )
+          ) THEN 'programado'
 
-  WHEN CURRENT_TIMESTAMP::timestamp <= COALESCE(
-    (
-      SELECT MAX(dt.data::date + COALESCE(dt.horario_fim, '23:59'::time))
-      FROM turmas t
-      JOIN datas_turma dt ON dt.turma_id = t.id
-      WHERE t.evento_id = e.id
-    ),
-    (
-      SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
-      FROM turmas t
-      WHERE t.evento_id = e.id
-    )
-  ) THEN 'andamento'
+          WHEN CURRENT_TIMESTAMP::timestamp <= COALESCE(
+            (
+              SELECT MAX(dt.data::date + COALESCE(dt.horario_fim, '23:59'::time))
+              FROM turmas t
+              JOIN datas_turma dt ON dt.turma_id = t.id
+              WHERE t.evento_id = e.id
+            ),
+            (
+              SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
+              FROM turmas t
+              WHERE t.evento_id = e.id
+            )
+          ) THEN 'andamento'
 
-  ELSE 'encerrado'
-END AS status
+          ELSE 'encerrado'
+        END AS status,
         COALESCE((
           SELECT array_agg(er.registro_norm ORDER BY er.registro_norm)
           FROM evento_registros er
