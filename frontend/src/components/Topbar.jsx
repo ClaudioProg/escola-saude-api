@@ -141,7 +141,6 @@ function getPerfisRobusto() {
         );
 
       if (u?.perfil) pushAll(u.perfil);
-      if (u?.perfis) pushAll(u.perfis);
       if (u?.roles) pushAll(u.roles);
     }
   } catch {

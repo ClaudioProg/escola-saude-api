@@ -221,7 +221,6 @@ async function listarInstrutor(req, res) {
         FROM usuarios u
         WHERE
           string_to_array(COALESCE(u.perfil,''), ',') && ARRAY['instrutor','administrador']
-          OR string_to_array(COALESCE(u.perfis::text,''), ',') && ARRAY['instrutor','administrador']
       ),
       ${sqlVinculosBase("i.id")},
       eventos_por_instrutor AS (
@@ -271,7 +270,6 @@ async function listarInstrutor(req, res) {
         FROM usuarios u
         WHERE
           string_to_array(COALESCE(u.perfil,''), ',') && ARRAY['instrutor','administrador']
-          OR string_to_array(COALESCE(u.perfis::text,''), ',') && ARRAY['instrutor','administrador']
       ),
       ${sqlVinculosBase("i.id")},
       eventos_por_instrutor AS (

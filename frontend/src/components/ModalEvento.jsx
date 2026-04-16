@@ -854,7 +854,6 @@ export default function ModalEvento({
       .filter((u) => {
         const texto = [
           toText(u.perfil),
-          toText(u.perfis),
           toText(u.role),
           toText(u.roles),
           toText(u.tipo),

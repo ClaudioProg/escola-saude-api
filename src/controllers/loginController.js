@@ -153,7 +153,6 @@ async function loginUsuario(req, res) {
         u.email,
         u.cpf,
         u.perfil,
-        u.perfis,
         u.senha,
         a.imagem_base64
       FROM usuarios u

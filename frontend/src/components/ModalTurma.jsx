@@ -174,7 +174,6 @@ function isInstrutorLike(u) {
 
   const fontes = [
     u.perfil,
-    u.perfis,
     u.roles,
     u.role,
     u.tipo,

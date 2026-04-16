@@ -394,13 +394,13 @@ async function ensureAutoSignature(usuarioId, req = null) {
     return null;
   }
 
-  if (!isInstrOuAdm(u.perfis ?? u.perfil)) {
-    logInfo(rid, "usuário sem perfil elegível para autogeração", {
-      usuarioId: uid,
-      perfis: u.perfis ?? u.perfil ?? null,
-    });
-    return null;
-  }
+if (!isInstrOuAdm(u.perfil)) {
+  logInfo(rid, "usuário sem perfil elegível para autogeração", {
+    usuarioId: uid,
+    perfil: u.perfil ?? null,
+  });
+  return null;
+}
 
   const displayName = String(u.nome || u.email || `Usuario_${u.id}`).trim();
   const { buffer } = renderSignaturePng(displayName);
