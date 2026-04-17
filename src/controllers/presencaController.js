@@ -1256,12 +1256,53 @@ async function exportarPresencasPDF(req, res) {
   const rid = mkRid("PRSPDF");
   const turma_id = Number(req.params.turma_id);
 
+  const fmtDateBR = (ymd) => {
+    const s = String(ymd || "").trim();
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    return m ? `${m[3]}/${m[2]}/${m[1]}` : "—";
+  };
+
+  const fmtDateTimeBR = (value) => {
+    if (!value) return "—";
+    try {
+      return new Intl.DateTimeFormat("pt-BR", {
+        timeZone: TZ,
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(new Date(value));
+    } catch {
+      return "—";
+    }
+  };
+
+  const drawCellText = (doc, text, x, y, width, opts = {}) => {
+    doc.text(String(text ?? "—"), x, y, {
+      width,
+      ellipsis: true,
+      ...opts,
+    });
+  };
+
   try {
     const turmaRes = await query(
       `
-      SELECT nome, to_char(horario_inicio::time,'HH24:MI') AS hi
-      FROM turmas
-      WHERE id = $1
+      SELECT
+        t.id,
+        t.nome,
+        t.evento_id,
+        e.titulo AS evento_titulo,
+        e.local  AS evento_local,
+        to_char(t.data_inicio::date,'YYYY-MM-DD') AS data_inicio,
+        to_char(t.data_fim::date,'YYYY-MM-DD') AS data_fim,
+        to_char(t.horario_inicio::time,'HH24:MI') AS hi,
+        to_char(t.horario_fim::time,'HH24:MI') AS hf
+      FROM turmas t
+      JOIN eventos e ON e.id = t.evento_id
+      WHERE t.id = $1
+      LIMIT 1
       `,
       [turma_id]
     );
@@ -1271,13 +1312,22 @@ async function exportarPresencasPDF(req, res) {
     }
 
     const turma = turmaRes.rows[0];
-    const horarioInicio = (turma.hi || "08:00").slice(0, 5);
+    const horarioInicioPadrao = (turma.hi || "08:00").slice(0, 5);
+    const horarioFimPadrao = (turma.hf || "23:59").slice(0, 5);
+
     const datasTurma = await obterDatasDaTurma(turma_id);
+    if (!datasTurma.length) {
+      return res.status(400).json({ erro: "Turma sem datas válidas para exportação." });
+    }
+
     const inscrTable = await resolveInscricaoTable(query);
 
     const insc = await query(
       `
-      SELECT u.id AS usuario_id, u.nome, u.cpf
+      SELECT
+        u.id AS usuario_id,
+        u.nome,
+        u.cpf
       FROM usuarios u
       JOIN ${inscrTable} i ON i.usuario_id = u.id
       WHERE i.turma_id = $1
@@ -1288,59 +1338,250 @@ async function exportarPresencasPDF(req, res) {
 
     const pres = await query(
       `
-      SELECT usuario_id, to_char(data_presenca::date,'YYYY-MM-DD') AS d, presente
+      SELECT
+        usuario_id,
+        to_char(data_presenca::date,'YYYY-MM-DD') AS d,
+        presente,
+        confirmado_em
       FROM presencas
       WHERE turma_id = $1
+      ORDER BY usuario_id, data_presenca ASC, confirmado_em ASC
       `,
       [turma_id]
     );
 
     const presMap = new Map();
     for (const p of pres.rows || []) {
-      presMap.set(`${String(p.usuario_id)}|${p.d}`, p.presente === true);
+      const key = `${String(p.usuario_id)}|${p.d}`;
+      const prev = presMap.get(key);
+
+      const current = {
+        presente: p.presente === true,
+        confirmado_em: p.confirmado_em || null,
+      };
+
+      if (!prev) {
+        presMap.set(key, current);
+        continue;
+      }
+
+      if (!prev.presente && current.presente) {
+        presMap.set(key, current);
+        continue;
+      }
+
+      if (prev.presente === current.presente) {
+        const a = prev.confirmado_em ? new Date(prev.confirmado_em).getTime() : 0;
+        const b = current.confirmado_em ? new Date(current.confirmado_em).getTime() : 0;
+        if (b > a) presMap.set(key, current);
+      }
     }
 
-    const doc = new PDFDocument({ size: "A4", margin: 50 });
-    res.setHeader("Content-Disposition", `attachment; filename="presencas_turma_${turma_id}.pdf"`);
+    const doc = new PDFDocument({
+      size: "A4",
+      layout: "landscape",
+      margin: 36,
+      info: {
+        Title: `Lista de Presença - Turma ${turma_id}`,
+        Author: "Plataforma da Escola da Saúde",
+      },
+    });
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="lista_presenca_turma_${turma_id}.pdf"`
+    );
     res.setHeader("Content-Type", "application/pdf");
     doc.pipe(res);
 
-    doc.fontSize(16).text(`Relatório de Presenças – ${turma.nome}`, { align: "center" });
-    doc.moveDown();
+    const pageWidth = doc.page.width;
+    const pageHeight = doc.page.height;
+    const margin = 36;
+    const contentWidth = pageWidth - margin * 2;
 
-    doc.fontSize(12).text("Nome", 50, doc.y, { continued: true });
-    doc.text("CPF", 250, doc.y, { continued: true });
+    const cols = {
+      nome: 220,
+      cpf: 95,
+      status: 85,
+      confirmacao: 170,
+      assinatura: contentWidth - (220 + 95 + 85 + 170),
+    };
 
-    datasTurma.forEach((data) => {
-      const ddmm = format(localDateFromYMD(data), "dd/MM", { locale: ptBR });
-      doc.text(ddmm, doc.x + 20, doc.y, { continued: true });
-    });
+    const drawHeader = () => {
+      doc
+        .fillColor("#0f172a")
+        .font("Helvetica-Bold")
+        .fontSize(18)
+        .text("LISTA DE PRESENÇA", margin, 24, {
+          width: contentWidth,
+          align: "center",
+        });
 
-    doc.moveDown();
+      doc
+        .moveTo(margin, 52)
+        .lineTo(pageWidth - margin, 52)
+        .lineWidth(1.5)
+        .strokeColor("#0f766e")
+        .stroke();
 
-    const agora = new Date();
+      doc
+        .fillColor("#0f172a")
+        .font("Helvetica-Bold")
+        .fontSize(11)
+        .text(`Evento: ${turma.evento_titulo || "—"}`, margin, 64, {
+          width: contentWidth,
+        });
 
-    for (const inscrito of insc.rows || []) {
-      doc.text(inscrito.nome, 50, doc.y, { width: 180, continued: true });
-      doc.text(inscrito.cpf || "", 250, doc.y, { continued: true });
+      doc
+        .font("Helvetica")
+        .fontSize(10)
+        .fillColor("#334155")
+        .text(`Turma: ${turma.nome || "—"}`, margin, 82, { width: 340 })
+        .text(`Período: ${fmtDateBR(turma.data_inicio)} a ${fmtDateBR(turma.data_fim)}`, margin + 345, 82, {
+          width: 190,
+        })
+        .text(`Horário: ${horarioInicioPadrao} às ${horarioFimPadrao}`, margin + 540, 82, {
+          width: 160,
+        });
 
-      for (const data of datasTurma) {
-        const k = `${String(inscrito.usuario_id)}|${data}`;
-        const presente = presMap.get(k);
-        let simbolo = "F";
-
-        if (presente === true) {
-          simbolo = "P";
-        } else {
-          const limite = dateTimeSP(data, horarioInicio);
-          limite.setMinutes(limite.getMinutes() + 30);
-          if (agora < limite && presente === undefined) simbolo = "...";
-        }
-
-        doc.text(simbolo, doc.x + 20, doc.y, { continued: true });
+      if (turma.evento_local) {
+        doc.text(`Local: ${turma.evento_local}`, margin, 98, {
+          width: contentWidth,
+        });
       }
 
-      doc.moveDown();
+      doc
+        .fillColor("#64748b")
+        .fontSize(9)
+        .text(`Gerado em: ${fmtDateTimeBR(new Date().toISOString())}`, margin, 112, {
+          width: contentWidth,
+          align: "right",
+        });
+    };
+
+    const drawTableHeader = (y) => {
+      doc
+        .save()
+        .roundedRect(margin, y, contentWidth, 24, 8)
+        .fill("#0f766e")
+        .restore();
+
+      doc
+        .fillColor("#ffffff")
+        .font("Helvetica-Bold")
+        .fontSize(9);
+
+      let x = margin + 8;
+      drawCellText(doc, "Nome", x, y + 7, cols.nome - 12);
+      x += cols.nome;
+      drawCellText(doc, "CPF", x, y + 7, cols.cpf - 12);
+      x += cols.cpf;
+      drawCellText(doc, "Situação", x, y + 7, cols.status - 12);
+      x += cols.status;
+      drawCellText(doc, "Confirmação", x, y + 7, cols.confirmacao - 12);
+      x += cols.confirmacao;
+      drawCellText(doc, "Assinatura", x, y + 7, cols.assinatura - 12);
+
+      return y + 30;
+    };
+
+    const ensureSpace = (currentY, needed = 40) => {
+      if (currentY + needed <= pageHeight - margin) return currentY;
+      doc.addPage({ size: "A4", layout: "landscape", margin });
+      drawHeader();
+      return 132;
+    };
+
+    drawHeader();
+
+    let y = 132;
+    const agora = new Date();
+
+    for (const data of datasTurma) {
+      y = ensureSpace(y, 48);
+
+      const hiData = (await horarioInicioNaData(turma_id, data)) || horarioInicioPadrao;
+      const hfData = (await horarioFimNaData(turma_id, data)) || horarioFimPadrao;
+      const fimJanela = dateTimeSP(data, hfData);
+
+      doc
+        .fillColor("#0f172a")
+        .font("Helvetica-Bold")
+        .fontSize(12)
+        .text(`Data da aula: ${fmtDateBR(data)}  •  Horário previsto: ${hiData} às ${hfData}`, margin, y, {
+          width: contentWidth,
+        });
+
+      y += 22;
+      y = drawTableHeader(y);
+
+      for (const inscrito of insc.rows || []) {
+        y = ensureSpace(y, 28);
+
+        const key = `${String(inscrito.usuario_id)}|${data}`;
+        const info = presMap.get(key);
+
+        let status = "Ausente";
+        let confirmacao = "—";
+        let assinatura = "—";
+
+        if (info?.presente === true) {
+          status = "Presente";
+          confirmacao = info.confirmado_em ? fmtDateTimeBR(info.confirmado_em) : fmtDateBR(data);
+          assinatura = "—";
+        } else if (info?.presente === false) {
+          status = "Ausente";
+          confirmacao = "—";
+          assinatura = "—";
+        } else if (agora <= fimJanela) {
+          status = "Aguardando";
+          confirmacao = "—";
+          assinatura = "__________________________________";
+        } else {
+          status = "Ausente";
+          confirmacao = "—";
+          assinatura = "—";
+        }
+
+        doc
+          .save()
+          .roundedRect(margin, y - 3, contentWidth, 24, 6)
+          .fill(y % 2 === 0 ? "#f8fafc" : "#ffffff")
+          .restore();
+
+        doc
+          .font("Helvetica")
+          .fontSize(9)
+          .fillColor("#0f172a");
+
+        let x = margin + 8;
+        drawCellText(doc, inscrito.nome || "—", x, y + 5, cols.nome - 12);
+        x += cols.nome;
+        drawCellText(doc, inscrito.cpf || "—", x, y + 5, cols.cpf - 12);
+        x += cols.cpf;
+
+        doc
+          .fillColor(
+            status === "Presente"
+              ? "#166534"
+              : status === "Aguardando"
+              ? "#92400e"
+              : "#991b1b"
+          )
+          .font("Helvetica-Bold");
+        drawCellText(doc, status, x, y + 5, cols.status - 12);
+
+        x += cols.status;
+        doc.fillColor("#0f172a").font("Helvetica");
+        drawCellText(doc, confirmacao, x, y + 5, cols.confirmacao - 12);
+
+        x += cols.confirmacao;
+        drawCellText(doc, assinatura, x, y + 5, cols.assinatura - 12);
+
+        y += 28;
+      }
+
+      y += 10;
     }
 
     doc.end();

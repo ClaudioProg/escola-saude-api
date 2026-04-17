@@ -1,6 +1,6 @@
 // ✅ src/components/SidebarNav.jsx
-// Premium: responsivo, reativo ao tema, colapsável, acessível e consistente
-import { useMemo, useState, useEffect, useCallback, useRef } from "react";
+// Premium: responsivo, reativo ao tema, colapsável, acessível, robusto no mobile e consistente
+import { useMemo, useState, useEffect, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   X,
@@ -22,7 +22,6 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Megaphone,
-  Newspaper,
 } from "lucide-react";
 
 /* =========================
@@ -38,10 +37,12 @@ function normPerfilStr(p) {
 
 function pushAll(set, val) {
   if (!val) return;
+
   if (Array.isArray(val)) {
     val.forEach((p) => set.add(String(p).toLowerCase()));
     return;
   }
+
   normPerfilStr(val).forEach((p) => set.add(p));
 }
 
@@ -57,7 +58,9 @@ function getPerfisRobusto() {
         pushAll(out, rawPerfil);
       }
     }
-  } catch {}
+  } catch {
+    // noop
+  }
 
   try {
     const rawUser = localStorage.getItem("usuario");
@@ -67,7 +70,9 @@ function getPerfisRobusto() {
       pushAll(out, u?.perfis);
       pushAll(out, u?.roles);
     }
-  } catch {}
+  } catch {
+    // noop
+  }
 
   if (out.size === 0) out.add("usuario");
   return Array.from(out).filter(Boolean);
@@ -87,9 +92,11 @@ function clamp(n, min, max) {
 
 function isActivePath(currentPath, itemPath) {
   if (!itemPath) return false;
-  if (itemPath === "__open_submissions__") return currentPath.startsWith("/admin/submissao");
+  if (itemPath === "__open_submissions__") {
+    return currentPath.startsWith("/admin/submissao");
+  }
   if (currentPath === itemPath) return true;
-  if (itemPath !== "/" && currentPath.startsWith(itemPath + "/")) return true;
+  if (itemPath !== "/" && currentPath.startsWith(`${itemPath}/`)) return true;
   return false;
 }
 
@@ -188,7 +195,9 @@ function MenuItem({
       />
 
       <IconTile active={active} isDark={isDark} Icon={Icon} />
+
       {!collapsed && <span className="truncate">{label}</span>}
+
       {active && !collapsed && (
         <span className="ml-auto h-2 w-2 rounded-full bg-white/85 shrink-0" aria-hidden="true" />
       )}
@@ -203,6 +212,7 @@ function SectionHeader({
   isDark,
   onClick,
   mobile = false,
+  controlsId,
 }) {
   return (
     <button
@@ -215,7 +225,8 @@ function SectionHeader({
         collapsed ? "justify-center" : ""
       )}
       aria-expanded={expanded}
-      disabled={collapsed && !mobile ? true : false}
+      aria-controls={controlsId}
+      disabled={collapsed && !mobile}
     >
       <div
         className={cx(
@@ -271,14 +282,23 @@ export default function SidebarNav({
   const collapsed = typeof collapsedProp === "boolean" ? collapsedProp : collapsedState;
   const themeCollapsed = collapsed && !isMobile;
 
+  const closeMobileMenu = useCallback(() => {
+    if (isMobile) onClose?.();
+  }, [isMobile, onClose]);
+
   const setCollapsed = useCallback(
     (next) => {
       const v = !!next;
-      if (typeof collapsedProp !== "boolean") setCollapsedState(v);
+
+      if (typeof collapsedProp !== "boolean") {
+        setCollapsedState(v);
+      }
 
       try {
         localStorage.setItem(SIDEBAR_COLLAPSED_KEY, v ? "1" : "0");
-      } catch {}
+      } catch {
+        // noop
+      }
 
       onCollapsedChange?.(v);
     },
@@ -293,7 +313,11 @@ export default function SidebarNav({
 
       if (e.key === SIDEBAR_COLLAPSED_KEY) {
         const v = e.newValue === "1";
-        if (typeof collapsedProp !== "boolean") setCollapsedState(v);
+
+        if (typeof collapsedProp !== "boolean") {
+          setCollapsedState(v);
+        }
+
         onCollapsedChange?.(v);
       }
     };
@@ -301,6 +325,11 @@ export default function SidebarNav({
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, [collapsedProp, onCollapsedChange]);
+
+  useEffect(() => {
+    if (!isMobile) return;
+    closeMobileMenu();
+  }, [isMobile, location.pathname, location.search, closeMobileMenu]);
 
   const isUsuario =
     perfis.includes("usuario") || perfis.includes("instrutor") || perfis.includes("administrador");
@@ -365,7 +394,7 @@ export default function SidebarNav({
     []
   );
 
-  const sectionsRaw = useMemo(() => {
+  const sections = useMemo(() => {
     const secs = [];
     if (isUsuario) secs.push({ title: "Usuário", items: menusUsuario });
     if (isInstrutor) secs.push({ title: "Instrutor", items: menusInstrutor });
@@ -384,23 +413,24 @@ export default function SidebarNav({
   ]);
 
   useEffect(() => {
-  if (themeCollapsed) return;
+    if (themeCollapsed) return;
 
-  const found = sectionsRaw.find((sec) =>
-    sec.items.some((it) => isActivePath(location.pathname, it.path))
-  );
+    const found = sections.find((sec) =>
+      sec.items.some((it) => isActivePath(location.pathname, it.path))
+    );
 
-  if (found?.title && found.title !== openSection) {
-    setOpenSection(found.title);
-  }
-}, [location.pathname, themeCollapsed, sectionsRaw]); 
-
-  const sections = useMemo(() => sectionsRaw, [sectionsRaw]);
+    if (found?.title && found.title !== openSection) {
+      setOpenSection(found.title);
+    }
+  }, [location.pathname, themeCollapsed, sections, openSection]);
 
   const [focusIdx, setFocusIdx] = useState(0);
+
   const flatItems = useMemo(() => {
     const out = [];
-    sections.forEach((sec) => sec.items.forEach((it) => out.push(it)));
+    sections.forEach((sec) => {
+      sec.items.forEach((it) => out.push(it));
+    });
     return out;
   }, [sections]);
 
@@ -412,7 +442,7 @@ export default function SidebarNav({
     (path) => {
       if (path === "__open_submissions__") {
         navigate("/admin/submissao");
-        onClose?.();
+        closeMobileMenu();
         return;
       }
 
@@ -420,9 +450,9 @@ export default function SidebarNav({
       const safe = p.startsWith("/") ? p : `/${p}`;
 
       navigate(safe);
-      onClose?.();
+      closeMobileMenu();
     },
-    [navigate, onClose]
+    [navigate, closeMobileMenu]
   );
 
   const shellCls = isDark
@@ -474,12 +504,16 @@ export default function SidebarNav({
               aria-controls={listId}
               title={collapsed ? "Expandir menu" : "Recolher menu"}
             >
-              {collapsed ? <ChevronsRight className="w-5 h-5" /> : <ChevronsLeft className="w-5 h-5" />}
+              {collapsed ? (
+                <ChevronsRight className="w-5 h-5" />
+              ) : (
+                <ChevronsLeft className="w-5 h-5" />
+              )}
             </button>
           ) : (
             <button
               type="button"
-              onClick={() => onClose?.()}
+              onClick={closeMobileMenu}
               className={cx(
                 "rounded-2xl p-2.5 border transition",
                 isDark ? "border-white/10 hover:bg-white/5" : "border-slate-200 hover:bg-slate-100"
@@ -508,6 +542,7 @@ export default function SidebarNav({
         ) : (
           sections.map((sec) => {
             const expanded = themeCollapsed || openSection === sec.title;
+            const sectionId = `sec-${variant}-${sec.title}`;
 
             return (
               <div key={sec.title} className="rounded-2xl">
@@ -517,6 +552,7 @@ export default function SidebarNav({
                   collapsed={themeCollapsed}
                   isDark={isDark}
                   mobile={isMobile}
+                  controlsId={sectionId}
                   onClick={() => {
                     if (themeCollapsed && !isMobile) return;
                     setOpenSection((prev) => (prev === sec.title ? null : sec.title));
@@ -524,9 +560,10 @@ export default function SidebarNav({
                 />
 
                 {expanded && (
-                  <div id={`sec-${variant}-${sec.title}`} className="space-y-1">
+                  <div id={sectionId} className="space-y-1">
                     {sec.items.map((item) => {
                       const active = isActivePath(location.pathname, item.path);
+
                       const globalIndex = flatItems.findIndex(
                         (it) => it.path === item.path && it.label === item.label
                       );

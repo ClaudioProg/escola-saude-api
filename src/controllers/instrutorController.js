@@ -182,7 +182,7 @@ const SQL_MAP_NOTA = `
 `;
 
 /* ────────────────────────────────────────────────────────────────
-   CTE base de vínculos
+   CTE base de vínculos por instrutor específico
 ──────────────────────────────────────────────────────────────── */
 function sqlVinculosBase(whereInstrutor = "$1") {
   return `
@@ -206,6 +206,29 @@ function sqlVinculosBase(whereInstrutor = "$1") {
   `;
 }
 
+/* ────────────────────────────────────────────────────────────────
+   CTE base de vínculos global (para listagem)
+──────────────────────────────────────────────────────────────── */
+function sqlVinculosBaseGlobal() {
+  return `
+    WITH vinc_ti AS (
+      SELECT ti.instrutor_id, t.evento_id, ti.turma_id
+      FROM turma_instrutor ti
+      JOIN turmas t ON t.id = ti.turma_id
+    ),
+    vinc_ei AS (
+      SELECT ei.instrutor_id, ei.evento_id, t.id AS turma_id
+      FROM evento_instrutor ei
+      JOIN turmas t ON t.evento_id = ei.evento_id
+    ),
+    vinculos AS (
+      SELECT DISTINCT instrutor_id, evento_id, turma_id FROM vinc_ti
+      UNION
+      SELECT DISTINCT instrutor_id, evento_id, turma_id FROM vinc_ei
+    )
+  `;
+}
+
 /* ===================================================================
    📋 Lista instrutores com médias/contadores
    GET /api/instrutor
@@ -216,13 +239,12 @@ async function listarInstrutor(req, res) {
   try {
     const sqlVariants = [
       `
-      WITH instrutores AS (
+      ${sqlVinculosBaseGlobal()},
+      instrutores AS (
         SELECT DISTINCT u.id, u.nome, u.email
         FROM usuarios u
-        WHERE
-          string_to_array(COALESCE(u.perfil,''), ',') && ARRAY['instrutor','administrador']
+        WHERE string_to_array(COALESCE(u.perfil,''), ',') && ARRAY['instrutor','administrador']
       ),
-      ${sqlVinculosBase("i.id")},
       eventos_por_instrutor AS (
         SELECT instrutor_id, COUNT(DISTINCT evento_id)::int AS eventos_ministrados
         FROM vinculos
@@ -247,6 +269,17 @@ async function listarInstrutor(req, res) {
           ROUND(AVG(nota)::numeric, 2) AS media_avaliacao
         FROM notas_por_instrutor
         GROUP BY instrutor_id
+      ),
+      assinaturas_agg AS (
+        SELECT
+          s.usuario_id,
+          BOOL_OR(
+            s.imagem_base64 IS NOT NULL
+            OR NULLIF(trim(COALESCE(s.assinatura_url, '')), '') IS NOT NULL
+            OR NULLIF(trim(COALESCE(s.assinatura_path, '')), '') IS NOT NULL
+          ) AS possui_assinatura
+        FROM assinaturas s
+        GROUP BY s.usuario_id
       )
       SELECT
         i.id,
@@ -256,22 +289,21 @@ async function listarInstrutor(req, res) {
         COALESCE(tp.turmas_vinculadas, 0)   AS "turmasVinculadas",
         COALESCE(an.total_respostas, 0)     AS "totalRespostas",
         an.media_avaliacao,
-        CASE WHEN s.imagem_base64 IS NOT NULL THEN TRUE ELSE FALSE END AS "possuiAssinatura"
+        COALESCE(sa.possui_assinatura, FALSE) AS "possuiAssinatura"
       FROM instrutores i
       LEFT JOIN eventos_por_instrutor ep ON ep.instrutor_id = i.id
       LEFT JOIN turmas_por_instrutor  tp ON tp.instrutor_id = i.id
       LEFT JOIN agg_notas             an ON an.instrutor_id = i.id
-      LEFT JOIN assinaturas            s ON s.usuario_id = i.id
+      LEFT JOIN assinaturas_agg       sa ON sa.usuario_id = i.id
       ORDER BY i.nome;
       `,
       `
-      WITH instrutores AS (
+      ${sqlVinculosBaseGlobal()},
+      instrutores AS (
         SELECT DISTINCT u.id, u.nome, u.email
         FROM usuarios u
-        WHERE
-          string_to_array(COALESCE(u.perfil,''), ',') && ARRAY['instrutor','administrador']
+        WHERE string_to_array(COALESCE(u.perfil,''), ',') && ARRAY['instrutor','administrador']
       ),
-      ${sqlVinculosBase("i.id")},
       eventos_por_instrutor AS (
         SELECT instrutor_id, COUNT(DISTINCT evento_id)::int AS eventos_ministrados
         FROM vinculos
@@ -296,6 +328,17 @@ async function listarInstrutor(req, res) {
           ROUND(AVG(nota)::numeric, 2) AS media_avaliacao
         FROM notas_por_instrutor
         GROUP BY instrutor_id
+      ),
+      assinaturas_agg AS (
+        SELECT
+          s.usuario_id,
+          BOOL_OR(
+            s.imagem_base64 IS NOT NULL
+            OR NULLIF(trim(COALESCE(s.assinatura_url, '')), '') IS NOT NULL
+            OR NULLIF(trim(COALESCE(s.assinatura_path, '')), '') IS NOT NULL
+          ) AS possui_assinatura
+        FROM assinaturas s
+        GROUP BY s.usuario_id
       )
       SELECT
         i.id,
@@ -305,12 +348,12 @@ async function listarInstrutor(req, res) {
         COALESCE(tp.turmas_vinculadas, 0)   AS "turmasVinculadas",
         COALESCE(an.total_respostas, 0)     AS "totalRespostas",
         an.media_avaliacao,
-        CASE WHEN s.imagem_base64 IS NOT NULL THEN TRUE ELSE FALSE END AS "possuiAssinatura"
+        COALESCE(sa.possui_assinatura, FALSE) AS "possuiAssinatura"
       FROM instrutores i
       LEFT JOIN eventos_por_instrutor ep ON ep.instrutor_id = i.id
       LEFT JOIN turmas_por_instrutor  tp ON tp.instrutor_id = i.id
       LEFT JOIN agg_notas             an ON an.instrutor_id = i.id
-      LEFT JOIN assinaturas            s ON s.usuario_id = i.id
+      LEFT JOIN assinaturas_agg       sa ON sa.usuario_id = i.id
       ORDER BY i.nome;
       `,
     ];

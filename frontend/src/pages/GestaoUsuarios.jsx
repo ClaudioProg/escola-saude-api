@@ -1,9 +1,8 @@
 // ✅ src/pages/GestaoUsuarios.jsx — PREMIUM (server-side pagination + filtros no backend + export robusto)
-// - Agora busca/paginação é SERVER-SIDE (não carrega 1300+ no cliente)
-// - Envia: q, perfil(csv), unidade_id (via sigla->id), cargo_nome, page, pageSize
-// - KPIs: usa meta.total e contagem por perfil vinda da própria página carregada (com fallback)
-// - Mantém UX premium: sticky toolbar, chips, selects, persistência e a11y
-// - Export CSV: exporta RESULTADO FILTRADO COMPLETO via paginação automática (lotes) (limite de segurança)
+// - Busca/paginação SERVER-SIDE
+// - Bootstrap estável: carrega unidades antes da primeira carga de usuários
+// - Evita ruído "new-request" em aborts normais
+// - Mantém UX premium, persistência, a11y e export robusto
 
 import {
   useEffect,
@@ -75,6 +74,7 @@ const csvEscape = (v) => {
   const s = String(v ?? "");
   return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
+
 const downloadBlob = (filename, blob) => {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -95,6 +95,7 @@ function MiniStat({ label, value = "—", accent = "indigo" }) {
     violet: "from-violet-500 to-violet-300",
     fuchsia: "from-fuchsia-500 to-fuchsia-300",
   };
+
   return (
     <div className="rounded-2xl bg-white/10 border border-white/10 p-3 text-white backdrop-blur">
       <div
@@ -215,10 +216,12 @@ export default function GestaoUsuarios() {
   const [usuarios, setUsuarios] = useState([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, pageSize: 25, pages: 1 });
   const [carregandoUsuarios, setCarregandoUsuarios] = useState(true);
+  const [carregandoUnidades, setCarregandoUnidades] = useState(true);
+  const [unidadesReady, setUnidadesReady] = useState(false);
   const [erro, setErro] = useState("");
   const [busca, setBusca] = useState(() => localStorage.getItem("usuarios:busca") || "");
 
-  // ✅ modal edit: selecionado + open (controlado)
+  // modal edit
   const [usuarioSelecionado, setUsuarioSelecionado] = useState(null);
   const [modalEditOpen, setModalEditOpen] = useState(false);
 
@@ -238,7 +241,7 @@ export default function GestaoUsuarios() {
   const [loadingResumo, setLoadingResumo] = useState(() => new Set());
 
   // filtros + paginação (persistidos)
-  const [fUnidade, setFUnidade] = useState(() => localStorage.getItem("usuarios:fUnidade") || "todas"); // SIGLA ou "todas"
+  const [fUnidade, setFUnidade] = useState(() => localStorage.getItem("usuarios:fUnidade") || "todas");
   const [fCargo, setFCargo] = useState(() => localStorage.getItem("usuarios:fCargo") || "todos");
   const [page, setPage] = useState(() => Number(localStorage.getItem("usuarios:page")) || 1);
   const [pageSize, setPageSize] = useState(() => Number(localStorage.getItem("usuarios:pageSize")) || 25);
@@ -257,7 +260,6 @@ export default function GestaoUsuarios() {
     if (liveRef.current) liveRef.current.textContent = msg;
   };
 
-  // ✅ handler único de abertura do modal (garante que o clique abre)
   const abrirEdicao = useCallback((usuario) => {
     console.log("✅ CLICK EDITAR ->", usuario?.id, usuario?.nome);
     setUsuarioSelecionado(usuario);
@@ -269,8 +271,7 @@ export default function GestaoUsuarios() {
     setUsuarioSelecionado(null);
   }, []);
 
-  // mounted/abort
-   useEffect(() => {
+  useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
@@ -279,7 +280,6 @@ export default function GestaoUsuarios() {
     };
   }, []);
 
-  // atalho "/"
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -293,22 +293,39 @@ export default function GestaoUsuarios() {
 
   // persistências leves
   useEffect(() => {
-    try { localStorage.setItem("usuarios:busca", busca); } catch { /* noop */ }
+    try {
+      localStorage.setItem("usuarios:busca", busca);
+    } catch {}
   }, [busca]);
+
   useEffect(() => {
-    try { localStorage.setItem("usuarios:fUnidade", fUnidade); } catch { /* noop */ }
+    try {
+      localStorage.setItem("usuarios:fUnidade", fUnidade);
+    } catch {}
   }, [fUnidade]);
+
   useEffect(() => {
-    try { localStorage.setItem("usuarios:fCargo", fCargo); } catch { /* noop */ }
+    try {
+      localStorage.setItem("usuarios:fCargo", fCargo);
+    } catch {}
   }, [fCargo]);
+
   useEffect(() => {
-    try { localStorage.setItem("usuarios:pageSize", String(pageSize)); } catch { /* noop */ }
+    try {
+      localStorage.setItem("usuarios:pageSize", String(pageSize));
+    } catch {}
   }, [pageSize]);
+
   useEffect(() => {
-    try { localStorage.setItem("usuarios:fPerfis", Array.from(fPerfis).join(",")); } catch { /* noop */ }
+    try {
+      localStorage.setItem("usuarios:fPerfis", Array.from(fPerfis).join(","));
+    } catch {}
   }, [fPerfis]);
+
   useEffect(() => {
-    try { localStorage.setItem("usuarios:page", String(page)); } catch { /* noop */ }
+    try {
+      localStorage.setItem("usuarios:page", String(page));
+    } catch {}
   }, [page]);
 
   const [unidades, setUnidades] = useState([]);
@@ -316,12 +333,17 @@ export default function GestaoUsuarios() {
 
   const carregarUnidades = useCallback(async () => {
     try {
+      setCarregandoUnidades(true);
+
       const arr = await apiGet("/api/unidades", { on403: "silent" });
       const norm = (Array.isArray(arr) ? arr : []).map((u) => ({
         id: Number(u.id),
         sigla: String(u.sigla ?? "").trim().toUpperCase(),
         nome: String(u.nome ?? "").trim(),
       }));
+
+      if (!mountedRef.current) return;
+
       setUnidades(norm);
 
       const m = new Map();
@@ -329,17 +351,26 @@ export default function GestaoUsuarios() {
       setUnidadesMap(m);
     } catch (e) {
       console.error("❌ /api/unidades falhou:", e);
+
+      if (!mountedRef.current) return;
+
       setUnidades([]);
       setUnidadesMap(new Map());
       toast.error("Erro ao carregar unidades.");
+    } finally {
+      if (!mountedRef.current) return;
+      setCarregandoUnidades(false);
+      setUnidadesReady(true);
     }
   }, []);
 
-  // ✅ resolve SIGLA -> unidade_id (para mandar pro backend)
+  // resolve SIGLA -> unidade_id
   const unidadeIdSelecionada = useMemo(() => {
     if (!fUnidade || fUnidade === "todas") return null;
     const s = String(fUnidade).trim().toUpperCase();
-    const found = (unidades || []).find((u) => String(u.sigla || "").trim().toUpperCase() === s);
+    const found = (unidades || []).find(
+      (u) => String(u.sigla || "").trim().toUpperCase() === s
+    );
     return found?.id ? Number(found.id) : null;
   }, [fUnidade, unidades]);
 
@@ -361,15 +392,18 @@ export default function GestaoUsuarios() {
       return next;
     });
   };
+
   const resetPerfis = () => setFPerfis(new Set(PERFIS_PERMITIDOS));
 
-  // ✅ sempre que filtros mudarem, volta para página 1 (server-side)
+  // sempre que filtros mudarem, volta para página 1
   useEffect(() => {
     setPage(1);
   }, [debouncedQ, fUnidade, fCargo, fPerfis, pageSize]);
 
   /* ---------- carregar usuários (SERVER-SIDE) ---------- */
-    const carregarUsuarios = useCallback(async () => {
+  const carregarUsuarios = useCallback(async () => {
+    if (!unidadesReady) return;
+
     const reqId = ++requestSeqRef.current;
 
     try {
@@ -394,7 +428,6 @@ export default function GestaoUsuarios() {
       if (perfisCsv) params.set("perfil", perfisCsv);
 
       const url = `/api/usuarios?${params.toString()}`;
-
       const resp = await apiGet(url, { on403: "silent", signal: ctrl.signal });
 
       if (!mountedRef.current || reqId !== requestSeqRef.current) return;
@@ -450,13 +483,15 @@ export default function GestaoUsuarios() {
 
       setLive(`Usuários carregados: ${enriched.length}.`);
     } catch (e) {
-      const msg = String(e?.message || "").trim();
+      const msg = String(e?.message || e || "").trim();
       const isAbortLike =
         e?.name === "AbortError" ||
         msg === "unmount" ||
         msg === "new-request" ||
         msg.toLowerCase().includes("aborted") ||
-        msg.toLowerCase().includes("abort");
+        msg.toLowerCase().includes("abort") ||
+        msg.toLowerCase().includes("canceled") ||
+        msg.toLowerCase().includes("cancelled");
 
       if (isAbortLike) {
         console.log("[GestaoUsuarios] /api/usuarios cancelada", {
@@ -481,23 +516,23 @@ export default function GestaoUsuarios() {
         setMeta({ total: 0, page, pageSize, pages: 1 });
         setLive("Falha ao carregar usuários.");
         setTimeout(() => erroRef.current?.focus?.(), 0);
-      }, 450);
+      }, 300);
     } finally {
       if (mountedRef.current && reqId === requestSeqRef.current) {
         setCarregandoUsuarios(false);
         setHydrating(false);
       }
     }
-  }, [debouncedQ, unidadeIdSelecionada, fCargo, fPerfis, page, pageSize, unidadesMap]);
+  }, [debouncedQ, unidadeIdSelecionada, fCargo, fPerfis, page, pageSize, unidadesMap, unidadesReady]);
 
   useEffect(() => {
     carregarUnidades();
   }, [carregarUnidades]);
 
-  // ✅ carrega sempre que mudar page/filtros
   useEffect(() => {
+    if (!unidadesReady) return;
     carregarUsuarios();
-  }, [carregarUsuarios]);
+  }, [carregarUsuarios, unidadesReady]);
 
   /* ---------- KPIs (melhor esforço) ---------- */
   const kpis = useMemo(() => {
@@ -528,6 +563,7 @@ export default function GestaoUsuarios() {
     if (resumoCache.has(id) || loadingResumo.has(id)) return;
 
     setLoadingResumo((prev) => new Set(prev).add(id));
+
     try {
       const r = await apiGet(`/api/usuarios/${id}/resumo`, { on404: "silent" });
       const payload = r?.data ?? r;
@@ -559,6 +595,7 @@ export default function GestaoUsuarios() {
   async function salvarPerfil(id, perfil) {
     let perfilStr = Array.isArray(perfil) ? perfil[0] : perfil;
     perfilStr = sLower(perfilStr).trim();
+
     if (!PERFIS_PERMITIDOS.includes(perfilStr)) {
       toast.error("Perfil inválido.");
       return;
@@ -685,7 +722,7 @@ export default function GestaoUsuarios() {
     }
   };
 
-  const anyLoading = carregandoUsuarios;
+  const anyLoading = carregandoUsuarios || carregandoUnidades;
 
   const totalItems = Number(meta?.total ?? 0);
   const totalPages = Math.max(1, Number(meta?.pages ?? 1));
@@ -697,7 +734,7 @@ export default function GestaoUsuarios() {
 
       <HeaderHero
         onAtualizar={carregarUsuarios}
-        atualizando={carregandoUsuarios || hydrating}
+        atualizando={anyLoading || hydrating}
         total={totalItems}
         kpis={kpis}
       />
@@ -841,7 +878,7 @@ export default function GestaoUsuarios() {
           </div>
         </section>
 
-        {carregandoUsuarios ? (
+        {anyLoading ? (
           <div className="space-y-4" aria-busy="true" aria-live="polite">
             {[...Array(6)].map((_, i) => (
               <Skeleton key={i} height={96} className="rounded-2xl" />
@@ -855,7 +892,7 @@ export default function GestaoUsuarios() {
           <>
             <TabelaUsuarios
               usuarios={Array.isArray(usuarios) ? usuarios : []}
-              onEditar={abrirEdicao}   // ✅ aqui
+              onEditar={abrirEdicao}
               onToggleCpf={onToggleCpf}
               isCpfRevealed={(id) => revealCpfIds.has(id)}
               maskCpfFn={maskCpf}
@@ -866,8 +903,7 @@ export default function GestaoUsuarios() {
 
             <div className="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
               <div className="text-xs text-zinc-600 dark:text-zinc-400">
-                Mostrando <strong>{usuarios.length}</strong> de{" "}
-                <strong>{totalItems}</strong> resultado(s) — página{" "}
+                Mostrando <strong>{usuarios.length}</strong> de <strong>{totalItems}</strong> resultado(s) — página{" "}
                 <strong>{pageClamped}</strong> de <strong>{totalPages}</strong>
               </div>
 
@@ -909,7 +945,6 @@ export default function GestaoUsuarios() {
           </>
         )}
 
-        {/* ✅ Modal (lazy) com fallback VISÍVEL */}
         <Suspense
           fallback={
             <div className="fixed inset-0 z-[9999] grid place-items-center bg-black/40 backdrop-blur-sm">
@@ -921,11 +956,11 @@ export default function GestaoUsuarios() {
         >
           {usuarioSelecionado && (
             <ModalEditarPerfil
-            usuario={usuarioSelecionado}
-            isOpen={modalEditOpen}   // ✅ NOME CERTO
-            onFechar={fecharEdicao}
-            onSalvar={salvarPerfil}
-          />
+              usuario={usuarioSelecionado}
+              isOpen={modalEditOpen}
+              onFechar={fecharEdicao}
+              onSalvar={salvarPerfil}
+            />
           )}
         </Suspense>
 

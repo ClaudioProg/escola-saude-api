@@ -6,6 +6,8 @@
 // - Export CSV com BOM (Excel) + nome de arquivo melhor
 // - Debounce + persistência opcional de busca/ordem
 // - Estados de erro premium + botão "Tentar novamente"
+// - Histórico com loading real
+// - Abort/cancel silencioso e robusto
 // - Zero alteração de regra de negócio (somente UX/robustez)
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
@@ -21,6 +23,7 @@ import {
   X,
   History,
   AlertTriangle,
+  Loader2,
 } from "lucide-react";
 
 import { apiGet } from "../services/api";
@@ -49,12 +52,26 @@ const downloadBlob = (filename, blob) => {
   URL.revokeObjectURL(url);
 };
 
+function isAbortLike(err) {
+  const msg = String(err?.message || err || "").trim().toLowerCase();
+  return (
+    err?.name === "AbortError" ||
+    msg === "new-request" ||
+    msg === "unmount" ||
+    msg.includes("abort") ||
+    msg.includes("aborted") ||
+    msg.includes("canceled") ||
+    msg.includes("cancelled")
+  );
+}
+
 // ---------- helpers anti-fuso ----------
 function ymd(input) {
   if (!input) return "";
   const m = String(input).match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
 }
+
 function ymdToBR(s) {
   const m = ymd(s).match(/^(\d{4})-(\d{2})-(\d{2})$/);
   return m ? `${m[3]}/${m[2]}/${m[1]}` : "—";
@@ -63,17 +80,16 @@ function ymdToBR(s) {
 
 /* ───────── assinatura: detecção mais robusta (sem quebrar compat) ───────── */
 function temAssinatura(x) {
-  // flags
   if (
     x?.assinado === true ||
     x?.assinatura === true ||
     x?.tem_assinatura === true ||
     x?.possui_assinatura === true ||
     x?.assinatura_valida === true
-  )
+  ) {
     return true;
+  }
 
-  // base64 / url / path
   const b64 =
     x?.imagem_base64 ||
     x?.assinatura_base64 ||
@@ -105,11 +121,27 @@ function MiniStat({ label, value = "—" }) {
   );
 }
 
+function Badge({ children, tone = "zinc" }) {
+  const tones = {
+    zinc: "bg-zinc-100 text-zinc-800 border-zinc-200 dark:bg-zinc-800/70 dark:text-zinc-100 dark:border-zinc-700",
+    amber: "bg-amber-100 text-amber-900 border-amber-200 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-800/60",
+    emerald: "bg-emerald-100 text-emerald-900 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800/60",
+    rose: "bg-rose-100 text-rose-900 border-rose-200 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-800/60",
+  };
+
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border px-2.5 py-1 ${tones[tone] ?? tones.zinc}`}
+    >
+      {children}
+    </span>
+  );
+}
+
 /* ---------------- HeaderHero (tema único, premium) ---------------- */
 function HeaderHero({ onRefresh, carregando, busca, setBusca, kpis }) {
   const inputRef = useRef(null);
 
-  // atalho: "/" foca busca
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -146,7 +178,6 @@ function HeaderHero({ onRefresh, carregando, busca, setBusca, kpis }) {
             Pesquise, visualize histórico e acompanhe avaliações dos instrutores.
           </p>
 
-          {/* Ministats */}
           <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4 w-full max-w-3xl">
             <MiniStat label="Total" value={kpis.total} />
             <MiniStat label="Encontrados" value={kpis.encontrados} />
@@ -154,7 +185,6 @@ function HeaderHero({ onRefresh, carregando, busca, setBusca, kpis }) {
             <MiniStat label="Sem assinatura" value={kpis.semAssinatura} />
           </div>
 
-          {/* Busca + ações */}
           <div className="mt-3 flex w-full max-w-2xl flex-col gap-2 sm:flex-row">
             <div className="relative flex-1 min-w-0">
               <label htmlFor="busca-instrutor" className="sr-only">
@@ -181,12 +211,11 @@ function HeaderHero({ onRefresh, carregando, busca, setBusca, kpis }) {
               type="button"
               onClick={onRefresh}
               disabled={carregando}
-              className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition
-                ${
-                  carregando
-                    ? "cursor-not-allowed opacity-60 bg-white/20"
-                    : "bg-white/15 hover:bg-white/25"
-                } text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60`}
+              className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                carregando
+                  ? "cursor-not-allowed opacity-60 bg-white/20"
+                  : "bg-white/15 hover:bg-white/25"
+              } text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60`}
               aria-label="Atualizar lista de instrutores"
               aria-busy={carregando ? "true" : "false"}
               title="Atualizar"
@@ -232,31 +261,44 @@ export default function GestaoInstrutor() {
   const [erro, setErro] = useState("");
   const [busca, setBusca] = useState(() => localStorage.getItem("gi:busca") || "");
 
-  const [ordenarPor, setOrdenarPor] = useState(() => localStorage.getItem("gi:ord") || "nome_asc"); // nome_asc | nome_desc | email_asc
+  const [ordenarPor, setOrdenarPor] = useState(
+    () => localStorage.getItem("gi:ord") || "nome_asc"
+  ); // nome_asc | nome_desc | email_asc
+
   const [historico, setHistorico] = useState([]);
+  const [carregandoHistorico, setCarregandoHistorico] = useState(false);
   const [modalHistoricoAberto, setModalHistoricoAberto] = useState(false);
   const [instrutorSelecionado, setInstrutorSelecionado] = useState(null);
 
   const liveRef = useRef(null);
   const abortRef = useRef(null);
+  const historyAbortRef = useRef(null);
   const mountedRef = useRef(true);
 
-  const setLive = (msg) => liveRef.current && (liveRef.current.textContent = msg);
+  const setLive = (msg) => {
+    if (liveRef.current) liveRef.current.textContent = msg;
+  };
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       abortRef.current?.abort?.("unmount");
+      historyAbortRef.current?.abort?.("unmount");
     };
   }, []);
 
   // persist filtros
   useEffect(() => {
-    try { localStorage.setItem("gi:busca", busca); } catch {}
+    try {
+      localStorage.setItem("gi:busca", busca);
+    } catch {}
   }, [busca]);
+
   useEffect(() => {
-    try { localStorage.setItem("gi:ord", ordenarPor); } catch {}
+    try {
+      localStorage.setItem("gi:ord", ordenarPor);
+    } catch {}
   }, [ordenarPor]);
 
   /* ---------- carregar lista ---------- */
@@ -270,23 +312,31 @@ export default function GestaoInstrutor() {
       const ctrl = new AbortController();
       abortRef.current = ctrl;
 
-      const data = await apiGet("/api/instrutor", { on403: "silent", signal: ctrl.signal });
-      const lista =
-        Array.isArray(data)
-          ? data
-          : Array.isArray(data?.lista)
-          ? data.lista
-          : Array.isArray(data?.instrutores)
-          ? data.instrutores
-          : [];
+      const data = await apiGet("/api/instrutor", {
+        on403: "silent",
+        signal: ctrl.signal,
+      });
+
+      const lista = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.lista)
+        ? data.lista
+        : Array.isArray(data?.instrutores)
+        ? data.instrutores
+        : Array.isArray(data?.data)
+        ? data.data
+        : [];
 
       if (!mountedRef.current) return;
+
       setInstrutores(lista);
       setLive(`Instrutores carregados: ${lista.length}.`);
     } catch (err) {
-      if (err?.name === "AbortError") return;
+      if (isAbortLike(err)) return;
+
       const msg = err?.message || "Erro ao carregar instrutores.";
       if (!mountedRef.current) return;
+
       setErro(msg);
       setInstrutores([]);
       toast.error(`❌ ${msg}`);
@@ -318,6 +368,7 @@ export default function GestaoInstrutor() {
       const bn = sLower(b?.nome);
       const ae = sLower(a?.email);
       const be = sLower(b?.email);
+
       switch (ordenarPor) {
         case "nome_desc":
           return bn.localeCompare(an) || be.localeCompare(ae);
@@ -349,16 +400,41 @@ export default function GestaoInstrutor() {
   }, [instrutores, filtrados]);
 
   /* ---------- histórico (modal) ---------- */
-  async function abrirModalVisualizar(instrutor) {
+  const fecharModalHistorico = useCallback(() => {
+    historyAbortRef.current?.abort?.("new-request");
+    setModalHistoricoAberto(false);
+    setCarregandoHistorico(false);
+  }, []);
+
+  const abrirModalVisualizar = useCallback(async (instrutor) => {
     setInstrutorSelecionado(instrutor);
     setModalHistoricoAberto(true);
     setHistorico([]);
+    setCarregandoHistorico(true);
 
     try {
       setLive(`Carregando histórico de ${instrutor?.nome}…`);
-      const data = await apiGet(`/api/instrutor/${instrutor.id}/eventos-avaliacao`, { on403: "silent" });
 
-      const eventos = (Array.isArray(data) ? data : []).map((ev) => ({
+      historyAbortRef.current?.abort?.("new-request");
+      const ctrl = new AbortController();
+      historyAbortRef.current = ctrl;
+
+      const data = await apiGet(`/api/instrutor/${instrutor.id}/eventos-avaliacao`, {
+        on403: "silent",
+        signal: ctrl.signal,
+      });
+
+      const raw = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.eventos)
+        ? data.eventos
+        : Array.isArray(data?.lista)
+        ? data.lista
+        : Array.isArray(data?.data)
+        ? data.data
+        : [];
+
+      const eventos = raw.map((ev) => ({
         id: ev.evento_id ?? ev.id ?? `${ev.evento}-${ev.data_inicio}-${ev.data_fim}`,
         titulo: ev.evento || ev.titulo || "Evento",
         data_inicio_ymd: ymd(ev.data_inicio || ev.data_inicio_geral || ev.inicio),
@@ -367,16 +443,27 @@ export default function GestaoInstrutor() {
           ev.nota_media !== null && ev.nota_media !== undefined
             ? Number(ev.nota_media)
             : null,
+        total_respostas:
+          ev.total_respostas !== null && ev.total_respostas !== undefined
+            ? Number(ev.total_respostas)
+            : 0,
       }));
+
+      if (!mountedRef.current) return;
 
       setHistorico(eventos);
       setLive("Histórico carregado.");
     } catch (e) {
+      if (isAbortLike(e)) return;
+
+      if (!mountedRef.current) return;
       toast.error("❌ Erro ao buscar histórico do instrutor.");
       setHistorico([]);
       setLive("Falha ao carregar histórico.");
+    } finally {
+      if (mountedRef.current) setCarregandoHistorico(false);
     }
-  }
+  }, []);
 
   /* ---------- exportação CSV da lista filtrada ---------- */
   const onExportCsv = () => {
@@ -384,17 +471,17 @@ export default function GestaoInstrutor() {
       const headers = ["id", "nome", "email"];
       const rows = filtrados.map((p) => [p?.id ?? "", p?.nome ?? "", p?.email ?? ""]);
 
-      // BOM para Excel (pt-BR) abrir corretamente
       const bom = "\uFEFF";
       const content =
-        bom +
-        [headers, ...rows].map((r) => r.map(csvEscape).join(";")).join("\n");
+        bom + [headers, ...rows].map((r) => r.map(csvEscape).join(";")).join("\n");
 
       const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
 
       const hoje = new Date();
-      const p = (n) => String(n).padStart(2, "0");
-      const stamp = `${hoje.getFullYear()}-${p(hoje.getMonth() + 1)}-${p(hoje.getDate())}`;
+      const pad = (n) => String(n).padStart(2, "0");
+      const stamp = `${hoje.getFullYear()}-${pad(hoje.getMonth() + 1)}-${pad(
+        hoje.getDate()
+      )}`;
 
       downloadBlob(`instrutores_${stamp}.csv`, blob);
       toast.success("📄 CSV exportado.");
@@ -406,10 +493,8 @@ export default function GestaoInstrutor() {
 
   return (
     <div className="flex min-h-screen flex-col bg-gelo text-black dark:bg-zinc-900 dark:text-white overflow-x-hidden">
-      {/* Live region acessível */}
       <p ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" />
 
-      {/* Header hero */}
       <HeaderHero
         onRefresh={carregarInstrutores}
         carregando={carregandoDados}
@@ -418,7 +503,6 @@ export default function GestaoInstrutor() {
         kpis={kpis}
       />
 
-      {/* progress bar fina */}
       {carregandoDados && (
         <div
           className="sticky top-0 z-40 h-1 w-full bg-violet-200 dark:bg-violet-950/30"
@@ -431,13 +515,11 @@ export default function GestaoInstrutor() {
         </div>
       )}
 
-      {/* Barra sticky de ferramentas */}
       <section
         aria-label="Ferramentas de lista"
         className="sticky top-1 z-30 mx-auto mb-4 w-full max-w-6xl rounded-2xl border border-zinc-200 bg-white/80 p-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/80 overflow-x-hidden"
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          {/* Ordenação */}
           <div className="flex flex-wrap items-center gap-2 min-w-0">
             <SortAsc className="h-4 w-4 text-zinc-500" aria-hidden="true" />
             <label htmlFor="ord" className="text-xs text-zinc-600 dark:text-zinc-300">
@@ -466,7 +548,6 @@ export default function GestaoInstrutor() {
             )}
           </div>
 
-          {/* Exportar CSV */}
           <div className="flex flex-wrap items-center gap-2 min-w-0">
             <button
               type="button"
@@ -484,8 +565,10 @@ export default function GestaoInstrutor() {
         </div>
       </section>
 
-      {/* Conteúdo */}
-      <main id="conteudo" className="mx-auto w-full max-w-6xl px-3 py-6 sm:px-4 overflow-x-hidden flex-1">
+      <main
+        id="conteudo"
+        className="mx-auto w-full max-w-6xl px-3 py-6 sm:px-4 overflow-x-hidden flex-1"
+      >
         {carregandoDados ? (
           <div className="space-y-4" aria-busy="true" aria-live="polite">
             {[...Array(4)].map((_, i) => (
@@ -498,10 +581,17 @@ export default function GestaoInstrutor() {
             role="alert"
           >
             <div className="flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 mt-0.5 text-rose-600 dark:text-rose-300" aria-hidden="true" />
+              <AlertTriangle
+                className="w-5 h-5 mt-0.5 text-rose-600 dark:text-rose-300"
+                aria-hidden="true"
+              />
               <div className="min-w-0">
-                <p className="font-semibold text-rose-800 dark:text-rose-200">Não foi possível carregar.</p>
-                <p className="text-sm text-rose-800/90 dark:text-rose-200/90 break-words">{erro}</p>
+                <p className="font-semibold text-rose-800 dark:text-rose-200">
+                  Não foi possível carregar.
+                </p>
+                <p className="text-sm text-rose-800/90 dark:text-rose-200/90 break-words">
+                  {erro}
+                </p>
                 <button
                   type="button"
                   onClick={carregarInstrutores}
@@ -515,7 +605,10 @@ export default function GestaoInstrutor() {
           </div>
         ) : (
           <section aria-label="Tabela de instrutores">
-            <TabelaInstrutor instrutor={Array.isArray(filtrados) ? filtrados : []} onVisualizar={abrirModalVisualizar} />
+            <TabelaInstrutor
+              instrutor={Array.isArray(filtrados) ? filtrados : []}
+              onVisualizar={abrirModalVisualizar}
+            />
 
             {!filtrados.length && (
               <p className="mt-4 text-center text-sm text-gray-600 dark:text-gray-300">
@@ -526,20 +619,17 @@ export default function GestaoInstrutor() {
         )}
       </main>
 
-      {/* Modal Histórico (premium + scroll + a11y) */}
       <Modal
         isOpen={modalHistoricoAberto}
-        onRequestClose={() => setModalHistoricoAberto(false)}
+        onRequestClose={fecharModalHistorico}
         style={modalStyle}
         contentLabel="Histórico do instrutor"
         shouldCloseOnOverlayClick
         shouldCloseOnEsc
       >
         <div className="w-full rounded-2xl overflow-hidden bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl max-h-[92vh] flex flex-col">
-          {/* top bar colorida */}
           <div className="h-1.5 w-full bg-gradient-to-r from-violet-600 via-fuchsia-600 to-rose-600" />
 
-          {/* header sticky */}
           <div className="sticky top-0 z-10 bg-white/90 dark:bg-zinc-900/90 backdrop-blur border-b border-zinc-200 dark:border-zinc-800 px-4 py-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -556,7 +646,7 @@ export default function GestaoInstrutor() {
 
               <button
                 type="button"
-                onClick={() => setModalHistoricoAberto(false)}
+                onClick={fecharModalHistorico}
                 className="shrink-0 inline-flex items-center justify-center rounded-xl p-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
                 aria-label="Fechar modal"
               >
@@ -565,16 +655,36 @@ export default function GestaoInstrutor() {
             </div>
           </div>
 
-          {/* conteúdo rolável */}
           <div className="flex-1 overflow-y-auto px-4 py-4">
-            {historico.length === 0 ? (
+            {carregandoHistorico ? (
+              <div className="space-y-3" aria-busy="true" aria-live="polite">
+                {[...Array(3)].map((_, i) => (
+                  <div
+                    key={i}
+                    className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 shadow-sm"
+                  >
+                    <div className="flex items-center gap-2 text-zinc-500 dark:text-zinc-300">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span className="text-sm font-medium">Carregando histórico…</span>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      <Skeleton height={18} />
+                      <Skeleton height={14} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : historico.length === 0 ? (
               <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 p-4">
                 <div className="flex items-start gap-3">
                   <History className="w-5 h-5 text-zinc-500" aria-hidden="true" />
                   <div className="min-w-0">
-                    <p className="font-semibold text-zinc-900 dark:text-white">Nenhum evento encontrado</p>
+                    <p className="font-semibold text-zinc-900 dark:text-white">
+                      Nenhum evento encontrado
+                    </p>
                     <p className="text-sm text-zinc-600 dark:text-zinc-300">
-                      Se você esperava ver eventos aqui, confirme se o instrutor está vinculado corretamente ao evento/turma.
+                      Se você esperava ver eventos aqui, confirme se o instrutor está vinculado
+                      corretamente ao evento/turma.
                     </p>
                   </div>
                 </div>
@@ -599,8 +709,14 @@ export default function GestaoInstrutor() {
                       <Badge tone={evento.nota_media !== null ? "amber" : "zinc"}>
                         Média:{" "}
                         <strong className="ml-1">
-                          {evento.nota_media !== null ? `${evento.nota_media.toFixed(1)} / 10` : "N/A"}
+                          {evento.nota_media !== null
+                            ? `${evento.nota_media.toFixed(1)} / 10`
+                            : "N/A"}
                         </strong>
+                      </Badge>
+
+                      <Badge tone="zinc">
+                        Respostas: <strong className="ml-1">{evento.total_respostas ?? 0}</strong>
                       </Badge>
                     </div>
                   </li>
@@ -609,11 +725,10 @@ export default function GestaoInstrutor() {
             )}
           </div>
 
-          {/* footer */}
           <div className="border-t border-zinc-200 dark:border-zinc-800 px-4 py-3 flex items-center justify-end gap-2 bg-white/80 dark:bg-zinc-900/80 backdrop-blur">
             <button
               type="button"
-              onClick={() => setModalHistoricoAberto(false)}
+              onClick={fecharModalHistorico}
               className="rounded-xl px-4 py-2 text-sm font-semibold bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
             >
               Fechar

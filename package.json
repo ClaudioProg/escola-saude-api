@@ -2,7 +2,7 @@
   "name": "escola-saude-api",
   "version": "1.1.0",
   "description": "API da Escola da Saúde - Certificados, Eventos, Presenças e Avaliações",
-  "main": "server.js",
+  "main": "src/server.js",
   "private": true,
   "license": "MIT",
   "engines": {
@@ -10,10 +10,10 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "start:prod": "NODE_ENV=production node server.js",
-    "dev": "nodemon server.js",
+    "start:prod": "NODE_ENV=production node src/server.js",
+    "dev": "nodemon src/server.js",
     "dev:clean": "npx kill-port 3000 || true",
-    "dev:reset": "npx kill-port 3000 || true && nodemon server.js",
+    "dev:reset": "npx kill-port 3000 || true && nodemon src/server.js",
     "migrate:render": "node scripts/run-migration.js",
     "health": "node -e \"fetch('http://localhost:3000/__ping').then(r=>r.text()).then(console.log).catch(err=>{console.error(err);process.exit(1)})\"",
     "test": "node -e \"console.log('No tests configured yet')\""
