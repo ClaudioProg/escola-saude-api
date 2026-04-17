@@ -6,6 +6,7 @@
 // - Date-only safe (sem Date JS para "YYYY-MM-DD") ✅
 // - Status por data+hora com fuso SP ✅
 // - Fallback real avaliacoes/avaliacao ✅
+// - Fallback real assinaturas ✅
 // - SQL defensivo (sem multiplicar linhas indevidamente) ✅
 // - Rotas:
 //    • GET /api/instrutor (listarInstrutor)
@@ -129,7 +130,9 @@ function getFiltro(req) {
     .trim();
 
   if (!hasParam) return "todos";
-  if (raw === "encerrados" || raw === "encerrado" || raw === "realizados") return "encerrados";
+  if (raw === "encerrados" || raw === "encerrado" || raw === "realizados") {
+    return "encerrados";
+  }
   if (raw === "ativos" || raw === "ativo") return "ativos";
   return "todos";
 }
@@ -229,6 +232,96 @@ function sqlVinculosBaseGlobal() {
   `;
 }
 
+/* ────────────────────────────────────────────────────────────────
+   Blocos SQL reaproveitáveis da listagem
+──────────────────────────────────────────────────────────────── */
+function sqlListarInstrutoresCore({ tabelaAvaliacao, assinaturasMode }) {
+  const sqlAssinaturas =
+    assinaturasMode === "full"
+      ? `
+      assinaturas_agg AS (
+        SELECT
+          s.usuario_id,
+          BOOL_OR(
+            s.imagem_base64 IS NOT NULL
+            OR NULLIF(trim(COALESCE(s.assinatura_url, '')), '') IS NOT NULL
+            OR NULLIF(trim(COALESCE(s.assinatura_path, '')), '') IS NOT NULL
+          ) AS possui_assinatura
+        FROM assinaturas s
+        GROUP BY s.usuario_id
+      )
+      `
+      : assinaturasMode === "base64"
+      ? `
+      assinaturas_agg AS (
+        SELECT
+          s.usuario_id,
+          BOOL_OR(s.imagem_base64 IS NOT NULL) AS possui_assinatura
+        FROM assinaturas s
+        GROUP BY s.usuario_id
+      )
+      `
+      : `
+      assinaturas_agg AS (
+        SELECT
+          u.id AS usuario_id,
+          FALSE AS possui_assinatura
+        FROM usuarios u
+      )
+      `;
+
+  return `
+    ${sqlVinculosBaseGlobal()},
+    instrutores AS (
+      SELECT DISTINCT u.id, u.nome, u.email
+      FROM usuarios u
+      WHERE lower(COALESCE(u.perfil, '')) LIKE '%instrutor%'
+         OR lower(COALESCE(u.perfil, '')) LIKE '%administrador%'
+    ),
+    eventos_por_instrutor AS (
+      SELECT instrutor_id, COUNT(DISTINCT evento_id)::int AS eventos_ministrados
+      FROM vinculos
+      GROUP BY instrutor_id
+    ),
+    turmas_por_instrutor AS (
+      SELECT instrutor_id, COUNT(DISTINCT turma_id)::int AS turmas_vinculadas
+      FROM vinculos
+      GROUP BY instrutor_id
+    ),
+    notas_por_instrutor AS (
+      SELECT
+        v.instrutor_id,
+        ${SQL_MAP_NOTA} AS nota
+      FROM vinculos v
+      LEFT JOIN ${tabelaAvaliacao} a ON a.turma_id = v.turma_id
+    ),
+    agg_notas AS (
+      SELECT
+        instrutor_id,
+        COUNT(nota)::int AS total_respostas,
+        ROUND(AVG(nota)::numeric, 2) AS media_avaliacao
+      FROM notas_por_instrutor
+      GROUP BY instrutor_id
+    ),
+    ${sqlAssinaturas}
+    SELECT
+      i.id,
+      i.nome,
+      i.email,
+      COALESCE(ep.eventos_ministrados, 0) AS "eventosMinistrados",
+      COALESCE(tp.turmas_vinculadas, 0)   AS "turmasVinculadas",
+      COALESCE(an.total_respostas, 0)     AS "totalRespostas",
+      an.media_avaliacao,
+      COALESCE(sa.possui_assinatura, FALSE) AS "possuiAssinatura"
+    FROM instrutores i
+    LEFT JOIN eventos_por_instrutor ep ON ep.instrutor_id = i.id
+    LEFT JOIN turmas_por_instrutor  tp ON tp.instrutor_id = i.id
+    LEFT JOIN agg_notas             an ON an.instrutor_id = i.id
+    LEFT JOIN assinaturas_agg       sa ON sa.usuario_id = i.id
+    ORDER BY i.nome;
+  `;
+}
+
 /* ===================================================================
    📋 Lista instrutores com médias/contadores
    GET /api/instrutor
@@ -238,124 +331,30 @@ async function listarInstrutor(req, res) {
 
   try {
     const sqlVariants = [
-      `
-      ${sqlVinculosBaseGlobal()},
-      instrutores AS (
-        SELECT DISTINCT u.id, u.nome, u.email
-        FROM usuarios u
-        WHERE string_to_array(COALESCE(u.perfil,''), ',') && ARRAY['instrutor','administrador']
-      ),
-      eventos_por_instrutor AS (
-        SELECT instrutor_id, COUNT(DISTINCT evento_id)::int AS eventos_ministrados
-        FROM vinculos
-        GROUP BY instrutor_id
-      ),
-      turmas_por_instrutor AS (
-        SELECT instrutor_id, COUNT(DISTINCT turma_id)::int AS turmas_vinculadas
-        FROM vinculos
-        GROUP BY instrutor_id
-      ),
-      notas_por_instrutor AS (
-        SELECT
-          v.instrutor_id,
-          ${SQL_MAP_NOTA} AS nota
-        FROM vinculos v
-        LEFT JOIN avaliacoes a ON a.turma_id = v.turma_id
-      ),
-      agg_notas AS (
-        SELECT
-          instrutor_id,
-          COUNT(nota)::int AS total_respostas,
-          ROUND(AVG(nota)::numeric, 2) AS media_avaliacao
-        FROM notas_por_instrutor
-        GROUP BY instrutor_id
-      ),
-      assinaturas_agg AS (
-        SELECT
-          s.usuario_id,
-          BOOL_OR(
-            s.imagem_base64 IS NOT NULL
-            OR NULLIF(trim(COALESCE(s.assinatura_url, '')), '') IS NOT NULL
-            OR NULLIF(trim(COALESCE(s.assinatura_path, '')), '') IS NOT NULL
-          ) AS possui_assinatura
-        FROM assinaturas s
-        GROUP BY s.usuario_id
-      )
-      SELECT
-        i.id,
-        i.nome,
-        i.email,
-        COALESCE(ep.eventos_ministrados, 0) AS "eventosMinistrados",
-        COALESCE(tp.turmas_vinculadas, 0)   AS "turmasVinculadas",
-        COALESCE(an.total_respostas, 0)     AS "totalRespostas",
-        an.media_avaliacao,
-        COALESCE(sa.possui_assinatura, FALSE) AS "possuiAssinatura"
-      FROM instrutores i
-      LEFT JOIN eventos_por_instrutor ep ON ep.instrutor_id = i.id
-      LEFT JOIN turmas_por_instrutor  tp ON tp.instrutor_id = i.id
-      LEFT JOIN agg_notas             an ON an.instrutor_id = i.id
-      LEFT JOIN assinaturas_agg       sa ON sa.usuario_id = i.id
-      ORDER BY i.nome;
-      `,
-      `
-      ${sqlVinculosBaseGlobal()},
-      instrutores AS (
-        SELECT DISTINCT u.id, u.nome, u.email
-        FROM usuarios u
-        WHERE string_to_array(COALESCE(u.perfil,''), ',') && ARRAY['instrutor','administrador']
-      ),
-      eventos_por_instrutor AS (
-        SELECT instrutor_id, COUNT(DISTINCT evento_id)::int AS eventos_ministrados
-        FROM vinculos
-        GROUP BY instrutor_id
-      ),
-      turmas_por_instrutor AS (
-        SELECT instrutor_id, COUNT(DISTINCT turma_id)::int AS turmas_vinculadas
-        FROM vinculos
-        GROUP BY instrutor_id
-      ),
-      notas_por_instrutor AS (
-        SELECT
-          v.instrutor_id,
-          ${SQL_MAP_NOTA} AS nota
-        FROM vinculos v
-        LEFT JOIN avaliacao a ON a.turma_id = v.turma_id
-      ),
-      agg_notas AS (
-        SELECT
-          instrutor_id,
-          COUNT(nota)::int AS total_respostas,
-          ROUND(AVG(nota)::numeric, 2) AS media_avaliacao
-        FROM notas_por_instrutor
-        GROUP BY instrutor_id
-      ),
-      assinaturas_agg AS (
-        SELECT
-          s.usuario_id,
-          BOOL_OR(
-            s.imagem_base64 IS NOT NULL
-            OR NULLIF(trim(COALESCE(s.assinatura_url, '')), '') IS NOT NULL
-            OR NULLIF(trim(COALESCE(s.assinatura_path, '')), '') IS NOT NULL
-          ) AS possui_assinatura
-        FROM assinaturas s
-        GROUP BY s.usuario_id
-      )
-      SELECT
-        i.id,
-        i.nome,
-        i.email,
-        COALESCE(ep.eventos_ministrados, 0) AS "eventosMinistrados",
-        COALESCE(tp.turmas_vinculadas, 0)   AS "turmasVinculadas",
-        COALESCE(an.total_respostas, 0)     AS "totalRespostas",
-        an.media_avaliacao,
-        COALESCE(sa.possui_assinatura, FALSE) AS "possuiAssinatura"
-      FROM instrutores i
-      LEFT JOIN eventos_por_instrutor ep ON ep.instrutor_id = i.id
-      LEFT JOIN turmas_por_instrutor  tp ON tp.instrutor_id = i.id
-      LEFT JOIN agg_notas             an ON an.instrutor_id = i.id
-      LEFT JOIN assinaturas_agg       sa ON sa.usuario_id = i.id
-      ORDER BY i.nome;
-      `,
+      sqlListarInstrutoresCore({
+        tabelaAvaliacao: "avaliacoes",
+        assinaturasMode: "full",
+      }),
+      sqlListarInstrutoresCore({
+        tabelaAvaliacao: "avaliacao",
+        assinaturasMode: "full",
+      }),
+      sqlListarInstrutoresCore({
+        tabelaAvaliacao: "avaliacoes",
+        assinaturasMode: "base64",
+      }),
+      sqlListarInstrutoresCore({
+        tabelaAvaliacao: "avaliacao",
+        assinaturasMode: "base64",
+      }),
+      sqlListarInstrutoresCore({
+        tabelaAvaliacao: "avaliacoes",
+        assinaturasMode: "none",
+      }),
+      sqlListarInstrutoresCore({
+        tabelaAvaliacao: "avaliacao",
+        assinaturasMode: "none",
+      }),
     ];
 
     const { rows } = await queryFirstWorking(req, sqlVariants, []);
