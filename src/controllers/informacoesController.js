@@ -127,19 +127,10 @@ function validateConteudoHtml(conteudoHtml) {
 function resolvePersistedImageForOutput(req, item) {
   if (!item) return null;
 
-  const imagemBase64 =
-    item.imagem_base64 ||
-    item.imagem_data_url ||
-    item.imagem_blob_base64 ||
-    null;
-
-  if (imagemBase64 && /^data:image\//i.test(String(imagemBase64))) {
-    return imagemBase64;
-  }
-
-  const imagemUrl = item.imagem_url || item.imagem_relative_path || null;
+  const imagemUrl = item.imagem_url || null;
   if (!imagemUrl) return null;
 
+  if (/^data:image\//i.test(String(imagemUrl))) return imagemUrl;
   if (/^https?:\/\//i.test(String(imagemUrl))) return imagemUrl;
 
   const cleanPath = String(imagemUrl).replace(/^\/+/, "");
@@ -150,27 +141,19 @@ function buildImagePersistencePayloadFromFile(req) {
   if (!req.file) return {};
 
   const mimeType = req.file.mimetype || "application/octet-stream";
-  const base64 = req.file.buffer?.toString("base64");
+  const imagePath = req.file.filename
+    ? getImageRelativePath(req.file.filename)
+    : null;
 
-  if (!base64) {
+  if (!imagePath) {
     throw new Error("Falha ao processar imagem enviada.");
   }
 
-  const imagemDataUrl = `data:${mimeType};base64,${base64}`;
-
   return {
+    imagem_url: imagePath,
     imagem_nome_original: req.file.originalname || null,
     imagem_mime_type: mimeType,
     imagem_tamanho_bytes: req.file.size || null,
-
-    // ✅ compat legado (caso ainda exista uso do caminho físico)
-    imagem_relative_path: req.file.filename
-      ? getImageRelativePath(req.file.filename)
-      : null,
-
-    // ✅ principal: persistência em banco
-    imagem_base64: imagemDataUrl,
-    imagem_data_url: imagemDataUrl,
   };
 }
 
@@ -239,35 +222,12 @@ function buildPayloadFromRequest(req) {
 }
 
 function withImageFieldsForDb(payload, atual = null) {
-  const hasNewDbImage =
-    !!payload.imagem_base64 || !!payload.imagem_data_url;
-
-  const hasNewRelativePath = !!payload.imagem_relative_path;
-
-  const currentDbImage =
-    atual?.imagem_base64 ||
-    atual?.imagem_data_url ||
-    atual?.imagem_blob_base64 ||
-    null;
-
-  const currentUrl = atual?.imagem_url || atual?.imagem_relative_path || null;
+  const hasNewImageUrl = !!String(payload.imagem_url || "").trim();
+  const currentUrl = atual?.imagem_url || null;
 
   return {
     ...payload,
-
-    // ✅ fonte principal no banco
-    imagem_base64: hasNewDbImage
-      ? payload.imagem_base64 || payload.imagem_data_url
-      : currentDbImage || null,
-
-    imagem_data_url: hasNewDbImage
-      ? payload.imagem_data_url || payload.imagem_base64
-      : currentDbImage || null,
-
-    // ✅ compat legado
-    imagem_url: hasNewRelativePath
-      ? payload.imagem_relative_path
-      : currentUrl || null,
+    imagem_url: hasNewImageUrl ? payload.imagem_url : currentUrl,
   };
 }
 
@@ -463,9 +423,14 @@ async function putInformacao(req, res) {
     const item = await atualizarInformacao(id, payload);
 
     // remove arquivo legado local só se houve troca de imagem
-    if (req.file && atual.imagem_url?.startsWith("uploads/")) {
-      removeFileIfExists(resolveImageAbsolutePath(atual.imagem_url));
-    }
+    if (
+  req.file &&
+  atual.imagem_url &&
+  atual.imagem_url.startsWith("uploads/") &&
+  atual.imagem_url !== item?.imagem_url
+) {
+  removeFileIfExists(resolveImageAbsolutePath(atual.imagem_url));
+}
 
     logInfo(rid, "[informacoes][editar][ok]", {
       ...logContext(req),
