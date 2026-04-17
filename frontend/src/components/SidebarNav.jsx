@@ -1,5 +1,9 @@
 // ✅ src/components/SidebarNav.jsx
-// Premium: responsivo, reativo ao tema, colapsável, acessível, robusto no mobile e consistente
+// Premium: responsivo, reativo ao tema, colapsável, acessível e consistente
+// FIX:
+// - desktop recolhido agora expande ao clicar na seção
+// - melhora abertura de menus Instrutor / Administrador / Gestor
+// - preserva persistência e navegação
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -58,9 +62,7 @@ function getPerfisRobusto() {
         pushAll(out, rawPerfil);
       }
     }
-  } catch {
-    // noop
-  }
+  } catch {}
 
   try {
     const rawUser = localStorage.getItem("usuario");
@@ -70,9 +72,7 @@ function getPerfisRobusto() {
       pushAll(out, u?.perfis);
       pushAll(out, u?.roles);
     }
-  } catch {
-    // noop
-  }
+  } catch {}
 
   if (out.size === 0) out.add("usuario");
   return Array.from(out).filter(Boolean);
@@ -96,7 +96,7 @@ function isActivePath(currentPath, itemPath) {
     return currentPath.startsWith("/admin/submissao");
   }
   if (currentPath === itemPath) return true;
-  if (itemPath !== "/" && currentPath.startsWith(`${itemPath}/`)) return true;
+  if (itemPath !== "/" && currentPath.startsWith(itemPath + "/")) return true;
   return false;
 }
 
@@ -195,9 +195,7 @@ function MenuItem({
       />
 
       <IconTile active={active} isDark={isDark} Icon={Icon} />
-
       {!collapsed && <span className="truncate">{label}</span>}
-
       {active && !collapsed && (
         <span className="ml-auto h-2 w-2 rounded-full bg-white/85 shrink-0" aria-hidden="true" />
       )}
@@ -211,8 +209,6 @@ function SectionHeader({
   collapsed,
   isDark,
   onClick,
-  mobile = false,
-  controlsId,
 }) {
   return (
     <button
@@ -225,8 +221,7 @@ function SectionHeader({
         collapsed ? "justify-center" : ""
       )}
       aria-expanded={expanded}
-      aria-controls={controlsId}
-      disabled={collapsed && !mobile}
+      title={collapsed ? `Abrir seção ${title}` : undefined}
     >
       <div
         className={cx(
@@ -279,12 +274,10 @@ export default function SidebarNav({
     }
   });
 
-  const collapsed = typeof collapsedProp === "boolean" ? collapsedProp : collapsedState;
-  const themeCollapsed = collapsed && !isMobile;
+  const collapsed =
+    typeof collapsedProp === "boolean" ? collapsedProp : collapsedState;
 
-  const closeMobileMenu = useCallback(() => {
-    if (isMobile) onClose?.();
-  }, [isMobile, onClose]);
+  const themeCollapsed = collapsed && !isMobile;
 
   const setCollapsed = useCallback(
     (next) => {
@@ -296,9 +289,7 @@ export default function SidebarNav({
 
       try {
         localStorage.setItem(SIDEBAR_COLLAPSED_KEY, v ? "1" : "0");
-      } catch {
-        // noop
-      }
+      } catch {}
 
       onCollapsedChange?.(v);
     },
@@ -313,11 +304,7 @@ export default function SidebarNav({
 
       if (e.key === SIDEBAR_COLLAPSED_KEY) {
         const v = e.newValue === "1";
-
-        if (typeof collapsedProp !== "boolean") {
-          setCollapsedState(v);
-        }
-
+        if (typeof collapsedProp !== "boolean") setCollapsedState(v);
         onCollapsedChange?.(v);
       }
     };
@@ -326,14 +313,14 @@ export default function SidebarNav({
     return () => window.removeEventListener("storage", onStorage);
   }, [collapsedProp, onCollapsedChange]);
 
-  useEffect(() => {
-    if (!isMobile) return;
-    closeMobileMenu();
-  }, [isMobile, location.pathname, location.search, closeMobileMenu]);
-
   const isUsuario =
-    perfis.includes("usuario") || perfis.includes("instrutor") || perfis.includes("administrador");
-  const isInstrutor = perfis.includes("instrutor") || perfis.includes("administrador");
+    perfis.includes("usuario") ||
+    perfis.includes("instrutor") ||
+    perfis.includes("administrador");
+
+  const isInstrutor =
+    perfis.includes("instrutor") || perfis.includes("administrador");
+
   const isAdmin = perfis.includes("administrador");
   const isGestor = isAdmin;
 
@@ -413,24 +400,22 @@ export default function SidebarNav({
   ]);
 
   useEffect(() => {
-    if (themeCollapsed) return;
-
     const found = sections.find((sec) =>
       sec.items.some((it) => isActivePath(location.pathname, it.path))
     );
 
-    if (found?.title && found.title !== openSection) {
+    if (found?.title) {
       setOpenSection(found.title);
+    } else if (!openSection && sections.length) {
+      setOpenSection(sections[0].title);
     }
-  }, [location.pathname, themeCollapsed, sections, openSection]);
+  }, [location.pathname, sections]);
 
   const [focusIdx, setFocusIdx] = useState(0);
 
   const flatItems = useMemo(() => {
     const out = [];
-    sections.forEach((sec) => {
-      sec.items.forEach((it) => out.push(it));
-    });
+    sections.forEach((sec) => sec.items.forEach((it) => out.push(it)));
     return out;
   }, [sections]);
 
@@ -442,7 +427,7 @@ export default function SidebarNav({
     (path) => {
       if (path === "__open_submissions__") {
         navigate("/admin/submissao");
-        closeMobileMenu();
+        onClose?.();
         return;
       }
 
@@ -450,9 +435,22 @@ export default function SidebarNav({
       const safe = p.startsWith("/") ? p : `/${p}`;
 
       navigate(safe);
-      closeMobileMenu();
+      onClose?.();
     },
-    [navigate, closeMobileMenu]
+    [navigate, onClose]
+  );
+
+  const handleSectionToggle = useCallback(
+    (title) => {
+      if (themeCollapsed && !isMobile) {
+        setCollapsed(false);
+        setOpenSection(title);
+        return;
+      }
+
+      setOpenSection((prev) => (prev === title ? null : title));
+    },
+    [themeCollapsed, isMobile, setCollapsed]
   );
 
   const shellCls = isDark
@@ -472,7 +470,6 @@ export default function SidebarNav({
       )}
       aria-label="Menu principal"
     >
-      {/* HEADER */}
       <div className="p-3 shrink-0">
         <div
           aria-hidden="true"
@@ -513,7 +510,7 @@ export default function SidebarNav({
           ) : (
             <button
               type="button"
-              onClick={closeMobileMenu}
+              onClick={() => onClose?.()}
               className={cx(
                 "rounded-2xl p-2.5 border transition",
                 isDark ? "border-white/10 hover:bg-white/5" : "border-slate-200 hover:bg-slate-100"
@@ -526,7 +523,6 @@ export default function SidebarNav({
         </div>
       </div>
 
-      {/* LISTA */}
       <div
         id={listId}
         className={cx(
@@ -541,8 +537,7 @@ export default function SidebarNav({
           </div>
         ) : (
           sections.map((sec) => {
-            const expanded = themeCollapsed || openSection === sec.title;
-            const sectionId = `sec-${variant}-${sec.title}`;
+            const expanded = themeCollapsed ? false : openSection === sec.title;
 
             return (
               <div key={sec.title} className="rounded-2xl">
@@ -551,19 +546,13 @@ export default function SidebarNav({
                   expanded={expanded}
                   collapsed={themeCollapsed}
                   isDark={isDark}
-                  mobile={isMobile}
-                  controlsId={sectionId}
-                  onClick={() => {
-                    if (themeCollapsed && !isMobile) return;
-                    setOpenSection((prev) => (prev === sec.title ? null : sec.title));
-                  }}
+                  onClick={() => handleSectionToggle(sec.title)}
                 />
 
                 {expanded && (
-                  <div id={sectionId} className="space-y-1">
+                  <div id={`sec-${variant}-${sec.title}`} className="space-y-1">
                     {sec.items.map((item) => {
                       const active = isActivePath(location.pathname, item.path);
-
                       const globalIndex = flatItems.findIndex(
                         (it) => it.path === item.path && it.label === item.label
                       );
@@ -575,10 +564,14 @@ export default function SidebarNav({
                         ? (e) => {
                             if (e.key === "ArrowDown") {
                               e.preventDefault();
-                              setFocusIdx((v) => clamp(v + 1, 0, Math.max(0, flatItems.length - 1)));
+                              setFocusIdx((v) =>
+                                clamp(v + 1, 0, Math.max(0, flatItems.length - 1))
+                              );
                             } else if (e.key === "ArrowUp") {
                               e.preventDefault();
-                              setFocusIdx((v) => clamp(v - 1, 0, Math.max(0, flatItems.length - 1)));
+                              setFocusIdx((v) =>
+                                clamp(v - 1, 0, Math.max(0, flatItems.length - 1))
+                              );
                             } else if (e.key === "Home") {
                               e.preventDefault();
                               setFocusIdx(0);
