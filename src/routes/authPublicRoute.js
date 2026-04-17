@@ -55,6 +55,32 @@ const redefinirSenhaLimiter = rateLimit({
   message: { erro: "Muitas tentativas, aguarde antes de tentar novamente." },
 });
 
+const cadastroLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { erro: "Muitas tentativas de cadastro. Aguarde antes de tentar novamente." },
+});
+
+/* ───────────────── Público — cadastro ───────────────── */
+registerIf(
+  usuarioController?.cadastrar || usuarioController?.cadastrarUsuario,
+  function registrarRotaCadastro() {
+    const cadastroHandler =
+      usuarioController.cadastrar || usuarioController.cadastrarUsuario;
+
+    router.post(
+      "/cadastro",
+      cadastroLimiter,
+      noStore,
+      routeTag("authPublicRoute:POST /cadastro"),
+      asyncHandler(cadastroHandler)
+    );
+  },
+  "POST /auth/cadastro"
+);
+
 /* ───────────────── Público — recuperação de senha ───────────────── */
 registerIf(
   usuarioController?.recuperarSenha,
@@ -110,6 +136,7 @@ registerIf(
 );
 
 /* ───────────────── HEAD úteis para diagnóstico/warmup ───────────────── */
+router.head("/cadastro", (_req, res) => res.sendStatus(204));
 router.head("/esqueci-senha", (_req, res) => res.sendStatus(204));
 router.head("/recuperar-senha", (_req, res) => res.sendStatus(204));
 router.head("/resetar-senha", (_req, res) => res.sendStatus(204));
