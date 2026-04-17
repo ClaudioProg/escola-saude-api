@@ -6,6 +6,7 @@
 // - feedback claro para token inválido/expirado
 // - CTA para solicitar novo link
 // - integração segura com apiPost
+// - CORREÇÃO: usa rota pública de auth para reset por token
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
@@ -52,6 +53,15 @@ const IS_DEV =
  * - sem espaços
  */
 const SENHA_FORTE_RE = /^(?=\S{8,}$)(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).*$/;
+
+/**
+ * ✅ Rota pública correta para redefinição por token.
+ * Observação:
+ * - apiPost normalmente já prefixa com /api no services/api
+ * - se no seu backend o nome exato da rota estiver diferente,
+ *   ajuste apenas esta constante.
+ */
+const RESET_ENDPOINT = "/auth/resetar-senha";
 
 function debugLog(scope, payload) {
   if (!IS_DEV) return;
@@ -250,6 +260,7 @@ export default function RedefinirSenha() {
       tokenPresent: masked.present,
       tokenLength: masked.length,
       tokenPreview: masked.preview,
+      endpoint: RESET_ENDPOINT,
     });
   }, [location.pathname, token]);
 
@@ -367,6 +378,7 @@ export default function RedefinirSenha() {
       debugLog("[AUTH][RESET_SUBMIT_START]", {
         tokenPresent: Boolean(token),
         passwordLength: s1.length,
+        endpoint: RESET_ENDPOINT,
       });
 
       try {
@@ -374,9 +386,15 @@ export default function RedefinirSenha() {
         const decodedToken = decodeURIComponent(rawToken);
 
         await apiPost(
-          "/usuarios/redefinir-senha",
-          { token: decodedToken, novaSenha: s1 },
-          { auth: false, on401: "silent" }
+          RESET_ENDPOINT,
+          {
+            token: decodedToken,
+            novaSenha: s1,
+          },
+          {
+            auth: false,
+            on401: "silent",
+          }
         );
 
         const ok = "Senha redefinida com sucesso! Redirecionando para o login…";
@@ -409,6 +427,7 @@ export default function RedefinirSenha() {
         debugLog("[AUTH][RESET_SUBMIT_FAILURE]", {
           message: msg,
           status: err?.status || err?.response?.status || null,
+          endpoint: RESET_ENDPOINT,
         });
       } finally {
         setLoading(false);
