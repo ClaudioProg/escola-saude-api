@@ -119,10 +119,10 @@ function validateConteudoHtml(conteudoHtml) {
 =========================================================================== */
 
 /**
- * Ordem de prioridade da imagem:
- * 1) imagem_base64 / imagem_data_url (persistida no banco)
- * 2) imagem_url absoluta
- * 3) imagem_url relativa -> vira URL pública
+ * Regras:
+ * 1) Se imagem_url já for data:image/... → retorna como está
+ * 2) Se imagem_url já for absoluta (http/https) → retorna como está
+ * 3) Se imagem_url for relativa (uploads/...) → transforma em URL pública
  */
 function resolvePersistedImageForOutput(req, item) {
   if (!item) return null;
@@ -137,24 +137,63 @@ function resolvePersistedImageForOutput(req, item) {
   return `${getBaseUrl(req)}/${cleanPath}`;
 }
 
+/**
+ * Prioridade:
+ * 1) Persistir no banco como data URL se houver buffer
+ * 2) Fallback legado para caminho relativo se houver filename
+ */
 function buildImagePersistencePayloadFromFile(req) {
   if (!req.file) return {};
 
   const mimeType = req.file.mimetype || "application/octet-stream";
-  const imagePath = req.file.filename
-    ? getImageRelativePath(req.file.filename)
-    : null;
+  const originalName = req.file.originalname || null;
+  const size = req.file.size || null;
 
-  if (!imagePath) {
-    throw new Error("Falha ao processar imagem enviada.");
+  if (IS_DEV) {
+    logInfo(reqRid(req), "[informacoes][imagem][req.file]", {
+      fieldname: req.file.fieldname || null,
+      originalname: req.file.originalname || null,
+      mimetype: req.file.mimetype || null,
+      size: req.file.size || null,
+      hasBuffer: !!req.file.buffer,
+      hasFilename: !!req.file.filename,
+      path: req.file.path || null,
+    });
   }
 
-  return {
-    imagem_url: imagePath,
-    imagem_nome_original: req.file.originalname || null,
-    imagem_mime_type: mimeType,
-    imagem_tamanho_bytes: req.file.size || null,
-  };
+  // ✅ principal: persistência no banco
+  if (req.file.buffer && Buffer.isBuffer(req.file.buffer)) {
+    const base64 = req.file.buffer.toString("base64");
+
+    if (!base64) {
+      throw new Error("Falha ao processar imagem enviada.");
+    }
+
+    return {
+      imagem_url: `data:${mimeType};base64,${base64}`,
+      imagem_nome_original: originalName,
+      imagem_mime_type: mimeType,
+      imagem_tamanho_bytes: size,
+    };
+  }
+
+  // ✅ compat legado: caminho físico/relativo
+  if (req.file.filename) {
+    const imagePath = getImageRelativePath(req.file.filename);
+
+    if (!imagePath) {
+      throw new Error("Falha ao processar imagem enviada.");
+    }
+
+    return {
+      imagem_url: imagePath,
+      imagem_nome_original: originalName,
+      imagem_mime_type: mimeType,
+      imagem_tamanho_bytes: size,
+    };
+  }
+
+  throw new Error("Falha ao processar imagem enviada.");
 }
 
 function cleanupUploadedFile(req) {
@@ -222,7 +261,7 @@ function buildPayloadFromRequest(req) {
 }
 
 function withImageFieldsForDb(payload, atual = null) {
-  const hasNewImageUrl = !!String(payload.imagem_url || "").trim();
+  const hasNewImageUrl = !!String(payload?.imagem_url || "").trim();
   const currentUrl = atual?.imagem_url || null;
 
   return {
@@ -366,7 +405,13 @@ async function postInformacao(req, res) {
       id: item?.id,
       titulo: item?.titulo,
       temImagemUpload: !!req.file,
-      imagemPersistidaEmBanco: !!payload.imagem_base64,
+      imagemPersistidaEmBanco: !!payload.imagem_url,
+      imagemTipo:
+        typeof payload.imagem_url === "string" && payload.imagem_url.startsWith("data:image/")
+          ? "data-url"
+          : payload.imagem_url
+          ? "caminho-relativo"
+          : "sem-imagem",
     });
 
     return res.status(201).json({
@@ -422,15 +467,15 @@ async function putInformacao(req, res) {
 
     const item = await atualizarInformacao(id, payload);
 
-    // remove arquivo legado local só se houve troca de imagem
+    // remove arquivo legado local só se houve troca real de imagem
     if (
-  req.file &&
-  atual.imagem_url &&
-  atual.imagem_url.startsWith("uploads/") &&
-  atual.imagem_url !== item?.imagem_url
-) {
-  removeFileIfExists(resolveImageAbsolutePath(atual.imagem_url));
-}
+      req.file &&
+      atual.imagem_url &&
+      atual.imagem_url.startsWith("uploads/") &&
+      atual.imagem_url !== item?.imagem_url
+    ) {
+      removeFileIfExists(resolveImageAbsolutePath(atual.imagem_url));
+    }
 
     logInfo(rid, "[informacoes][editar][ok]", {
       ...logContext(req),
@@ -438,7 +483,13 @@ async function putInformacao(req, res) {
       tituloAnterior: atual.titulo,
       tituloNovo: item?.titulo,
       trocouImagem: !!req.file,
-      imagemPersistidaEmBanco: !!payload.imagem_base64,
+      imagemPersistidaEmBanco: !!payload.imagem_url,
+      imagemTipo:
+        typeof payload.imagem_url === "string" && payload.imagem_url.startsWith("data:image/")
+          ? "data-url"
+          : payload.imagem_url
+          ? "caminho-relativo"
+          : "sem-imagem",
     });
 
     return res.status(200).json({
@@ -539,8 +590,11 @@ async function deleteInformacao(req, res) {
       });
     }
 
-    // remove arquivo físico legado, mas imagem persistida no banco segue sendo a fonte principal
-    if (excluida.imagem_url?.startsWith("uploads/")) {
+    // remove arquivo físico legado apenas se for caminho local
+    if (
+      excluida.imagem_url &&
+      excluida.imagem_url.startsWith("uploads/")
+    ) {
       removeFileIfExists(resolveImageAbsolutePath(excluida.imagem_url));
     }
 
@@ -548,11 +602,7 @@ async function deleteInformacao(req, res) {
       ...logContext(req),
       id,
       titulo: excluida.titulo,
-      tinhaImagem: !!(
-        excluida.imagem_url ||
-        excluida.imagem_base64 ||
-        excluida.imagem_data_url
-      ),
+      tinhaImagem: !!excluida.imagem_url,
     });
 
     return res.status(200).json({
