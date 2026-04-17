@@ -191,7 +191,11 @@ router.use("/public", lookupsPublicRoute);
 ========================= */
 router.use("/login", loginRoute);
 router.use("/perfil", perfilRoute);
+
 router.use("/auth", authPublicRoute);
+router.use("/usuarios", authPublicRoute);
+router.use("/usuario", authPublicRoute);
+
 router.use("/auth", authGoogleRoute);
 
 /* =========================
