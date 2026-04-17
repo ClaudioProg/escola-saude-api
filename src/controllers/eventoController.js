@@ -48,6 +48,291 @@ const logInfo = (rid, msg, extra) => _log(rid, "info", msg, extra);
 const logWarn = (rid, msg, extra) => _log(rid, "warn", msg, extra);
 const logError = (rid, msg, err) => _log(rid, "error", msg, err);
 
+function memSnapshot(rid, label, extra = {}) {
+  const m = process.memoryUsage();
+  logInfo(rid, `[MEM] ${label}`, {
+    rss_mb: Math.round(m.rss / 1024 / 1024),
+    heap_total_mb: Math.round(m.heapTotal / 1024 / 1024),
+    heap_used_mb: Math.round(m.heapUsed / 1024 / 1024),
+    external_mb: Math.round(m.external / 1024 / 1024),
+    ...extra,
+  });
+}
+
+function uniqueInts(arr = []) {
+  return [...new Set(arr.map(Number).filter(Number.isFinite))];
+}
+
+function groupRows(rows, key) {
+  const map = new Map();
+  for (const row of rows || []) {
+    const k = row[key];
+    const arr = map.get(k) || [];
+    arr.push(row);
+    map.set(k, arr);
+  }
+  return map;
+}
+
+function avaliarElegibilidadeInscricaoComContexto({ usuario, evento }) {
+  if (!evento) {
+    return {
+      pode_se_inscrever: false,
+      motivo_bloqueio: "Evento não encontrado.",
+      publico_alvo_label: "",
+    };
+  }
+
+  if (!evento.publicado) {
+    return {
+      pode_se_inscrever: false,
+      motivo_bloqueio: "Evento ainda não publicado.",
+      publico_alvo_label: montarPublicoAlvoLabel(evento),
+    };
+  }
+
+  if (!evento.restrito) {
+    return {
+      pode_se_inscrever: true,
+      motivo_bloqueio: "",
+      publico_alvo_label: montarPublicoAlvoLabel(evento),
+    };
+  }
+
+  if (!usuario?.id) {
+    return {
+      pode_se_inscrever: false,
+      motivo_bloqueio: "Faça login para verificar elegibilidade de inscrição.",
+      publico_alvo_label: montarPublicoAlvoLabel(evento),
+    };
+  }
+
+  const cargosIdsPermitidos = Array.isArray(evento.cargos_permitidos_ids)
+    ? evento.cargos_permitidos_ids.map(Number).filter(Number.isFinite)
+    : [];
+
+  const unidadesIdsPermitidas = Array.isArray(evento.unidades_permitidas_ids)
+    ? evento.unidades_permitidas_ids.map(Number).filter(Number.isFinite)
+    : [];
+
+  if (evento.restrito_modo === MODO_TODOS) {
+    if (usuario.registro_norm) {
+      return {
+        pode_se_inscrever: true,
+        motivo_bloqueio: "",
+        publico_alvo_label: montarPublicoAlvoLabel(evento),
+      };
+    }
+
+    return {
+      pode_se_inscrever: false,
+      motivo_bloqueio: "Inscrição disponível apenas para servidores com registro válido.",
+      publico_alvo_label: montarPublicoAlvoLabel(evento),
+    };
+  }
+
+  if (evento.restrito_modo === MODO_LISTA) {
+    const regs = Array.isArray(evento.registros_permitidos)
+      ? evento.registros_permitidos
+      : [];
+
+    if (usuario.registro_norm && regs.includes(usuario.registro_norm)) {
+      return {
+        pode_se_inscrever: true,
+        motivo_bloqueio: "",
+        publico_alvo_label: montarPublicoAlvoLabel(evento),
+      };
+    }
+
+    return {
+      pode_se_inscrever: false,
+      motivo_bloqueio: "Inscrição disponível apenas para servidores autorizados nesta lista.",
+      publico_alvo_label: montarPublicoAlvoLabel(evento),
+    };
+  }
+
+  if (usuario.cargo_id && cargosIdsPermitidos.includes(Number(usuario.cargo_id))) {
+    return {
+      pode_se_inscrever: true,
+      motivo_bloqueio: "",
+      publico_alvo_label: montarPublicoAlvoLabel(evento),
+    };
+  }
+
+  if (
+    usuario.unidade_id != null &&
+    unidadesIdsPermitidas.includes(Number(usuario.unidade_id))
+  ) {
+    return {
+      pode_se_inscrever: true,
+      motivo_bloqueio: "",
+      publico_alvo_label: montarPublicoAlvoLabel(evento),
+    };
+  }
+
+  return {
+    pode_se_inscrever: false,
+    motivo_bloqueio: `Inscrição disponível apenas para ${montarPublicoAlvoLabel(evento)}.`,
+    publico_alvo_label: montarPublicoAlvoLabel(evento),
+  };
+}
+
+async function enriquecerEventosLista(client, usuarioId, eventosBase, rid) {
+  const eventoIds = uniqueInts((eventosBase || []).map((e) => e.id));
+  if (!eventoIds.length) return [];
+
+  memSnapshot(rid, "enriquecerEventosLista:inicio", {
+    eventos: eventoIds.length,
+    usuarioId,
+  });
+
+  const usuarioCtx = await getUsuarioContextoRestricao(client, usuarioId);
+
+  const allCargoIds = uniqueInts(
+    (eventosBase || []).flatMap((e) =>
+      Array.isArray(e?.cargos_permitidos_ids) ? e.cargos_permitidos_ids : []
+    )
+  );
+
+  const allUnidadeIds = uniqueInts(
+    (eventosBase || []).flatMap((e) =>
+      Array.isArray(e?.unidades_permitidas_ids) ? e.unidades_permitidas_ids : []
+    )
+  );
+
+  const [regsQ, instrQ, cargosQ, unidadesQ] = await Promise.all([
+    client.query(
+      `
+      SELECT evento_id, registro_norm
+      FROM evento_registros
+      WHERE evento_id = ANY($1::int[])
+      ORDER BY evento_id, registro_norm
+      `,
+      [eventoIds]
+    ),
+    client.query(
+      `
+      SELECT
+        t.evento_id,
+        u.id,
+        u.nome
+      FROM turmas t
+      JOIN turma_instrutor ti ON ti.turma_id = t.id
+      JOIN usuarios u ON u.id = ti.instrutor_id
+      WHERE t.evento_id = ANY($1::int[])
+      GROUP BY t.evento_id, u.id, u.nome
+      ORDER BY t.evento_id, u.nome
+      `,
+      [eventoIds]
+    ),
+    allCargoIds.length
+      ? client.query(
+          `
+          SELECT id, nome
+          FROM cargos
+          WHERE id = ANY($1::int[])
+          ORDER BY nome
+          `,
+          [allCargoIds]
+        )
+      : Promise.resolve({ rows: [] }),
+    allUnidadeIds.length
+      ? client.query(
+          `
+          SELECT id, nome
+          FROM unidades
+          WHERE id = ANY($1::int[])
+          ORDER BY nome
+          `,
+          [allUnidadeIds]
+        )
+      : Promise.resolve({ rows: [] }),
+  ]);
+
+  const regsMap = new Map();
+  for (const row of regsQ.rows || []) {
+    const arr = regsMap.get(row.evento_id) || [];
+    arr.push(row.registro_norm);
+    regsMap.set(row.evento_id, arr);
+  }
+
+  const instrMap = groupRows(instrQ.rows || [], "evento_id");
+
+  const cargoById = new Map(
+    (cargosQ.rows || []).map((c) => [
+      Number(c.id),
+      {
+        id: Number(c.id),
+        nome: normalizarTituloPtBr(c.nome),
+      },
+    ])
+  );
+
+  const unidadeById = new Map(
+    (unidadesQ.rows || []).map((u) => [
+      Number(u.id),
+      {
+        id: Number(u.id),
+        nome: u.nome,
+      },
+    ])
+  );
+
+  const eventos = (eventosBase || []).map((evento) => {
+    const registros = regsMap.get(evento.id) || [];
+
+    const instrutores = (instrMap.get(evento.id) || []).map((i) => ({
+      id: Number(i.id),
+      nome: i.nome,
+    }));
+
+    const cargos = (Array.isArray(evento.cargos_permitidos_ids)
+      ? evento.cargos_permitidos_ids
+      : []
+    )
+      .map((id) => cargoById.get(Number(id)))
+      .filter(Boolean);
+
+    const unidades = (Array.isArray(evento.unidades_permitidas_ids)
+      ? evento.unidades_permitidas_ids
+      : []
+    )
+      .map((id) => unidadeById.get(Number(id)))
+      .filter(Boolean);
+
+    const payload = {
+      ...evento,
+      registros_permitidos: registros,
+      count_registros_permitidos: registros.length,
+      cargos_permitidos: cargos,
+      unidades_permitidas: unidades,
+      instrutor: instrutores,
+    };
+
+    const eleg = avaliarElegibilidadeInscricaoComContexto({
+      usuario: {
+        id: usuarioId,
+        ...usuarioCtx,
+      },
+      evento: payload,
+    });
+
+    return {
+      ...payload,
+      pode_se_inscrever: eleg.pode_se_inscrever,
+      motivo_bloqueio: eleg.motivo_bloqueio,
+      publico_alvo_label: eleg.publico_alvo_label,
+    };
+  });
+
+  memSnapshot(rid, "enriquecerEventosLista:fim", {
+    eventos: eventos.length,
+    usuarioId,
+  });
+
+  return eventos;
+}
+
 /* ====================== Datas/Horários (date-only safe) ====================== */
 function hhmm(s, fb = "") {
   if (!s) return fb;
@@ -653,189 +938,241 @@ async function listarEventos(req, res) {
   const admin = isAdmin(req);
   logStart(rid, "listarEventos", { usuarioId, admin });
 
-  const richSQL = `
-    WITH minhas_turmas AS (
-      SELECT DISTINCT t.evento_id
-      FROM turmas t
-      JOIN turma_instrutor ti ON ti.turma_id = t.id
-      WHERE ti.instrutor_id = $2
-    )
-    SELECT 
-      e.*,
-      ('/api/eventos/' || e.id || '/folder') AS folder_blob_url,
-      CASE
-        WHEN e.folder_blob IS NOT NULL THEN 'blob'
-        WHEN NULLIF(e.folder_url,'') IS NOT NULL THEN 'url'
-        ELSE 'none'
-      END AS folder_kind,
-      COALESCE((
-        SELECT array_agg(er.registro_norm ORDER BY er.registro_norm)
-        FROM evento_registros er WHERE er.evento_id = e.id
-      ), '{}'::text[]) AS registros_permitidos,
-      (SELECT COUNT(*) FROM evento_registros er WHERE er.evento_id = e.id) AS count_registros_permitidos,
-      e.cargos_permitidos_ids,
-      e.unidades_permitidas_ids,
-      COALESCE((
-        SELECT json_agg(json_build_object('id', c.id, 'nome', c.nome) ORDER BY c.nome)
-        FROM cargos c
-        WHERE c.id = ANY(e.cargos_permitidos_ids)
-      ), '[]'::json) AS cargos_permitidos,
-      COALESCE((
-        SELECT json_agg(DISTINCT jsonb_build_object('id', u.id, 'nome', u.nome))
-        FROM turmas t2
-        JOIN turma_instrutor ti2 ON ti2.turma_id = t2.id
-        JOIN usuarios u ON u.id = ti2.instrutor_id
-        WHERE t2.evento_id = e.id
-      ), '[]'::json) AS instrutor,
-      COALESCE((
-        SELECT json_agg(json_build_object('id', u2.id, 'nome', u2.nome) ORDER BY u2.nome)
-        FROM unidades u2
-        WHERE u2.id = ANY(e.unidades_permitidas_ids)
-      ), '[]'::json) AS unidades_permitidas,
-      (SELECT MIN(t.data_inicio)    FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
-      (SELECT MAX(t.data_fim)       FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
-      (SELECT MIN(t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id) AS horario_inicio_geral,
-      (SELECT MAX(t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
-      CASE
-        WHEN CURRENT_TIMESTAMP::timestamp < COALESCE(
-          (
-            SELECT MIN(dt.data::date + COALESCE(dt.horario_inicio, '00:00'::time))
-            FROM turmas t
-            JOIN datas_turma dt ON dt.turma_id = t.id
-            WHERE t.evento_id = e.id
-          ),
-          (
-            SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time, '00:00'::time))
-            FROM turmas t
-            WHERE t.evento_id = e.id
-          )
-        ) THEN 'programado'
+  const client = await pool.connect();
+  try {
+    memSnapshot(rid, "listarEventos:inicio", { usuarioId, admin });
 
-        WHEN CURRENT_TIMESTAMP::timestamp <= COALESCE(
-          (
-            SELECT MAX(dt.data::date + COALESCE(dt.horario_fim, '23:59'::time))
-            FROM turmas t
-            JOIN datas_turma dt ON dt.turma_id = t.id
-            WHERE t.evento_id = e.id
-          ),
-          (
-            SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
-            FROM turmas t
-            WHERE t.evento_id = e.id
-          )
-        ) THEN 'andamento'
-
-        ELSE 'encerrado'
-      END AS status,
-      (
-        SELECT COUNT(*) > 0
-        FROM inscricoes i
-        JOIN turmas t ON t.id = i.turma_id
-        WHERE i.usuario_id = $1 AND t.evento_id = e.id
-      ) AS ja_inscrito,
-      (
-        SELECT COUNT(*) > 0
+    const baseWithBlob = `
+      WITH minhas_turmas AS (
+        SELECT DISTINCT t.evento_id
         FROM turmas t
         JOIN turma_instrutor ti ON ti.turma_id = t.id
-        WHERE t.evento_id = e.id AND ti.instrutor_id = $2
-      ) AS ja_instrutor
-    FROM eventos e
-    WHERE ${admin ? "TRUE" : "(e.publicado = TRUE OR e.id IN (SELECT evento_id FROM minhas_turmas))"}
-    ORDER BY (SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time,'23:59'::time))
-              FROM turmas t WHERE t.evento_id = e.id) DESC NULLS LAST,
-             e.id DESC;
-  `;
+        WHERE ti.instrutor_id = $2
+      ),
+      agg_turmas AS (
+        SELECT
+          t.evento_id,
+          MIN(t.data_inicio) AS data_inicio_geral,
+          MAX(t.data_fim) AS data_fim_geral,
+          MIN(t.horario_inicio) AS horario_inicio_geral,
+          MAX(t.horario_fim) AS horario_fim_geral
+        FROM turmas t
+        GROUP BY t.evento_id
+      ),
+      agg_datas AS (
+        SELECT
+          t.evento_id,
+          MIN(dt.data::date + COALESCE(dt.horario_inicio, '00:00'::time)) AS inicio_real,
+          MAX(dt.data::date + COALESCE(dt.horario_fim, '23:59'::time)) AS fim_real
+        FROM turmas t
+        JOIN datas_turma dt ON dt.turma_id = t.id
+        GROUP BY t.evento_id
+      ),
+      agg_inscrito AS (
+        SELECT
+          t.evento_id,
+          TRUE AS ja_inscrito
+        FROM inscricoes i
+        JOIN turmas t ON t.id = i.turma_id
+        WHERE i.usuario_id = $1
+        GROUP BY t.evento_id
+      ),
+      agg_instrutor AS (
+        SELECT
+          t.evento_id,
+          TRUE AS ja_instrutor
+        FROM turmas t
+        JOIN turma_instrutor ti ON ti.turma_id = t.id
+        WHERE ti.instrutor_id = $2
+        GROUP BY t.evento_id
+      )
+      SELECT
+        e.id,
+        e.titulo,
+        e.descricao,
+        e.local,
+        e.tipo,
+        e.unidade_id,
+        e.publico_alvo,
+        e.publicado,
+        e.restrito,
+        e.restrito_modo,
+        e.folder_url,
+        e.programacao_pdf_url,
+        e.cargos_permitidos_ids,
+        e.unidades_permitidas_ids,
+        e.criado_em,
+        e.atualizado_em,
 
-  const compatSQLPlus = `
-  SELECT
-    e.*,
-    ('/api/eventos/' || e.id || '/folder') AS folder_blob_url,
-    CASE
-      WHEN NULLIF(e.folder_url,'') IS NOT NULL THEN 'url'
-      ELSE 'none'
-    END AS folder_kind,
+        ('/api/eventos/' || e.id || '/folder') AS folder_blob_url,
+        CASE
+          WHEN e.folder_blob IS NOT NULL THEN 'blob'
+          WHEN NULLIF(e.folder_url,'') IS NOT NULL THEN 'url'
+          ELSE 'none'
+        END AS folder_kind,
 
-    COALESCE((
-      SELECT json_agg(DISTINCT jsonb_build_object('id', u.id, 'nome', u.nome))
-      FROM turmas t2
-      JOIN turma_instrutor ti2 ON ti2.turma_id = t2.id
-      JOIN usuarios u ON u.id = ti2.instrutor_id
-      WHERE t2.evento_id = e.id
-    ), '[]'::json) AS instrutor,
+        at.data_inicio_geral,
+        at.data_fim_geral,
+        at.horario_inicio_geral,
+        at.horario_fim_geral,
 
-    (SELECT MIN(t.data_inicio)    FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
-    (SELECT MAX(t.data_fim)       FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
-    (SELECT MIN(t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id) AS horario_inicio_geral,
-    (SELECT MAX(t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
+        CASE
+          WHEN CURRENT_TIMESTAMP::timestamp < COALESCE(
+            ad.inicio_real,
+            at.data_inicio_geral::date + COALESCE(at.horario_inicio_geral, '00:00'::time)
+          ) THEN 'programado'
+          WHEN CURRENT_TIMESTAMP::timestamp <= COALESCE(
+            ad.fim_real,
+            at.data_fim_geral::date + COALESCE(at.horario_fim_geral, '23:59'::time)
+          ) THEN 'andamento'
+          ELSE 'encerrado'
+        END AS status,
 
-    CASE
-      WHEN CURRENT_TIMESTAMP::timestamp < COALESCE(
-        (
-          SELECT MIN(dt.data::date + COALESCE(dt.horario_inicio, '00:00'::time))
-          FROM turmas t
-          JOIN datas_turma dt ON dt.turma_id = t.id
-          WHERE t.evento_id = e.id
-        ),
-        (
-          SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time, '00:00'::time))
-          FROM turmas t
-          WHERE t.evento_id = e.id
-        )
-      ) THEN 'programado'
+        COALESCE(ai.ja_inscrito, FALSE) AS ja_inscrito,
+        COALESCE(atr.ja_instrutor, FALSE) AS ja_instrutor
 
-      WHEN CURRENT_TIMESTAMP::timestamp <= COALESCE(
-        (
-          SELECT MAX(dt.data::date + COALESCE(dt.horario_fim, '23:59'::time))
-          FROM turmas t
-          JOIN datas_turma dt ON dt.turma_id = t.id
-          WHERE t.evento_id = e.id
-        ),
-        (
-          SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
-          FROM turmas t
-          WHERE t.evento_id = e.id
-        )
-      ) THEN 'andamento'
+      FROM eventos e
+      LEFT JOIN agg_turmas at ON at.evento_id = e.id
+      LEFT JOIN agg_datas ad ON ad.evento_id = e.id
+      LEFT JOIN agg_inscrito ai ON ai.evento_id = e.id
+      LEFT JOIN agg_instrutor atr ON atr.evento_id = e.id
+      WHERE ${admin ? "TRUE" : "(e.publicado = TRUE OR e.id IN (SELECT evento_id FROM minhas_turmas))"}
+      ORDER BY COALESCE(
+        ad.fim_real,
+        at.data_fim_geral::date + COALESCE(at.horario_fim_geral, '23:59'::time)
+      ) DESC NULLS LAST,
+      e.id DESC
+    `;
 
-      ELSE 'encerrado'
-    END AS status
-  FROM eventos e
-  ORDER BY (SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time,'23:59'::time))
-            FROM turmas t WHERE t.evento_id = e.id) DESC NULLS LAST,
-           e.id DESC;
-`;
+    const baseWithoutBlob = `
+      WITH minhas_turmas AS (
+        SELECT DISTINCT t.evento_id
+        FROM turmas t
+        JOIN turma_instrutor ti ON ti.turma_id = t.id
+        WHERE ti.instrutor_id = $2
+      ),
+      agg_turmas AS (
+        SELECT
+          t.evento_id,
+          MIN(t.data_inicio) AS data_inicio_geral,
+          MAX(t.data_fim) AS data_fim_geral,
+          MIN(t.horario_inicio) AS horario_inicio_geral,
+          MAX(t.horario_fim) AS horario_fim_geral
+        FROM turmas t
+        GROUP BY t.evento_id
+      ),
+      agg_datas AS (
+        SELECT
+          t.evento_id,
+          MIN(dt.data::date + COALESCE(dt.horario_inicio, '00:00'::time)) AS inicio_real,
+          MAX(dt.data::date + COALESCE(dt.horario_fim, '23:59'::time)) AS fim_real
+        FROM turmas t
+        JOIN datas_turma dt ON dt.turma_id = t.id
+        GROUP BY t.evento_id
+      ),
+      agg_inscrito AS (
+        SELECT
+          t.evento_id,
+          TRUE AS ja_inscrito
+        FROM inscricoes i
+        JOIN turmas t ON t.id = i.turma_id
+        WHERE i.usuario_id = $1
+        GROUP BY t.evento_id
+      ),
+      agg_instrutor AS (
+        SELECT
+          t.evento_id,
+          TRUE AS ja_instrutor
+        FROM turmas t
+        JOIN turma_instrutor ti ON ti.turma_id = t.id
+        WHERE ti.instrutor_id = $2
+        GROUP BY t.evento_id
+      )
+      SELECT
+        e.id,
+        e.titulo,
+        e.descricao,
+        e.local,
+        e.tipo,
+        e.unidade_id,
+        e.publico_alvo,
+        e.publicado,
+        e.restrito,
+        e.restrito_modo,
+        e.folder_url,
+        e.programacao_pdf_url,
+        e.cargos_permitidos_ids,
+        e.unidades_permitidas_ids,
+        e.criado_em,
+        e.atualizado_em,
 
-  try {
-        const r = await query(richSQL, [usuarioId, usuarioId]);
+        ('/api/eventos/' || e.id || '/folder') AS folder_blob_url,
+        CASE
+          WHEN NULLIF(e.folder_url,'') IS NOT NULL THEN 'url'
+          ELSE 'none'
+        END AS folder_kind,
 
-    const eventosComElegibilidade = [];
-    for (const evento of r.rows || []) {
-      const eleg = await avaliarElegibilidadeInscricao({
-        client: pool,
-        usuarioId,
-        evento,
-      });
+        at.data_inicio_geral,
+        at.data_fim_geral,
+        at.horario_inicio_geral,
+        at.horario_fim_geral,
 
-      eventosComElegibilidade.push({
-        ...evento,
-        pode_se_inscrever: eleg.pode_se_inscrever,
-        motivo_bloqueio: eleg.motivo_bloqueio,
-        publico_alvo_label: eleg.publico_alvo_label,
-      });
+        CASE
+          WHEN CURRENT_TIMESTAMP::timestamp < COALESCE(
+            ad.inicio_real,
+            at.data_inicio_geral::date + COALESCE(at.horario_inicio_geral, '00:00'::time)
+          ) THEN 'programado'
+          WHEN CURRENT_TIMESTAMP::timestamp <= COALESCE(
+            ad.fim_real,
+            at.data_fim_geral::date + COALESCE(at.horario_fim_geral, '23:59'::time)
+          ) THEN 'andamento'
+          ELSE 'encerrado'
+        END AS status,
+
+        COALESCE(ai.ja_inscrito, FALSE) AS ja_inscrito,
+        COALESCE(atr.ja_instrutor, FALSE) AS ja_instrutor
+
+      FROM eventos e
+      LEFT JOIN agg_turmas at ON at.evento_id = e.id
+      LEFT JOIN agg_datas ad ON ad.evento_id = e.id
+      LEFT JOIN agg_inscrito ai ON ai.evento_id = e.id
+      LEFT JOIN agg_instrutor atr ON atr.evento_id = e.id
+      WHERE ${admin ? "TRUE" : "(e.publicado = TRUE OR e.id IN (SELECT evento_id FROM minhas_turmas))"}
+      ORDER BY COALESCE(
+        ad.fim_real,
+        at.data_fim_geral::date + COALESCE(at.horario_fim_geral, '23:59'::time)
+      ) DESC NULLS LAST,
+      e.id DESC
+    `;
+
+    let rows;
+    try {
+      ({ rows } = await client.query(baseWithBlob, [usuarioId, usuarioId]));
+    } catch (err) {
+      if (err?.code !== "42703") throw err;
+      ({ rows } = await client.query(baseWithoutBlob, [usuarioId, usuarioId]));
     }
+
+    const eventosComElegibilidade = await enriquecerEventosLista(
+      client,
+      usuarioId,
+      rows || [],
+      rid
+    );
+
+    memSnapshot(rid, "listarEventos:fim", {
+      usuarioId,
+      admin,
+      count: eventosComElegibilidade.length,
+    });
 
     logInfo(rid, "listarEventos OK", { count: eventosComElegibilidade.length });
     return res.json(eventosComElegibilidade);
   } catch (err) {
-    const pgCode = err?.code;
-    logWarn(rid, "listarEventos fallback", { pgCode });
-    if (pgCode === "42P01" || pgCode === "42703") {
-      const r2 = await query(compatSQLPlus, []);
-      logInfo(rid, "listarEventos compat OK", { count: r2.rowCount });
-      return res.json(r2.rows);
-    }
     logError(rid, "listarEventos erro", err);
     return res.status(500).json({ erro: "Erro ao listar eventos" });
+  } finally {
+    client.release();
   }
 }
 
@@ -845,149 +1182,236 @@ async function listarEventos(req, res) {
 async function listarEventosParaMim(req, res) {
   const rid = mkRid();
   const usuarioId = getUsuarioId(req);
-  if (!usuarioId) return res.status(401).json({ ok: false, erro: "NAO_AUTENTICADO" });
+  if (!usuarioId) {
+    return res.status(401).json({ ok: false, erro: "NAO_AUTENTICADO" });
+  }
 
   const client = await pool.connect();
   try {
     logStart(rid, "listarEventosParaMim", { usuarioId });
+    memSnapshot(rid, "listarEventosParaMim:inicio", { usuarioId });
 
-        const { rows: base } = await client.query(
-      `SELECT id
-         FROM eventos
-        WHERE publicado = TRUE`
-    );
+    const sqlWithBlob = `
+      WITH base AS (
+        SELECT
+          e.id,
+          e.titulo,
+          e.descricao,
+          e.local,
+          e.tipo,
+          e.unidade_id,
+          e.publico_alvo,
+          e.publicado,
+          e.restrito,
+          e.restrito_modo,
+          e.folder_url,
+          e.programacao_pdf_url,
+          e.cargos_permitidos_ids,
+          e.unidades_permitidas_ids,
+          e.criado_em,
+          e.atualizado_em,
 
-    const visiveis = base.map((r) => Number(r.id)).filter(Number.isFinite);
+          ('/api/eventos/' || e.id || '/folder') AS folder_blob_url,
+          CASE
+            WHEN e.folder_blob IS NOT NULL THEN 'blob'
+            WHEN NULLIF(e.folder_url,'') IS NOT NULL THEN 'url'
+            ELSE 'none'
+          END AS folder_kind
 
-    if (!visiveis.length) {
-      logInfo(rid, "listarEventosParaMim vazio");
-      return res.json({ ok: true, eventos: [] });
+        FROM eventos e
+        WHERE e.publicado = TRUE
+      ),
+      agg_turmas AS (
+        SELECT
+          t.evento_id,
+          MIN(t.data_inicio) AS data_inicio_geral,
+          MAX(t.data_fim) AS data_fim_geral,
+          MIN(t.horario_inicio) AS horario_inicio_geral,
+          MAX(t.horario_fim) AS horario_fim_geral
+        FROM turmas t
+        GROUP BY t.evento_id
+      ),
+      agg_datas AS (
+        SELECT
+          t.evento_id,
+          MIN(dt.data::date + COALESCE(dt.horario_inicio, '00:00'::time)) AS inicio_real,
+          MAX(dt.data::date + COALESCE(dt.horario_fim, '23:59'::time)) AS fim_real
+        FROM turmas t
+        JOIN datas_turma dt ON dt.turma_id = t.id
+        GROUP BY t.evento_id
+      ),
+      agg_inscrito AS (
+        SELECT
+          t.evento_id,
+          TRUE AS ja_inscrito
+        FROM inscricoes i
+        JOIN turmas t ON t.id = i.turma_id
+        WHERE i.usuario_id = $1
+        GROUP BY t.evento_id
+      ),
+      agg_instrutor AS (
+        SELECT
+          t.evento_id,
+          TRUE AS ja_instrutor
+        FROM turmas t
+        JOIN turma_instrutor ti ON ti.turma_id = t.id
+        WHERE ti.instrutor_id = $1
+        GROUP BY t.evento_id
+      )
+      SELECT
+        b.*,
+        at.data_inicio_geral,
+        at.data_fim_geral,
+        at.horario_inicio_geral,
+        at.horario_fim_geral,
+
+        CASE
+          WHEN CURRENT_TIMESTAMP::timestamp < COALESCE(
+            ad.inicio_real,
+            at.data_inicio_geral::date + COALESCE(at.horario_inicio_geral, '00:00'::time)
+          ) THEN 'programado'
+          WHEN CURRENT_TIMESTAMP::timestamp <= COALESCE(
+            ad.fim_real,
+            at.data_fim_geral::date + COALESCE(at.horario_fim_geral, '23:59'::time)
+          ) THEN 'andamento'
+          ELSE 'encerrado'
+        END AS status,
+
+        COALESCE(ai.ja_inscrito, FALSE) AS ja_inscrito,
+        COALESCE(atr.ja_instrutor, FALSE) AS ja_instrutor
+
+      FROM base b
+      LEFT JOIN agg_turmas at ON at.evento_id = b.id
+      LEFT JOIN agg_datas ad ON ad.evento_id = b.id
+      LEFT JOIN agg_inscrito ai ON ai.evento_id = b.id
+      LEFT JOIN agg_instrutor atr ON atr.evento_id = b.id
+      ORDER BY b.titulo ASC, b.id DESC
+    `;
+
+    const sqlWithoutBlob = `
+      WITH base AS (
+        SELECT
+          e.id,
+          e.titulo,
+          e.descricao,
+          e.local,
+          e.tipo,
+          e.unidade_id,
+          e.publico_alvo,
+          e.publicado,
+          e.restrito,
+          e.restrito_modo,
+          e.folder_url,
+          e.programacao_pdf_url,
+          e.cargos_permitidos_ids,
+          e.unidades_permitidas_ids,
+          e.criado_em,
+          e.atualizado_em,
+
+          ('/api/eventos/' || e.id || '/folder') AS folder_blob_url,
+          CASE
+            WHEN NULLIF(e.folder_url,'') IS NOT NULL THEN 'url'
+            ELSE 'none'
+          END AS folder_kind
+
+        FROM eventos e
+        WHERE e.publicado = TRUE
+      ),
+      agg_turmas AS (
+        SELECT
+          t.evento_id,
+          MIN(t.data_inicio) AS data_inicio_geral,
+          MAX(t.data_fim) AS data_fim_geral,
+          MIN(t.horario_inicio) AS horario_inicio_geral,
+          MAX(t.horario_fim) AS horario_fim_geral
+        FROM turmas t
+        GROUP BY t.evento_id
+      ),
+      agg_datas AS (
+        SELECT
+          t.evento_id,
+          MIN(dt.data::date + COALESCE(dt.horario_inicio, '00:00'::time)) AS inicio_real,
+          MAX(dt.data::date + COALESCE(dt.horario_fim, '23:59'::time)) AS fim_real
+        FROM turmas t
+        JOIN datas_turma dt ON dt.turma_id = t.id
+        GROUP BY t.evento_id
+      ),
+      agg_inscrito AS (
+        SELECT
+          t.evento_id,
+          TRUE AS ja_inscrito
+        FROM inscricoes i
+        JOIN turmas t ON t.id = i.turma_id
+        WHERE i.usuario_id = $1
+        GROUP BY t.evento_id
+      ),
+      agg_instrutor AS (
+        SELECT
+          t.evento_id,
+          TRUE AS ja_instrutor
+        FROM turmas t
+        JOIN turma_instrutor ti ON ti.turma_id = t.id
+        WHERE ti.instrutor_id = $1
+        GROUP BY t.evento_id
+      )
+      SELECT
+        b.*,
+        at.data_inicio_geral,
+        at.data_fim_geral,
+        at.horario_inicio_geral,
+        at.horario_fim_geral,
+
+        CASE
+          WHEN CURRENT_TIMESTAMP::timestamp < COALESCE(
+            ad.inicio_real,
+            at.data_inicio_geral::date + COALESCE(at.horario_inicio_geral, '00:00'::time)
+          ) THEN 'programado'
+          WHEN CURRENT_TIMESTAMP::timestamp <= COALESCE(
+            ad.fim_real,
+            at.data_fim_geral::date + COALESCE(at.horario_fim_geral, '23:59'::time)
+          ) THEN 'andamento'
+          ELSE 'encerrado'
+        END AS status,
+
+        COALESCE(ai.ja_inscrito, FALSE) AS ja_inscrito,
+        COALESCE(atr.ja_instrutor, FALSE) AS ja_instrutor
+
+      FROM base b
+      LEFT JOIN agg_turmas at ON at.evento_id = b.id
+      LEFT JOIN agg_datas ad ON ad.evento_id = b.id
+      LEFT JOIN agg_inscrito ai ON ai.evento_id = b.id
+      LEFT JOIN agg_instrutor atr ON atr.evento_id = b.id
+      ORDER BY b.titulo ASC, b.id DESC
+    `;
+
+    let rows;
+    try {
+      ({ rows } = await client.query(sqlWithBlob, [usuarioId]));
+    } catch (err) {
+      if (err?.code !== "42703") throw err;
+      ({ rows } = await client.query(sqlWithoutBlob, [usuarioId]));
     }
 
-    const sql = `
-  SELECT 
-    e.*,
+    const eventosComElegibilidade = await enriquecerEventosLista(
+      client,
+      usuarioId,
+      rows || [],
+      rid
+    );
 
-    ('/api/eventos/' || e.id || '/folder') AS folder_blob_url,
+    memSnapshot(rid, "listarEventosParaMim:fim", {
+      usuarioId,
+      count: eventosComElegibilidade.length,
+    });
 
-    CASE
-      WHEN e.folder_blob IS NOT NULL THEN 'blob'
-      WHEN NULLIF(e.folder_url,'') IS NOT NULL THEN 'url'
-      ELSE 'none'
-    END AS folder_kind,
+    logInfo(rid, "listarEventosParaMim OK", {
+      count: eventosComElegibilidade.length,
+    });
 
-    COALESCE((
-      SELECT array_agg(er.registro_norm ORDER BY er.registro_norm)
-      FROM evento_registros er
-      WHERE er.evento_id = e.id
-    ), '{}'::text[]) AS registros_permitidos,
-
-    (SELECT COUNT(*) FROM evento_registros er WHERE er.evento_id = e.id) AS count_registros_permitidos,
-
-    COALESCE(e.cargos_permitidos_ids, '{}'::int[]) AS cargos_permitidos_ids,
-    COALESCE(e.unidades_permitidas_ids, '{}'::int[]) AS unidades_permitidas_ids,
-
-    COALESCE((
-      SELECT json_agg(json_build_object('id', c.id, 'nome', c.nome) ORDER BY c.nome)
-      FROM cargos c
-      WHERE c.id = ANY(e.cargos_permitidos_ids)
-    ), '[]'::json) AS cargos_permitidos,
-
-    COALESCE((
-      SELECT json_agg(json_build_object('id', u2.id, 'nome', u2.nome) ORDER BY u2.nome)
-      FROM unidades u2
-      WHERE u2.id = ANY(e.unidades_permitidas_ids)
-    ), '[]'::json) AS unidades_permitidas,
-
-    (SELECT MIN(t.data_inicio)    FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
-    (SELECT MAX(t.data_fim)       FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
-    (SELECT MIN(t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id) AS horario_inicio_geral,
-    (SELECT MAX(t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
-
-    CASE
-      WHEN CURRENT_TIMESTAMP::timestamp < COALESCE(
-        (
-          SELECT MIN(dt.data::date + COALESCE(dt.horario_inicio, '00:00'::time))
-          FROM turmas t
-          JOIN datas_turma dt ON dt.turma_id = t.id
-          WHERE t.evento_id = e.id
-        ),
-        (
-          SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time, '00:00'::time))
-          FROM turmas t
-          WHERE t.evento_id = e.id
-        )
-      ) THEN 'programado'
-
-      WHEN CURRENT_TIMESTAMP::timestamp <= COALESCE(
-        (
-          SELECT MAX(dt.data::date + COALESCE(dt.horario_fim, '23:59'::time))
-          FROM turmas t
-          JOIN datas_turma dt ON dt.turma_id = t.id
-          WHERE t.evento_id = e.id
-        ),
-        (
-          SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
-          FROM turmas t
-          WHERE t.evento_id = e.id
-        )
-      ) THEN 'andamento'
-
-      ELSE 'encerrado'
-    END AS status,
-
-    (
-      SELECT COUNT(*) > 0
-      FROM inscricoes i
-      JOIN turmas t ON t.id = i.turma_id
-      WHERE i.usuario_id = $2 AND t.evento_id = e.id
-    ) AS ja_inscrito,
-
-    (
-      SELECT COUNT(*) > 0
-      FROM turmas t
-      JOIN turma_instrutor ti ON ti.turma_id = t.id
-      WHERE t.evento_id = e.id AND ti.instrutor_id = $2
-    ) AS ja_instrutor,
-
-    COALESCE((
-      SELECT json_agg(
-        DISTINCT jsonb_build_object(
-          'id', u.id,
-          'nome', u.nome
-        )
-      )
-      FROM turmas t2
-      JOIN turma_instrutor ti2 ON ti2.turma_id = t2.id
-      JOIN usuarios u ON u.id = ti2.instrutor_id
-      WHERE t2.evento_id = e.id
-    ), '[]'::json) AS instrutor
-
-  FROM eventos e
-  WHERE e.id = ANY($1::int[])
-  ORDER BY e.titulo ASC, e.id DESC;
-`;
-
-const { rows } = await client.query(sql, [visiveis, usuarioId]);
-
-const eventosComElegibilidade = [];
-for (const evento of rows || []) {
-  const eleg = await avaliarElegibilidadeInscricao({
-    client,
-    usuarioId,
-    evento,
-  });
-
-  eventosComElegibilidade.push({
-    ...evento,
-    pode_se_inscrever: eleg.pode_se_inscrever,
-    motivo_bloqueio: eleg.motivo_bloqueio,
-    publico_alvo_label: eleg.publico_alvo_label,
-  });
-}
-
-logInfo(rid, "listarEventosParaMim OK", { count: eventosComElegibilidade.length });
-return res.json({ ok: true, eventos: eventosComElegibilidade });
+    return res.json({
+      ok: true,
+      eventos: eventosComElegibilidade,
+    });
   } catch (err) {
     logError(rid, "listarEventosParaMim erro", err);
     return res.status(500).json({ ok: false, erro: "ERRO_INTERNO" });
