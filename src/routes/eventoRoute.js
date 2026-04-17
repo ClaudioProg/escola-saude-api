@@ -1,11 +1,11 @@
-// ✅ src/routes/eventoRoute.js — PREMIUM/UNIFICADO
 /* eslint-disable no-console */
 "use strict";
 
 const express = require("express");
 const router = express.Router();
 
-const eventoController = require("../controllers/eventoController");
+const eventoPublicoController = require("../controllers/eventoPublicoController");
+const eventoAdminController = require("../controllers/eventoAdminController");
 const turmaController = require("../controllers/turmaController");
 
 /* ───────────────────────────────────────────────────────────────
@@ -114,9 +114,9 @@ router.get(
   "/:id/folder",
   ensureNumericParam("id"),
   routeTag("eventoRoute:GET /:id/folder", {
-    cacheControl: null, // controller decide o cache ideal
+    cacheControl: null,
   }),
-  asyncHandler(eventoController.obterFolderDoEvento)
+  asyncHandler(eventoPublicoController.obterFolderDoEvento)
 );
 
 /* ───────────────────────────────────────────────────────────────
@@ -125,10 +125,10 @@ router.get(
 router.get(
   "/para-mim/lista",
   requireAuth,
-  routeTag("eventoRoute:/para-mim/lista", {
+  routeTag("eventoRoute:GET /para-mim/lista", {
     cacheControl: "private, no-cache, must-revalidate",
   }),
-  asyncHandler(eventoController.listarEventosParaMim)
+  asyncHandler(eventoPublicoController.listarEventosParaMim)
 );
 
 /* ───────────────────────────────────────────────────────────────
@@ -137,44 +137,25 @@ router.get(
 router.get(
   "/agenda",
   requireAuth,
-  routeTag("eventoRoute:/agenda", {
+  routeTag("eventoRoute:GET /agenda", {
     cacheControl: "private, no-cache, must-revalidate",
   }),
-  asyncHandler(eventoController.getAgendaEventos)
+  asyncHandler(eventoPublicoController.getAgendaEventos)
 );
 
 router.get(
   "/instrutor",
   requireAuth,
-  routeTag("eventoRoute:/instrutor", {
+  routeTag("eventoRoute:GET /instrutor", {
     cacheControl: "private, no-cache, must-revalidate",
   }),
-  asyncHandler(eventoController.listarEventosDoinstrutor)
+  asyncHandler(eventoPublicoController.listarEventosDoinstrutor)
 );
 
 /* ───────────────────────────────────────────────────────────────
-   🔎 Auxiliares / autocomplete
-─────────────────────────────────────────────────────────────── */
-router.get(
-  "/cargos/sugerir",
-  requireAuth,
-  routeTag("eventoRoute:/cargos/sugerir", {
-    cacheControl: "private, no-cache, must-revalidate",
-  }),
-  asyncHandler(eventoController.sugerirCargos)
-);
-
-router.get(
-  "/instrutores/disponiveis",
-  requireAuth,
-  routeTag("eventoRoute:/instrutores/disponiveis", {
-    cacheControl: "private, no-cache, must-revalidate",
-  }),
-  asyncHandler(eventoController.listarInstrutoresDisponiveis)
-);
-
-/* ───────────────────────────────────────────────────────────────
-   📅 Lista principal
+   🔎 Lista principal
+   - Admin: usa listagem administrativa
+   - Demais: usa listagem pública/autenticada
 ─────────────────────────────────────────────────────────────── */
 router.get(
   "/",
@@ -182,7 +163,35 @@ router.get(
   routeTag("eventoRoute:GET /", {
     cacheControl: "private, no-cache, must-revalidate",
   }),
-  asyncHandler(eventoController.listarEventos)
+  asyncHandler(async (req, res) => {
+    const perfis = Array.isArray(req.user?.perfil)
+      ? req.user.perfil
+      : String(req.user?.perfil || "")
+          .split(",")
+          .map((p) => p.replace(/[\[\]"]/g, "").trim().toLowerCase())
+          .filter(Boolean);
+
+    const isAdmin = perfis.includes("administrador");
+
+    if (isAdmin) {
+      return eventoAdminController.listarEventosAdmin(req, res);
+    }
+
+    return eventoPublicoController.listarEventos(req, res);
+  })
+);
+
+/* ───────────────────────────────────────────────────────────────
+   🔎 Auxiliares / autocomplete (admin)
+─────────────────────────────────────────────────────────────── */
+router.get(
+  "/instrutores/disponiveis",
+  requireAuth,
+  authorizeRoles("administrador"),
+  routeTag("eventoRoute:GET /instrutores/disponiveis", {
+    cacheControl: "private, no-cache, must-revalidate",
+  }),
+  asyncHandler(eventoAdminController.listarInstrutoresDisponiveis)
 );
 
 /* ───────────────────────────────────────────────────────────────
@@ -196,7 +205,7 @@ router.get(
   routeTag("eventoRoute:GET /:id/turmas", {
     cacheControl: "private, no-cache, must-revalidate",
   }),
-  asyncHandler(eventoController.listarTurmasDoEvento)
+  asyncHandler(eventoPublicoController.listarTurmasDoEvento)
 );
 
 router.get(
@@ -206,7 +215,7 @@ router.get(
   routeTag("eventoRoute:GET /:id/turmas-simples", {
     cacheControl: "private, no-cache, must-revalidate",
   }),
-  asyncHandler(eventoController.listarTurmasSimples)
+  asyncHandler(eventoPublicoController.listarTurmasSimples)
 );
 
 /* ───────────────────────────────────────────────────────────────
@@ -232,7 +241,7 @@ router.post(
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
   routeTag("eventoRoute:POST /:id/publicar", { cacheControl: "no-store" }),
-  asyncHandler(eventoController.publicarEvento)
+  asyncHandler(eventoAdminController.publicarEvento)
 );
 
 router.post(
@@ -241,21 +250,20 @@ router.post(
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
   routeTag("eventoRoute:POST /:id/despublicar", { cacheControl: "no-store" }),
-  asyncHandler(eventoController.despublicarEvento)
+  asyncHandler(eventoAdminController.despublicarEvento)
 );
 
 /* ───────────────────────────────────────────────────────────────
    📎 Upload de arquivos do evento (admin)
-   Endpoint unificado + atalhos compat
 ─────────────────────────────────────────────────────────────── */
 router.post(
   "/:id/arquivos",
   requireAuth,
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
-  eventoController.uploadEventos,
+  eventoAdminController.uploadEventos,
   routeTag("eventoRoute:POST /:id/arquivos", { cacheControl: "no-store" }),
-  asyncHandler(eventoController.atualizarArquivosDoEvento)
+  asyncHandler(eventoAdminController.atualizarArquivosDoEvento)
 );
 
 router.post(
@@ -263,9 +271,9 @@ router.post(
   requireAuth,
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
-  eventoController.uploadFolderOnly,
+  eventoAdminController.uploadFolderOnly,
   routeTag("eventoRoute:POST /:id/folder", { cacheControl: "no-store" }),
-  asyncHandler(eventoController.atualizarArquivosDoEvento)
+  asyncHandler(eventoAdminController.atualizarArquivosDoEvento)
 );
 
 router.post(
@@ -273,9 +281,9 @@ router.post(
   requireAuth,
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
-  eventoController.uploadProgramacaoOnly,
+  eventoAdminController.uploadProgramacaoOnly,
   routeTag("eventoRoute:POST /:id/programacao", { cacheControl: "no-store" }),
-  asyncHandler(eventoController.atualizarArquivosDoEvento)
+  asyncHandler(eventoAdminController.atualizarArquivosDoEvento)
 );
 
 /* ───────────────────────────────────────────────────────────────
@@ -288,7 +296,7 @@ router.get(
   routeTag("eventoRoute:GET /:id", {
     cacheControl: "private, no-cache, must-revalidate",
   }),
-  asyncHandler(eventoController.buscarEventoPorId)
+  asyncHandler(eventoPublicoController.buscarEventoPorId)
 );
 
 /* ───────────────────────────────────────────────────────────────
@@ -298,9 +306,9 @@ router.post(
   "/",
   requireAuth,
   authorizeRoles("administrador"),
-  eventoController.uploadEventos,
+  eventoAdminController.uploadEventos,
   routeTag("eventoRoute:POST /", { cacheControl: "no-store" }),
-  asyncHandler(eventoController.criarEvento)
+  asyncHandler(eventoAdminController.criarEvento)
 );
 
 router.put(
@@ -308,9 +316,9 @@ router.put(
   requireAuth,
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
-  eventoController.uploadEventos,
+  eventoAdminController.uploadEventos,
   routeTag("eventoRoute:PUT /:id", { cacheControl: "no-store" }),
-  asyncHandler(eventoController.atualizarEvento)
+  asyncHandler(eventoAdminController.atualizarEvento)
 );
 
 router.delete(
@@ -319,7 +327,7 @@ router.delete(
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
   routeTag("eventoRoute:DELETE /:id", { cacheControl: "no-store" }),
-  asyncHandler(eventoController.excluirEvento)
+  asyncHandler(eventoAdminController.excluirEvento)
 );
 
 module.exports = router;
