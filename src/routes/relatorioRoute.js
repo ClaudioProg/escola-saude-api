@@ -1,14 +1,44 @@
 /* eslint-disable no-console */
 "use strict";
 
-// ✅ src/routes/relatorioRoute.js — PREMIUM/UNIFICADO (singular + compat)
+// ✅ src/routes/relatorioRoute.js — PREMIUM/UNIFICADO+++ (2026)
+// - Rotas de relatórios gerais + relatórios de presenças
+// - Compatível com singular/plural:
+//    • /presenca/...
+//    • /presencas/...
+//    • /turma/...
+//    • /evento/...
+// - Auth/roles resilientes
+// - Rate limit para endpoints pesados
+// - No-store para dados sensíveis
+// - X-Route-Handler + X-Request-Id para diagnóstico
+// - Mantém contratos antigos sem quebrar frontend existente
+
 const express = require("express");
 const rateLimit = require("express-rate-limit");
 
 const router = express.Router();
 
-/* ───────────────── Auth resiliente ───────────────── */
+/* ────────────────────────────────────────────────────────────────
+   Config / Logs
+──────────────────────────────────────────────────────────────── */
+const IS_PROD = process.env.NODE_ENV === "production";
+
+const log = (...a) => !IS_PROD && console.log("[relatorioRoute]", ...a);
+const warn = (...a) => !IS_PROD && console.warn("[relatorioRoute][WARN]", ...a);
+const errlg = (...a) => console.error("[relatorioRoute][ERR]", ...a);
+
+function mkRid(prefix = "REL-ROUTE") {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Auth resiliente
+──────────────────────────────────────────────────────────────── */
 const _auth = require("../auth/authMiddleware");
+
 const requireAuth =
   typeof _auth === "function"
     ? _auth
@@ -18,14 +48,17 @@ const requireAuth =
       _auth?.auth;
 
 if (typeof requireAuth !== "function") {
-  console.error("[relatorioRoute] authMiddleware inválido:", _auth);
+  errlg("authMiddleware inválido:", _auth);
   throw new Error(
     "authMiddleware não é função (verifique exports em src/auth/authMiddleware.js)"
   );
 }
 
-/* ───────────────── Roles resiliente ───────────────── */
+/* ────────────────────────────────────────────────────────────────
+   Roles resiliente
+──────────────────────────────────────────────────────────────── */
 const authorizeMod = require("../middlewares/authorize");
+
 const authorizeRoles =
   (typeof authorizeMod === "function"
     ? authorizeMod
@@ -36,16 +69,17 @@ const authorizeRoles =
   authorizeMod?.default;
 
 if (typeof authorizeRoles !== "function") {
-  console.error("[relatorioRoute] authorizeRoles inválido:", authorizeMod);
+  errlg("authorizeRoles inválido:", authorizeMod);
   throw new Error(
     "authorizeRoles não exportado corretamente em src/middlewares/authorize.js"
   );
 }
 
-/* ───────────────── Controller resiliente ───────────────── */
+/* ────────────────────────────────────────────────────────────────
+   Controller resiliente
+──────────────────────────────────────────────────────────────── */
 const relatorioCtrlRaw = require("../controllers/relatorioController");
-const relatorioController =
-  relatorioCtrlRaw?.default || relatorioCtrlRaw;
+const relatorioController = relatorioCtrlRaw?.default || relatorioCtrlRaw;
 
 const {
   gerarRelatorios,
@@ -65,12 +99,14 @@ for (const [name, fn] of Object.entries({
   presencasPorEvento,
 })) {
   if (typeof fn !== "function") {
-    console.error("[relatorioRoute] Controller inválido:", name, relatorioCtrlRaw);
+    errlg("Controller inválido:", name, relatorioCtrlRaw);
     throw new Error(`relatorioController inválido (função ausente: ${name})`);
   }
 }
 
-/* ───────────────── Helpers ───────────────── */
+/* ────────────────────────────────────────────────────────────────
+   Helpers
+──────────────────────────────────────────────────────────────── */
 const wrap =
   (fn) =>
   (req, res, next) =>
@@ -79,7 +115,18 @@ const wrap =
 const routeTag = (tag) => (req, res, next) => {
   try {
     res.setHeader("X-Route-Handler", tag);
+
+    if (!res.getHeader("X-Request-Id")) {
+      const rid =
+        req.headers?.["x-request-id"] ||
+        req.headers?.["x-correlation-id"] ||
+        mkRid();
+
+      req.requestId = req.requestId || String(rid);
+      res.setHeader("X-Request-Id", req.requestId);
+    }
   } catch {}
+
   return next();
 };
 
@@ -89,9 +136,19 @@ function validarIdParam(param, label = param) {
     const id = Number(raw);
 
     if (!Number.isInteger(id) || id <= 0) {
+      const rid = req.requestId || mkRid("REL-VALID");
+
+      warn("[validarIdParam][INVALIDO]", {
+        rid,
+        param,
+        label,
+        raw,
+      });
+
       return res.status(400).json({
         ok: false,
         erro: `${label}_INVALIDO`,
+        rid,
       });
     }
 
@@ -100,31 +157,52 @@ function validarIdParam(param, label = param) {
   };
 }
 
-/* ───────────────── Middlewares globais do grupo ───────────────── */
-// 🔒 dados sensíveis → não cachear
-router.use((_req, res, next) => {
-  res.setHeader("Cache-Control", "no-store");
-  res.setHeader("Pragma", "no-cache");
+/* ────────────────────────────────────────────────────────────────
+   Middlewares globais do grupo
+──────────────────────────────────────────────────────────────── */
+
+// 🔒 Dados sensíveis → não cachear
+router.use((req, res, next) => {
+  try {
+    const rid =
+      req.headers?.["x-request-id"] ||
+      req.headers?.["x-correlation-id"] ||
+      mkRid();
+
+    req.requestId = req.requestId || String(rid);
+
+    res.setHeader("X-Request-Id", req.requestId);
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+  } catch {}
+
   next();
 });
 
-// 🚦 relatórios tendem a ser pesados
+// 🚦 Relatórios tendem a ser endpoints mais pesados
 const relatorioLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 120,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { erro: "Muitas requisições. Aguarde alguns instantes." },
+  message: {
+    ok: false,
+    erro: "Muitas requisições. Aguarde alguns instantes.",
+  },
 });
 
-// 🔐 tudo daqui pra frente exige autenticação
+// 🔐 Tudo daqui para frente exige autenticação
 router.use(requireAuth);
 
 /* =========================================================
    ✅ RELATÓRIOS DE PRESENÇAS
+   Compatibilidade:
+   - /presenca/...
+   - /presencas/...
 ========================================================= */
 
-// 📄 Relatório de presenças por turma (administrador ou instrutor)
+// 📄 Relatório de presenças por turma — singular
 router.get(
   "/presenca/turma/:turma_id",
   relatorioLimiter,
@@ -134,7 +212,7 @@ router.get(
   wrap(presencasPorTurma)
 );
 
-// 📄 Relatório detalhado de presenças por turma (administrador ou instrutor)
+// 📄 Relatório detalhado de presenças por turma — singular
 router.get(
   "/presenca/turma/:turma_id/detalhado",
   relatorioLimiter,
@@ -144,7 +222,7 @@ router.get(
   wrap(presencasPorTurmaDetalhado)
 );
 
-// 📄 Relatório de presenças por evento (somente administrador)
+// 📄 Relatório de presenças por evento — singular
 router.get(
   "/presenca/evento/:evento_id",
   relatorioLimiter,
@@ -154,16 +232,49 @@ router.get(
   wrap(presencasPorEvento)
 );
 
-/* =========================================================
-   ✅ RELATÓRIOS GERAIS (admin only)
-========================================================= */
-
+// ♻️ Alias plural: /presencas/turma/:turma_id
 router.get(
-  "/",
+  "/presencas/turma/:turma_id",
+  relatorioLimiter,
+  authorizeRoles("administrador", "instrutor"),
+  validarIdParam("turma_id", "TURMA_ID"),
+  routeTag("relatorioRoute:GET /presencas/turma/:turma_id"),
+  wrap(presencasPorTurma)
+);
+
+// ♻️ Alias plural: /presencas/turma/:turma_id/detalhado
+router.get(
+  "/presencas/turma/:turma_id/detalhado",
+  relatorioLimiter,
+  authorizeRoles("administrador", "instrutor"),
+  validarIdParam("turma_id", "TURMA_ID"),
+  routeTag("relatorioRoute:GET /presencas/turma/:turma_id/detalhado"),
+  wrap(presencasPorTurmaDetalhado)
+);
+
+// ♻️ Alias plural: /presencas/evento/:evento_id
+router.get(
+  "/presencas/evento/:evento_id",
   relatorioLimiter,
   authorizeRoles("administrador"),
-  routeTag("relatorioRoute:GET /"),
-  wrap(gerarRelatorios)
+  validarIdParam("evento_id", "EVENTO_ID"),
+  routeTag("relatorioRoute:GET /presencas/evento/:evento_id"),
+  wrap(presencasPorEvento)
+);
+
+/* =========================================================
+   ✅ RELATÓRIOS GERAIS — admin only
+========================================================= */
+
+// ⚠️ Colocar rotas específicas antes de "/" por legibilidade.
+// No Express, "/" é exato neste caso, mas manter assim evita confusão futura.
+
+router.get(
+  "/opcao",
+  relatorioLimiter,
+  authorizeRoles("administrador"),
+  routeTag("relatorioRoute:GET /opcao"),
+  wrap(opcaoRelatorios)
 );
 
 router.post(
@@ -175,18 +286,22 @@ router.post(
 );
 
 router.get(
-  "/opcao",
+  "/",
   relatorioLimiter,
   authorizeRoles("administrador"),
-  routeTag("relatorioRoute:GET /opcao"),
-  wrap(opcaoRelatorios)
+  routeTag("relatorioRoute:GET /"),
+  wrap(gerarRelatorios)
 );
 
 /* =========================================================
    ♻️ ALIASES internos de compat
+   Para mounts como:
+   - /api/relatorios-presencas
+   - /api/relatorio-presencas
+   - /api/relatorio
 ========================================================= */
 
-// aliases para uso em mounts como /api/relatorios-presencas
+// 📄 Alias direto por turma
 router.get(
   "/turma/:turma_id",
   relatorioLimiter,
@@ -196,6 +311,7 @@ router.get(
   wrap(presencasPorTurma)
 );
 
+// 📄 Alias direto por turma detalhado
 router.get(
   "/turma/:turma_id/detalhado",
   relatorioLimiter,
@@ -205,6 +321,7 @@ router.get(
   wrap(presencasPorTurmaDetalhado)
 );
 
+// 📄 Alias direto por evento
 router.get(
   "/evento/:evento_id",
   relatorioLimiter,
@@ -213,5 +330,18 @@ router.get(
   routeTag("relatorioRoute:GET /evento/:evento_id"),
   wrap(presencasPorEvento)
 );
+
+log("Rotas de relatório inicializadas:", {
+  auth: typeof requireAuth,
+  authorizeRoles: typeof authorizeRoles,
+  controller: {
+    gerarRelatorios: typeof gerarRelatorios,
+    exportarRelatorios: typeof exportarRelatorios,
+    opcaoRelatorios: typeof opcaoRelatorios,
+    presencasPorTurma: typeof presencasPorTurma,
+    presencasPorTurmaDetalhado: typeof presencasPorTurmaDetalhado,
+    presencasPorEvento: typeof presencasPorEvento,
+  },
+});
 
 module.exports = router;

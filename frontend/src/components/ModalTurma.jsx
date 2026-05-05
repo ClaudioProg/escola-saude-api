@@ -376,20 +376,15 @@ export default function ModalTurma({
     let alive = true;
     if (!effectiveOpen) return undefined;
 
-    if (Array.isArray(usuarios) && usuarios.length === 0) {
-      cacheUsuariosFallback = { rows: null, filtrados: false };
-    }
-
-    const algumInstrutorNoPai =
-      Array.isArray(usuarios) && usuarios.some((u) => u && isInstrutorLike(u));
-
-    if (Array.isArray(usuarios) && usuarios.length > 0 && algumInstrutorNoPai) {
-      setUsuariosLocal(usuarios);
-      setUsuariosJaFiltrados(false);
-      setUsuariosLoading(false);
-      return undefined;
-    }
-
+    /**
+     * ✅ Regra correta:
+     * Para turma, a lista oficial deve vir do endpoint específico de instrutores.
+     *
+     * Motivo:
+     * - /usuarios é paginado;
+     * - a primeira página pode trazer só 1 instrutor;
+     * - filtrar no frontend uma página parcial causa lista incompleta.
+     */
     if (cacheUsuariosFallback?.rows?.length) {
       setUsuariosLocal(cacheUsuariosFallback.rows);
       setUsuariosJaFiltrados(!!cacheUsuariosFallback.filtrados);
@@ -401,19 +396,8 @@ export default function ModalTurma({
 
     (async () => {
       try {
-        if (Array.isArray(usuarios) && usuarios.length > 0 && !algumInstrutorNoPai) {
-          log("Pai mandou usuarios sem perfis úteis; buscando endpoint filtrado.", {
-            total: usuarios.length,
-          });
-        }
-
         const res = await apiGet("/eventos/instrutores/disponiveis");
         const arr = asArray(res);
-
-        log("Array normalizado do endpoint instrutores", {
-          len: arr.length,
-          first: arr?.[0],
-        });
 
         const sorted = arr
           .filter(Boolean)
@@ -425,34 +409,35 @@ export default function ModalTurma({
         setUsuariosLocal(sorted);
         setUsuariosJaFiltrados(true);
 
-        log("Fallback /eventos/instrutores/disponiveis ok", {
+        log("Endpoint oficial de instrutores carregado.", {
           total: sorted.length,
+          first: sorted?.[0] || null,
         });
       } catch (e) {
         if (!alive) return;
-        warn("Fallback instrutores falhou; tentando /usuarios como último recurso", e);
 
-        try {
-          const res2 = await apiGet("/usuarios");
-          const arr2 = asArray(res2);
+        warn("Endpoint oficial de instrutores falhou; usando lista do pai como fallback.", e);
 
-          const sorted2 = arr2
-            .filter(Boolean)
-            .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
+        const fallbackPai = Array.isArray(usuarios)
+          ? usuarios
+              .filter((u) => u && isInstrutorLike(u))
+              .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")))
+          : [];
 
-          if (!alive) return;
+        if (fallbackPai.length) {
+          cacheUsuariosFallback = { rows: fallbackPai, filtrados: true };
+          setUsuariosLocal(fallbackPai);
+          setUsuariosJaFiltrados(true);
 
-          cacheUsuariosFallback = { rows: sorted2, filtrados: false };
-          setUsuariosLocal(sorted2);
-          setUsuariosJaFiltrados(false);
+          log("Fallback com usuários do pai aplicado.", {
+            total: fallbackPai.length,
+          });
 
-          log("Fallback último recurso /usuarios ok", { total: sorted2.length });
-        } catch (e2) {
-          if (!alive) return;
-          warn("Fallback /usuarios (último recurso) falhou", e2);
-          setUsuariosLocal([]);
-          setUsuariosJaFiltrados(false);
+          return;
         }
+
+        setUsuariosLocal([]);
+        setUsuariosJaFiltrados(true);
       } finally {
         if (alive) setUsuariosLoading(false);
       }

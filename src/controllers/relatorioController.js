@@ -1,11 +1,17 @@
 /* eslint-disable no-console */
-// 📁 src/controllers/relatorioController.js — ÚNICO & PREMIUM++
+// 📁 src/controllers/relatorioController.js — ÚNICO & PREMIUM+++ (2026)
 // - Consolida relatórios gerais + relatórios de presenças
 // - Date-only safe
 // - Compat DB robusta (pg / pg-promise / req.db)
 // - Evita multiplicação de linhas por instrutor
 // - Export Excel/PDF mais consistente
 // - Logs com RID
+// - Compatibilidade defensiva com schemas diferentes:
+//    • usuarios.nome OU usuarios.nome_completo
+//    • presença/relatórios com OU sem datas_turma
+//    • eventos.unidade_id OU turmas.unidade_id
+//    • unidades opcional
+// - Corrige filtro de instrutor fora do escopo da CTE
 // - Mantém contratos/rotas existentes
 
 "use strict";
@@ -22,6 +28,7 @@ const { ptBR } = require("date-fns/locale");
    Config / Logs
 ──────────────────────────────────────────────────────────────── */
 const IS_PROD = process.env.NODE_ENV === "production";
+
 const log = (...a) => !IS_PROD && console.log("[relatorios]", ...a);
 const warn = (...a) => !IS_PROD && console.warn("[relatorios][WARN]", ...a);
 const errlg = (...a) => console.error("[relatorios][ERR]", ...a);
@@ -76,7 +83,11 @@ async function queryFirstWorking(reqOrDb, variants, params = []) {
       return await q(reqOrDb, sql, params);
     } catch (e) {
       lastErr = e;
-      if (["42P01", "42703", "42883"].includes(e?.code)) continue;
+
+      if (["42P01", "42703", "42883", "42P10"].includes(e?.code)) {
+        continue;
+      }
+
       throw e;
     }
   }
@@ -89,7 +100,11 @@ async function queryFirstWorking(reqOrDb, variants, params = []) {
 ──────────────────────────────────────────────────────────────── */
 function ymdOnly(v) {
   if (!v) return null;
-  if (typeof v === "string") return v.slice(0, 10);
+
+  if (typeof v === "string") {
+    const s = v.slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+  }
 
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return null;
@@ -97,20 +112,28 @@ function ymdOnly(v) {
   const y = d.getUTCFullYear();
   const m = String(d.getUTCMonth() + 1).padStart(2, "0");
   const day = String(d.getUTCDate()).padStart(2, "0");
+
   return `${y}-${m}-${day}`;
 }
 
 function ddmmyyyyFromYMD(ymd) {
   if (!ymd || typeof ymd !== "string" || ymd.length < 10) return "";
+
   const [y, m, d] = ymd.slice(0, 10).split("-");
   if (!y || !m || !d) return "";
+
   return `${d}/${m}/${y}`;
 }
 
 function normDateOnly(v) {
   if (!v) return null;
+
   const s = String(v).slice(0, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+}
+
+function nowIsoSafe() {
+  return new Date().toISOString();
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -118,6 +141,7 @@ function normDateOnly(v) {
 ──────────────────────────────────────────────────────────────── */
 function asIntOrNull(v) {
   if (v === null || v === undefined || v === "") return null;
+
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
 }
@@ -128,9 +152,11 @@ function normalizarFiltros({ query = {}, filtros = {} }) {
   const use = Object.keys(filtros || {}).length ? filtros : query;
 
   const evento = asIntOrNull(use.evento ?? use.eventoId ?? use.evento_id);
+
   const instrutor = asIntOrNull(
     use.instrutor ?? use.instrutorId ?? use.instrutor_id
   );
+
   const unidade = asIntOrNull(use.unidade ?? use.unidadeId ?? use.unidade_id);
 
   let from = use.from ?? null;
@@ -144,7 +170,9 @@ function normalizarFiltros({ query = {}, filtros = {} }) {
   from = normDateOnly(from);
   to = normDateOnly(to);
 
-  if (from && to && from > to) [from, to] = [to, from];
+  if (from && to && from > to) {
+    [from, to] = [to, from];
+  }
 
   return { evento, instrutor, unidade, from, to };
 }
@@ -157,8 +185,99 @@ function setNoStore(res) {
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Descoberta de colunas (unidade_id)
+   Descoberta de schema/colunas
 ──────────────────────────────────────────────────────────────── */
+async function tableExists(req, tableName) {
+  if (!tableName) return false;
+
+  tableExists._cache ||= new Map();
+
+  const key = `public.${tableName}`;
+  if (tableExists._cache.has(key)) return tableExists._cache.get(key);
+
+  try {
+    const r = await q(
+      req,
+      `
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = $1
+      ) AS exists
+      `,
+      [tableName]
+    );
+
+    const exists = !!r.rows?.[0]?.exists;
+    tableExists._cache.set(key, exists);
+
+    return exists;
+  } catch (e) {
+    warn("[schema][tableExists] falhou:", tableName, e?.message);
+    tableExists._cache.set(key, false);
+    return false;
+  }
+}
+
+async function columnExists(req, tableName, columnName) {
+  if (!tableName || !columnName) return false;
+
+  columnExists._cache ||= new Map();
+
+  const key = `public.${tableName}.${columnName}`;
+  if (columnExists._cache.has(key)) return columnExists._cache.get(key);
+
+  try {
+    const r = await q(
+      req,
+      `
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = $1
+          AND column_name = $2
+      ) AS exists
+      `,
+      [tableName, columnName]
+    );
+
+    const exists = !!r.rows?.[0]?.exists;
+    columnExists._cache.set(key, exists);
+
+    return exists;
+  } catch (e) {
+    warn("[schema][columnExists] falhou:", tableName, columnName, e?.message);
+    columnExists._cache.set(key, false);
+    return false;
+  }
+}
+
+async function detectarSchemaUsuarios(req) {
+  if (detectarSchemaUsuarios._cache) return detectarSchemaUsuarios._cache;
+
+  const hasNome = await columnExists(req, "usuarios", "nome");
+  const hasNomeCompleto = await columnExists(req, "usuarios", "nome_completo");
+  const hasCpf = await columnExists(req, "usuarios", "cpf");
+
+  const nomeExpr = hasNome
+    ? "u.nome"
+    : hasNomeCompleto
+      ? "u.nome_completo"
+      : "('Usuário #' || u.id::text)";
+
+  detectarSchemaUsuarios._cache = {
+    hasNome,
+    hasNomeCompleto,
+    hasCpf,
+    nomeExpr,
+    cpfExpr: hasCpf ? "u.cpf" : "NULL::text",
+  };
+
+  return detectarSchemaUsuarios._cache;
+}
+
 async function detectarColunasUnidade(req) {
   if (detectarColunasUnidade._cache) return detectarColunasUnidade._cache;
 
@@ -168,9 +287,9 @@ async function detectarColunasUnidade(req) {
       `
       SELECT table_name, column_name
       FROM information_schema.columns
-      WHERE table_schema='public'
-        AND column_name='unidade_id'
-        AND table_name IN ('turmas','eventos')
+      WHERE table_schema = 'public'
+        AND column_name = 'unidade_id'
+        AND table_name IN ('turmas', 'eventos')
       `
     );
 
@@ -179,7 +298,9 @@ async function detectarColunasUnidade(req) {
 
     detectarColunasUnidade._cache = { hasTurmas, hasEventos };
     return detectarColunasUnidade._cache;
-  } catch {
+  } catch (e) {
+    warn("[schema][detectarColunasUnidade] fallback:", e?.message);
+
     detectarColunasUnidade._cache = { hasTurmas: false, hasEventos: true };
     return detectarColunasUnidade._cache;
   }
@@ -188,9 +309,12 @@ async function detectarColunasUnidade(req) {
 /* ────────────────────────────────────────────────────────────────
    SQL base do relatório geral
    ✅ evita multiplicação de linhas por instrutor
+   ✅ filtro de instrutor corrigido fora da CTE
 ──────────────────────────────────────────────────────────────── */
 async function montarSQLBaseEFiltros(req, { evento, instrutor, unidade, from, to }) {
   const { hasTurmas, hasEventos } = await detectarColunasUnidade(req);
+  const { nomeExpr } = await detectarSchemaUsuarios(req);
+
   const unidadeCol =
     (hasEventos && "e.unidade_id") || (hasTurmas && "t.unidade_id") || null;
 
@@ -219,10 +343,14 @@ async function montarSQLBaseEFiltros(req, { evento, instrutor, unidade, from, to
 
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-  let instrutorFilterSql = "";
+  let outerWhereSql = "";
   if (instrutor) {
     params.push(instrutor);
-    instrutorFilterSql = `WHERE vi.instrutor_id = $${params.length}`;
+
+    // ✅ Correção importante:
+    // vi.instrutor_id não existe fora da CTE "base".
+    // O campo projetado na base é "instrutor_id".
+    outerWhereSql = `WHERE instrutor_id = $${params.length}`;
   }
 
   const sql = `
@@ -264,7 +392,7 @@ async function montarSQLBaseEFiltros(req, { evento, instrutor, unidade, from, to
         e.id AS evento_id,
         e.titulo AS evento,
         u.id AS instrutor_id,
-        u.nome AS instrutor,
+        ${nomeExpr} AS instrutor,
         t.id AS turma_id,
         t.nome AS turma,
         t.data_inicio,
@@ -284,14 +412,18 @@ async function montarSQLBaseEFiltros(req, { evento, instrutor, unidade, from, to
       ${whereSql}
       GROUP BY
         e.id, e.titulo,
-        u.id, u.nome,
+        u.id, ${nomeExpr},
         t.id, t.nome, t.data_inicio, t.data_fim
     )
 
     SELECT *
     FROM base
-    ${instrutorFilterSql}
-    ORDER BY data_inicio DESC NULLS LAST, evento ASC, instrutor ASC NULLS LAST, turma ASC
+    ${outerWhereSql}
+    ORDER BY
+      data_inicio DESC NULLS LAST,
+      evento ASC,
+      instrutor ASC NULLS LAST,
+      turma ASC
   `;
 
   return { sql, params };
@@ -304,12 +436,21 @@ async function gerarRelatorios(req, res) {
   const requestId = mkRid();
 
   try {
+    setNoStore(res);
+
     const filtros = normalizarFiltros({ query: req.query });
     const { sql, params } = await montarSQLBaseEFiltros(req, filtros);
 
-    log(requestId, "gerarRelatorios filtros:", filtros);
+    log(requestId, "[gerarRelatorios][INICIO]", {
+      filtros,
+      paramsCount: params.length,
+    });
 
     const result = await q(req, sql, params);
+
+    log(requestId, "[gerarRelatorios][OK]", {
+      total: result.rows?.length || 0,
+    });
 
     return res.json({
       ok: true,
@@ -321,7 +462,13 @@ async function gerarRelatorios(req, res) {
       },
     });
   } catch (err) {
-    errlg(requestId, "gerarRelatorios:", err?.message);
+    errlg(requestId, "[gerarRelatorios][ERRO]", {
+      message: err?.message,
+      detail: err?.detail,
+      code: err?.code,
+      stack: !IS_PROD ? err?.stack : undefined,
+    });
+
     return res.status(500).json({
       ok: false,
       erro: "Erro ao gerar relatório.",
@@ -342,20 +489,18 @@ async function exportarRelatorios(req, res) {
     const { sql, params } = await montarSQLBaseEFiltros(req, filtros);
     const { rows } = await q(req, sql, params);
 
-    log(
-      requestId,
-      "exportarRelatorios:",
+    log(requestId, "[exportarRelatorios][INICIO]", {
       formato,
-      "rows:",
-      rows?.length || 0,
-      "filtros:",
-      filtros
-    );
+      rows: rows?.length || 0,
+      filtros,
+    });
 
     if (formato === "excel") {
       const workbook = new ExcelJS.Workbook();
-      workbook.creator = "Escola da Saúde";
+
+      workbook.creator = "Plataforma da Residência";
       workbook.created = new Date();
+      workbook.modified = new Date();
 
       const sheet = workbook.addWorksheet("Relatório", {
         views: [{ state: "frozen", ySplit: 1 }],
@@ -363,16 +508,25 @@ async function exportarRelatorios(req, res) {
 
       sheet.columns = [
         { header: "Evento", key: "evento", width: 38 },
-        { header: "Instrutor", key: "instrutor", width: 28 },
-        { header: "Turma", key: "turma", width: 28 },
+        { header: "Instrutor", key: "instrutor", width: 30 },
+        { header: "Turma", key: "turma", width: 30 },
         { header: "Data Início", key: "data_inicio", width: 14 },
         { header: "Data Fim", key: "data_fim", width: 14 },
         { header: "Inscritos", key: "inscritos", width: 12 },
         { header: "Presenças", key: "presencas", width: 12 },
       ];
 
-      sheet.getRow(1).font = { bold: true };
-      sheet.getRow(1).alignment = { vertical: "middle" };
+      sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+      sheet.getRow(1).fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FF0F172A" },
+      };
+      sheet.getRow(1).alignment = {
+        vertical: "middle",
+        horizontal: "center",
+      };
+
       sheet.autoFilter = { from: "A1", to: "G1" };
 
       for (const r of rows || []) {
@@ -390,9 +544,24 @@ async function exportarRelatorios(req, res) {
       sheet.getColumn("inscritos").numFmt = "0";
       sheet.getColumn("presencas").numFmt = "0";
 
+      sheet.eachRow((row, rowNumber) => {
+        row.eachCell((cell) => {
+          cell.border = {
+            top: { style: "thin", color: { argb: "FFE2E8F0" } },
+            left: { style: "thin", color: { argb: "FFE2E8F0" } },
+            bottom: { style: "thin", color: { argb: "FFE2E8F0" } },
+            right: { style: "thin", color: { argb: "FFE2E8F0" } },
+          };
+
+          if (rowNumber > 1) {
+            cell.alignment = { vertical: "middle" };
+          }
+        });
+      });
+
       sheet.addRow([]);
       sheet.addRow(["requestId", requestId]);
-      sheet.addRow(["gerado_em", new Date().toISOString()]);
+      sheet.addRow(["gerado_em", nowIsoSafe()]);
       sheet.addRow(["filtros", JSON.stringify(filtros)]);
 
       res.setHeader(
@@ -410,6 +579,7 @@ async function exportarRelatorios(req, res) {
 
     if (formato === "pdf") {
       const doc = new PDFDocument({ margin: 36, size: "A4" });
+
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", "attachment; filename=relatorio.pdf");
 
@@ -439,9 +609,11 @@ async function exportarRelatorios(req, res) {
         );
 
       const filtrosLine = [];
+
       if (filtros.evento) filtrosLine.push(`Evento #${filtros.evento}`);
       if (filtros.instrutor) filtrosLine.push(`Instrutor #${filtros.instrutor}`);
       if (filtros.unidade) filtrosLine.push(`Unidade #${filtros.unidade}`);
+
       if (filtros.from || filtros.to) {
         filtrosLine.push(
           `Período: ${
@@ -464,6 +636,7 @@ async function exportarRelatorios(req, res) {
         (a, r) => a + (Number(r.inscritos) || 0),
         0
       );
+
       const totalPresencas = (rows || []).reduce(
         (a, r) => a + (Number(r.presencas) || 0),
         0
@@ -484,6 +657,14 @@ async function exportarRelatorios(req, res) {
         );
 
       doc.moveDown(0.8);
+
+      if (!rows?.length) {
+        doc
+          .font("Helvetica")
+          .fontSize(10)
+          .fillColor("#64748B")
+          .text("Nenhum registro encontrado para os filtros informados.");
+      }
 
       (rows || []).forEach((row, i) => {
         if (doc.y > 720) doc.addPage();
@@ -528,7 +709,13 @@ async function exportarRelatorios(req, res) {
       requestId,
     });
   } catch (err) {
-    errlg(requestId, "exportarRelatorios:", err?.message);
+    errlg(requestId, "[exportarRelatorios][ERRO]", {
+      message: err?.message,
+      detail: err?.detail,
+      code: err?.code,
+      stack: !IS_PROD ? err?.stack : undefined,
+    });
+
     return res.status(500).json({
       ok: false,
       erro: "Erro ao exportar relatório.",
@@ -541,23 +728,50 @@ async function opcaoRelatorios(req, res) {
   const requestId = mkRid();
 
   try {
+    setNoStore(res);
+
+    const { nomeExpr } = await detectarSchemaUsuarios(req);
+    const unidadesExists = await tableExists(req, "unidades");
+
+    const eventosPromise = q(
+      req,
+      `
+      SELECT id, titulo
+      FROM eventos
+      ORDER BY titulo
+      `
+    );
+
+    const instrutoresPromise = q(
+      req,
+      `
+      SELECT DISTINCT
+        u.id,
+        ${nomeExpr} AS nome
+      FROM usuarios u
+      LEFT JOIN turma_instrutor ti ON ti.instrutor_id = u.id
+      LEFT JOIN evento_instrutor ei ON ei.instrutor_id = u.id
+      WHERE ti.instrutor_id IS NOT NULL
+         OR ei.instrutor_id IS NOT NULL
+      ORDER BY nome
+      `
+    );
+
+    const unidadesPromise = unidadesExists
+      ? q(
+          req,
+          `
+          SELECT id, nome
+          FROM unidades
+          ORDER BY nome
+          `
+        )
+      : Promise.resolve({ rows: [], rowCount: 0 });
+
     const [eventos, instrutores, unidades] = await Promise.all([
-      q(req, `SELECT id, titulo FROM eventos ORDER BY titulo`),
-
-      q(
-        req,
-        `
-        SELECT DISTINCT u.id, u.nome
-        FROM usuarios u
-        LEFT JOIN turma_instrutor ti ON ti.instrutor_id = u.id
-        LEFT JOIN evento_instrutor ei ON ei.instrutor_id = u.id
-        WHERE ti.instrutor_id IS NOT NULL
-           OR ei.instrutor_id IS NOT NULL
-        ORDER BY u.nome
-        `
-      ),
-
-      q(req, `SELECT id, nome FROM unidades ORDER BY nome`),
+      eventosPromise,
+      instrutoresPromise,
+      unidadesPromise,
     ]);
 
     return res.json({
@@ -570,7 +784,13 @@ async function opcaoRelatorios(req, res) {
       meta: { requestId },
     });
   } catch (err) {
-    errlg(requestId, "opcaoRelatorios:", err?.message);
+    errlg(requestId, "[opcaoRelatorios][ERRO]", {
+      message: err?.message,
+      detail: err?.detail,
+      code: err?.code,
+      stack: !IS_PROD ? err?.stack : undefined,
+    });
+
     return res.status(500).json({
       ok: false,
       erro: "Erro ao buscar opções de filtros.",
@@ -583,12 +803,29 @@ async function opcaoRelatorios(req, res) {
    B) RELATÓRIO DE PRESENÇAS
 ──────────────────────────────────────────────────────────────── */
 async function hasDatasTurma(req, turmaId) {
-  const qRes = await q(
-    req,
-    `SELECT EXISTS(SELECT 1 FROM datas_turma WHERE turma_id = $1) AS tem`,
-    [turmaId]
-  );
-  return !!qRes.rows?.[0]?.tem;
+  if (!turmaId) return false;
+
+  const exists = await tableExists(req, "datas_turma");
+  if (!exists) return false;
+
+  try {
+    const qRes = await q(
+      req,
+      `
+      SELECT EXISTS(
+        SELECT 1
+        FROM datas_turma
+        WHERE turma_id = $1
+      ) AS tem
+      `,
+      [turmaId]
+    );
+
+    return !!qRes.rows?.[0]?.tem;
+  } catch (e) {
+    if (["42P01", "42703"].includes(e?.code)) return false;
+    throw e;
+  }
 }
 
 async function getDatasDaTurmaYMD(req, turmaId) {
@@ -615,7 +852,10 @@ async function getDatasDaTurmaYMD(req, turmaId) {
     `;
 
   const r = await q(req, sql, [turmaId]);
-  return (r.rows || []).map((x) => x.data).filter(Boolean);
+
+  return (r.rows || [])
+    .map((x) => x.data)
+    .filter(Boolean);
 }
 
 async function getTurmaInfo(req, turmaId) {
@@ -629,8 +869,14 @@ async function getTurmaInfo(req, turmaId) {
       e.titulo AS evento_titulo,
       to_char(t.data_inicio::date, 'YYYY-MM-DD') AS data_inicio,
       to_char(t.data_fim::date,   'YYYY-MM-DD')  AS data_fim,
-      to_char(t.horario_inicio::time, 'HH24:MI') AS horario_inicio,
-      to_char(t.horario_fim::time,    'HH24:MI') AS horario_fim
+      CASE
+        WHEN t.horario_inicio IS NULL THEN NULL
+        ELSE to_char(t.horario_inicio::time, 'HH24:MI')
+      END AS horario_inicio,
+      CASE
+        WHEN t.horario_fim IS NULL THEN NULL
+        ELSE to_char(t.horario_fim::time, 'HH24:MI')
+      END AS horario_fim
     FROM turmas t
     JOIN eventos e ON e.id = t.evento_id
     WHERE t.id = $1
@@ -645,21 +891,33 @@ async function getTurmaInfo(req, turmaId) {
 /** GET /api/relatorios/presencas/turma/:turma_id */
 async function presencasPorTurma(req, res) {
   const turmaId = toInt(req.params.turma_id);
+  const requestId = mkRid("REL-PRES-TURMA");
+
   if (!turmaId) {
-    return res.status(400).json({ ok: false, erro: "TURMA_ID_INVALIDO" });
+    return res.status(400).json({
+      ok: false,
+      erro: "TURMA_ID_INVALIDO",
+      rid: requestId,
+    });
   }
 
-  const requestId = mkRid();
-
   try {
+    setNoStore(res);
+
+    log(requestId, "[presencasPorTurma][INICIO]", { turmaId });
+
     const turma = await getTurmaInfo(req, turmaId);
+
     if (!turma) {
-      return res
-        .status(404)
-        .json({ ok: false, erro: "TURMA_NAO_ENCONTRADA" });
+      return res.status(404).json({
+        ok: false,
+        erro: "TURMA_NAO_ENCONTRADA",
+        rid: requestId,
+      });
     }
 
     const datas = await getDatasDaTurmaYMD(req, turmaId);
+
     if (!datas.length) {
       return res.json({
         ok: true,
@@ -670,14 +928,19 @@ async function presencasPorTurma(req, res) {
       });
     }
 
+    const { nomeExpr, cpfExpr } = await detectarSchemaUsuarios(req);
+
     const insc = await q(
       req,
       `
-      SELECT u.id AS usuario_id, u.nome, u.cpf
+      SELECT
+        u.id AS usuario_id,
+        ${nomeExpr} AS nome,
+        ${cpfExpr} AS cpf
       FROM inscricoes i
       JOIN usuarios u ON u.id = i.usuario_id
       WHERE i.turma_id = $1
-      ORDER BY u.nome ASC, u.id ASC
+      ORDER BY nome ASC, u.id ASC
       `,
       [turmaId]
     );
@@ -712,15 +975,20 @@ async function presencasPorTurma(req, res) {
     );
 
     const presMap = new Map(
-      (pres.rows || []).map((r) => [`${r.usuario_id}|${r.data}`, r.presente === true])
+      (pres.rows || []).map((r) => [
+        `${Number(r.usuario_id)}|${r.data}`,
+        r.presente === true,
+      ])
     );
 
     const lista = [];
+
     for (const u of insc.rows || []) {
       for (const d of datas) {
-        const key = `${u.usuario_id}|${d}`;
+        const key = `${Number(u.usuario_id)}|${d}`;
+
         lista.push({
-          usuario_id: u.usuario_id,
+          usuario_id: Number(u.usuario_id),
           nome: u.nome,
           cpf: u.cpf,
           data: d,
@@ -728,6 +996,13 @@ async function presencasPorTurma(req, res) {
         });
       }
     }
+
+    log(requestId, "[presencasPorTurma][OK]", {
+      turmaId,
+      inscritos: usuarioIds.length,
+      datas: datas.length,
+      registros: lista.length,
+    });
 
     return res.json({
       ok: true,
@@ -737,12 +1012,13 @@ async function presencasPorTurma(req, res) {
       lista,
     });
   } catch (err) {
-    errlg("[presencasPorTurma]", {
+    errlg("[presencasPorTurma][ERRO]", {
       requestId,
       turmaId,
       message: err?.message,
       detail: err?.detail,
       code: err?.code,
+      stack: !IS_PROD ? err?.stack : undefined,
     });
 
     return res.status(500).json({
@@ -756,27 +1032,40 @@ async function presencasPorTurma(req, res) {
 /** GET /api/relatorios/presencas/turma/:turma_id/detalhado */
 async function presencasPorTurmaDetalhado(req, res) {
   const turmaId = toInt(req.params.turma_id);
+  const requestId = mkRid("REL-PRES-DET");
+
   if (!turmaId) {
-    return res.status(400).json({ ok: false, erro: "TURMA_ID_INVALIDO" });
+    return res.status(400).json({
+      ok: false,
+      erro: "TURMA_ID_INVALIDO",
+      rid: requestId,
+    });
   }
 
-  const requestId = mkRid();
-
   try {
+    setNoStore(res);
+
+    log(requestId, "[presencasPorTurmaDetalhado][INICIO]", { turmaId });
+
     const turma = await getTurmaInfo(req, turmaId);
+
     if (!turma) {
-      return res
-        .status(404)
-        .json({ ok: false, erro: "TURMA_NAO_ENCONTRADA" });
+      return res.status(404).json({
+        ok: false,
+        erro: "TURMA_NAO_ENCONTRADA",
+        rid: requestId,
+      });
     }
+
+    const { nomeExpr, cpfExpr } = await detectarSchemaUsuarios(req);
 
     const result = await q(
       req,
       `
       SELECT
         u.id AS usuario_id,
-        u.nome,
-        u.cpf,
+        ${nomeExpr} AS nome,
+        ${cpfExpr} AS cpf,
         to_char(p.data_presenca::date, 'YYYY-MM-DD') AS data,
         BOOL_OR(p.presente) AS presente,
         MAX(p.confirmado_em) AS confirmado_em
@@ -786,13 +1075,27 @@ async function presencasPorTurmaDetalhado(req, res) {
         ON p.usuario_id = u.id
        AND p.turma_id   = i.turma_id
       WHERE i.turma_id = $1
-      GROUP BY u.id, u.nome, u.cpf, p.data_presenca::date
-      ORDER BY u.nome ASC, data ASC NULLS LAST
+      GROUP BY u.id, ${nomeExpr}, ${cpfExpr}, p.data_presenca::date
+      ORDER BY nome ASC, data ASC NULLS LAST
       `,
       [turmaId]
     );
 
-    const lista = (result.rows || []).filter((r) => r.data != null);
+    const lista = (result.rows || [])
+      .filter((r) => r.data != null)
+      .map((r) => ({
+        usuario_id: Number(r.usuario_id),
+        nome: r.nome,
+        cpf: r.cpf,
+        data: r.data,
+        presente: r.presente === true,
+        confirmado_em: r.confirmado_em,
+      }));
+
+    log(requestId, "[presencasPorTurmaDetalhado][OK]", {
+      turmaId,
+      registros: lista.length,
+    });
 
     return res.json({
       ok: true,
@@ -801,12 +1104,13 @@ async function presencasPorTurmaDetalhado(req, res) {
       lista,
     });
   } catch (err) {
-    errlg("[presencasPorTurmaDetalhado]", {
+    errlg("[presencasPorTurmaDetalhado][ERRO]", {
       requestId,
       turmaId,
       message: err?.message,
       detail: err?.detail,
       code: err?.code,
+      stack: !IS_PROD ? err?.stack : undefined,
     });
 
     return res.status(500).json({
@@ -820,56 +1124,92 @@ async function presencasPorTurmaDetalhado(req, res) {
 /** GET /api/relatorios/presencas/evento/:evento_id */
 async function presencasPorEvento(req, res) {
   const eventoId = toInt(req.params.evento_id);
+  const requestId = mkRid("REL-PRES-EV");
+
   if (!eventoId) {
-    return res.status(400).json({ ok: false, erro: "EVENTO_ID_INVALIDO" });
+    return res.status(400).json({
+      ok: false,
+      erro: "EVENTO_ID_INVALIDO",
+      rid: requestId,
+    });
   }
 
-  const requestId = mkRid();
-
   try {
+    setNoStore(res);
+
+    log(requestId, "[presencasPorEvento][INICIO]", { eventoId });
+
     const ev = await q(
       req,
-      `SELECT id AS evento_id, COALESCE(titulo,'Evento') AS titulo FROM eventos WHERE id = $1 LIMIT 1`,
+      `
+      SELECT
+        id AS evento_id,
+        COALESCE(titulo, 'Evento') AS titulo
+      FROM eventos
+      WHERE id = $1
+      LIMIT 1
+      `,
       [eventoId]
     );
 
     if (!ev.rowCount) {
-      return res
-        .status(404)
-        .json({ ok: false, erro: "EVENTO_NAO_ENCONTRADO" });
+      return res.status(404).json({
+        ok: false,
+        erro: "EVENTO_NAO_ENCONTRADO",
+        rid: requestId,
+      });
     }
 
-    const baseDatas = await q(
-      req,
-      `
-      WITH turmas_ev AS (
-        SELECT id, data_inicio::date AS di, data_fim::date AS df
-        FROM turmas
-        WHERE evento_id = $1
-      ),
-      dt AS (
-        SELECT turma_id, data::date AS d
-        FROM datas_turma
-        WHERE turma_id IN (SELECT id FROM turmas_ev)
-      ),
-      ds AS (
-        SELECT te.id AS turma_id, gs::date AS d
-        FROM turmas_ev te
-        LEFT JOIN dt ON dt.turma_id = te.id
-        CROSS JOIN LATERAL generate_series(te.di, te.df, interval '1 day') AS gs
-        WHERE dt.turma_id IS NULL
-      ),
-      all_days AS (
-        SELECT turma_id, d FROM dt
-        UNION ALL
-        SELECT turma_id, d FROM ds
-      )
-      SELECT turma_id, COUNT(*)::int AS total_dias
-      FROM all_days
-      GROUP BY turma_id
-      `,
-      [eventoId]
-    );
+    const hasDT = await tableExists(req, "datas_turma");
+
+    const baseDatasSql = hasDT
+      ? `
+        WITH turmas_ev AS (
+          SELECT id, data_inicio::date AS di, data_fim::date AS df
+          FROM turmas
+          WHERE evento_id = $1
+        ),
+        dt AS (
+          SELECT turma_id, data::date AS d
+          FROM datas_turma
+          WHERE turma_id IN (SELECT id FROM turmas_ev)
+        ),
+        ds AS (
+          SELECT te.id AS turma_id, gs::date AS d
+          FROM turmas_ev te
+          WHERE NOT EXISTS (
+            SELECT 1
+            FROM dt
+            WHERE dt.turma_id = te.id
+          )
+          CROSS JOIN LATERAL generate_series(te.di, te.df, interval '1 day') AS gs
+        ),
+        all_days AS (
+          SELECT turma_id, d FROM dt
+          UNION ALL
+          SELECT turma_id, d FROM ds
+        )
+        SELECT turma_id, COUNT(*)::int AS total_dias
+        FROM all_days
+        GROUP BY turma_id
+        `
+      : `
+        WITH turmas_ev AS (
+          SELECT id, data_inicio::date AS di, data_fim::date AS df
+          FROM turmas
+          WHERE evento_id = $1
+        ),
+        all_days AS (
+          SELECT te.id AS turma_id, gs::date AS d
+          FROM turmas_ev te
+          CROSS JOIN LATERAL generate_series(te.di, te.df, interval '1 day') AS gs
+        )
+        SELECT turma_id, COUNT(*)::int AS total_dias
+        FROM all_days
+        GROUP BY turma_id
+        `;
+
+    const baseDatas = await q(req, baseDatasSql, [eventoId]);
 
     const totalDiasTurmaMap = new Map(
       (baseDatas.rows || []).map((r) => [
@@ -878,27 +1218,36 @@ async function presencasPorEvento(req, res) {
       ])
     );
 
+    const { nomeExpr, cpfExpr } = await detectarSchemaUsuarios(req);
+
     const raw = await q(
       req,
       `
       SELECT
         u.id AS usuario_id,
-        u.nome,
-        u.cpf,
+        ${nomeExpr} AS nome,
+        ${cpfExpr} AS cpf,
         t.id AS turma_id,
         t.nome AS turma_nome,
-        to_char(t.data_inicio::date,'YYYY-MM-DD') AS data_inicio,
-        to_char(t.data_fim::date,'YYYY-MM-DD')    AS data_fim,
+        to_char(t.data_inicio::date, 'YYYY-MM-DD') AS data_inicio,
+        to_char(t.data_fim::date, 'YYYY-MM-DD') AS data_fim,
         COUNT(DISTINCT CASE WHEN p.presente IS TRUE THEN p.data_presenca::date END)::int AS presentes
       FROM turmas t
       JOIN inscricoes i ON i.turma_id = t.id
-      JOIN usuarios u   ON u.id = i.usuario_id
+      JOIN usuarios u ON u.id = i.usuario_id
       LEFT JOIN presencas p
         ON p.turma_id = t.id
        AND p.usuario_id = u.id
       WHERE t.evento_id = $1
-      GROUP BY u.id, u.nome, u.cpf, t.id, t.nome, t.data_inicio, t.data_fim
-      ORDER BY u.nome ASC, t.data_inicio ASC NULLS LAST, t.id ASC
+      GROUP BY
+        u.id,
+        ${nomeExpr},
+        ${cpfExpr},
+        t.id,
+        t.nome,
+        t.data_inicio,
+        t.data_fim
+      ORDER BY nome ASC, t.data_inicio ASC NULLS LAST, t.id ASC
       `,
       [eventoId]
     );
@@ -924,6 +1273,7 @@ async function presencasPorEvento(req, res) {
       const presentes = Number(r.presentes || 0);
 
       const u = users.get(uid);
+
       u.turmas.push({
         turma_id: Number(r.turma_id),
         turma_nome: r.turma_nome,
@@ -931,7 +1281,8 @@ async function presencasPorEvento(req, res) {
         data_fim: r.data_fim,
         total_dias: totalDias,
         presentes,
-        frequencia: totalDias > 0 ? Math.round((presentes / totalDias) * 100) : null,
+        frequencia:
+          totalDias > 0 ? Math.round((presentes / totalDias) * 100) : null,
       });
 
       u.total_dias += totalDias;
@@ -940,9 +1291,15 @@ async function presencasPorEvento(req, res) {
 
     const lista = Array.from(users.values()).map((u) => ({
       ...u,
-      frequencia: u.total_dias > 0 ? Math.round((u.presentes / u.total_dias) * 100) : null,
+      frequencia:
+        u.total_dias > 0 ? Math.round((u.presentes / u.total_dias) * 100) : null,
       presente: u.total_dias > 0 ? u.presentes > 0 : false,
     }));
+
+    log(requestId, "[presencasPorEvento][OK]", {
+      eventoId,
+      usuarios: lista.length,
+    });
 
     return res.json({
       ok: true,
@@ -951,12 +1308,13 @@ async function presencasPorEvento(req, res) {
       lista,
     });
   } catch (err) {
-    errlg("[presencasPorEvento]", {
+    errlg("[presencasPorEvento][ERRO]", {
       requestId,
       eventoId,
       message: err?.message,
       detail: err?.detail,
       code: err?.code,
+      stack: !IS_PROD ? err?.stack : undefined,
     });
 
     return res.status(500).json({
