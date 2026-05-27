@@ -15,7 +15,7 @@ Esta API foi estruturada para operar em ambiente moderno, com foco em:
 
 ## Visão geral
 
-A plataforma foi desenvolvida para centralizar processos institucionais da Escola da Saúde, permitindo que usuários, instrutores e administradores realizem operações como:
+A plataforma foi desenvolvida para centralizar processos institucionais da Escola da Saúde, permitindo que usuários, organizadores e administradores realizem operações como:
 
 - autenticação local e via Google
 - cadastro e atualização de perfil
