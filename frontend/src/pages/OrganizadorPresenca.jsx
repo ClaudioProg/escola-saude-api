@@ -17,7 +17,7 @@ import {
 
 import Footer from "../components/layout/Footer";
 import HeaderHero from "../components/layout/HeaderHero";
-import Turmasorganizador from "../components/organizadores/Turmasorganizador";
+import Turmasorganizador from "../components/organizadores/TurmasOrganizador";
 import ModalAssinatura from "../components/usuarios/ModalAssinatura";
 import CarregandoSkeleton from "../components/ui/CarregandoSkeleton";
 import ErroCarregamento from "../components/ui/ErroCarregamento";
