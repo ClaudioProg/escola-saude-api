@@ -17,8 +17,8 @@
     "health": "node -e \"fetch('http://localhost:3000/__ping').then(r=>r.text()).then(console.log).catch(err=>{console.error(err);process.exit(1)})\"",
     "version:local": "node -e \"fetch('http://localhost:3000/__version').then(r=>r.text()).then(console.log).catch(err=>{console.error(err);process.exit(1)})\"",
 
-    "migrate": "node scripts/run-migration.js --dir db/migration --pattern \"*.sql\"",
-    "migrate:dry": "node scripts/run-migration.js --dir db/migration --pattern \"*.sql\" --dry-run",
+    "migrate": "node scripts/run-migration.js --dir db/migrations --pattern \"*.sql\"",
+"migrate:dry": "node scripts/run-migration.js --dir db/migrations --pattern \"*.sql\" --dry-run",
     "migrate:file": "node scripts/run-migration.js --file",
 
     "test": "node -e \"console.log('No tests configured yet')\""
