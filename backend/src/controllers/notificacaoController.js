@@ -86,7 +86,7 @@ const TIPOS_NOTIFICACAO_OFICIAIS = new Set([
   "inscricao",
   "reserva_aprovada",
   "reserva_rejeitada",
-  "reserva_confirmacao_uso",
+  "sala_confirmacao_uso",
   "submissao",
 ]);
 
