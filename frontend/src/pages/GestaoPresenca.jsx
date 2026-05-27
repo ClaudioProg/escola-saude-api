@@ -40,7 +40,7 @@ import {
 } from "lucide-react";
 
 import { api, downloadBlob } from "../services/api";
-import ListaTurmasPresenca from "../components/ListaTurmasPresenca";
+import ListaTurmasPresenca from "../components/presencas/ListaTurmasPresenca";
 import { notifyError, notifySuccess } from "../components/ui/AppToast";
 
 /* ─────────────────────────────────────────────────────────────

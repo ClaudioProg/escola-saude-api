@@ -24,7 +24,6 @@
 // - sem resposta { mensagem } como contrato;
 // - sem window.confirm;
 // - sem Footer antigo;
-// - sem NenhumDado antigo;
 // - sem bg-gelo;
 // - resposta padrão ok/data/message/code/meta;
 // - date-only em YYYY-MM-DD;

@@ -1,4 +1,4 @@
-// 📁 src/components/ModalAtribuirAvaliadores.jsx
+// 📁 src/components/trabalhos/ModalAtribuirAvaliadores.jsx
 // Atualizado em: 15/05/2026
 //
 // Plataforma Escola da Saúde — v2.0
@@ -44,7 +44,7 @@ import {
   X,
 } from "lucide-react";
 
-import api from "../services/api";
+import api from "../../services/api";
 
 /* =========================================================================
    Constantes

@@ -25,7 +25,6 @@ import NadaEncontrado from "../ui/NadaEncontrado";
  * - Permitir colunas fixas à esquerda quando necessário.
  *
  * Diretrizes v2.0:
- * - Sem import legado de NenhumDado.
  * - Sem exportação CSV interna como fluxo institucional.
  * - Exportação oficial fica no backend: /api/relatorio/exportar/:tipo.xlsx.
  * - Sem dependência de endpoint.

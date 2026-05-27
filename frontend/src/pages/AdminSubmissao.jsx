@@ -54,11 +54,11 @@ import { useLocation, useNavigate } from "react-router-dom";
 
 import api from "../services/api";
 import Footer from "../components/layout/Footer";
-import RankingModal from "../components/RankingModal";
-import RankingOralModal from "../components/RankingOralModal";
-import ModalAvaliadores from "../components/ModalAvaliadores";
-import ModalDetalhesSubmissao from "../components/ModalDetalhesSubmissao";
-import ModalAtribuirAvaliadores from "../components/ModalAtribuirAvaliadores";
+import RankingModal from "../components/trabalhos/RankingModal";
+import RankingOralModal from "../components/trabalhos/RankingOralModal";
+import ModalAvaliadores from "../components/trabalhos/ModalAvaliadores";
+import ModalDetalhesSubmissao from "../components/trabalhos/ModalDetalhesSubmissao";
+import ModalAtribuirAvaliadores from "../components/trabalhos/ModalAtribuirAvaliadores";
 
 /* =========================================================================
    Helpers

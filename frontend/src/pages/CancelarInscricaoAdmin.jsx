@@ -44,7 +44,6 @@ import {
 } from "lucide-react";
 
 import {
-  cancelarInscricaoDoUsuarioNaTurma,
   isAbortLike,
   listarEventosAdmin,
   listarInscritosDaTurma,
@@ -56,6 +55,8 @@ import {
   notifyInfo,
   notifySuccess,
 } from "../components/ui/AppToast";
+
+import api from "../services/api";
 
 /* ─────────────────────────────────────────────────────────────
    Constantes
@@ -853,7 +854,7 @@ export default function CancelarInscricaoAdmin() {
 
     try {
       for (const usuarioId of usuarioIds) {
-        await cancelarInscricaoDoUsuarioNaTurma(turmaId, usuarioId);
+        await api.inscricao.cancelarUsuarioNaTurma(turmaId, usuarioId);
       }
 
       notifySuccess(

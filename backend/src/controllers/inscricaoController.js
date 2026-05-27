@@ -1551,7 +1551,6 @@ module.exports = {
   inscreverEmTurma,
   cancelarInscricaoPorId,
   cancelarMinhaInscricaoPorTurma,
-  cancelarInscricaoDoUsuarioNaTurma,
   listarMinhasInscricoes,
   listarInscritosPorTurma,
   conflitoPorTurma,

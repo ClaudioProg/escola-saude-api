@@ -33,12 +33,12 @@ import {
   Timer,
 } from "lucide-react";
 
-import { api } from "../services/api";
-import Botao from "./ui/Botao";
+import { api } from "../../services/api";
+import Botao from "../ui/Botao";
 import {
   notifyError,
   notifySuccess,
-} from "./ui/AppToast";
+} from "../ui/AppToast";
 
 /* ─────────────────────────────────────────────────────────────
  * Configuração

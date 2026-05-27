@@ -46,7 +46,7 @@ import {
 import ModalEvento from "../components/eventos/ModalEvento";
 import SkeletonEvento from "../components/eventos/SkeletonEvento";
 import ModalConfirmacao from "../components/ui/ModalConfirmacao";
-import NenhumDado from "../components/ui/NenhumDado";
+import NadaEncontrado from "../components/ui/NadaEncontrado";
 import {
   notifyApiError,
   notifyError,
@@ -1080,7 +1080,7 @@ export default function GerenciarEventos() {
         {loading ? (
           <SkeletonEvento />
         ) : eventosFiltrados.length === 0 ? (
-          <NenhumDado
+          <NadaEncontrado
             mensagem={
               busca
                 ? "Nenhum evento encontrado para a busca informada."
