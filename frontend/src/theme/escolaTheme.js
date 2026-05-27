@@ -1,24 +1,29 @@
-// ✅ src/theme/escolaTheme.js — PREMIUM++
-// - Tailwind darkMode: "class" (fonte única: <html class="dark">)
-// - Broadcast na mesma aba via CustomEvent
-// - Sincroniza entre abas via localStorage + helper oficial
-// - Migração real da chave legada "theme"
-// - Idempotente e SSR-safe
-// - Boot helper oficial para main.jsx
+// 📁 src/theme/escolaTheme.js — v2.0
+// Motor oficial de tema da Plataforma Escola da Saúde.
+//
+// Contrato oficial:
+// - localStorage["escola_theme"] = "light" | "dark" | "system"
+// - chave legada lida apenas para migração: "theme"
+// - Tailwind darkMode: "class"
+// - fonte única: <html class="dark"> + data-theme
+// - evento oficial: escola-theme-change
 
-export const ESCOLA_THEME_KEY = "escola_theme"; // "light" | "dark" | "system"
+export const ESCOLA_THEME_KEY = "escola_theme";
+export const ESCOLA_THEME_LEGACY_KEY = "theme";
 export const ESCOLA_THEME_EVENT = "escola-theme-change";
 
-const VALID = new Set(["light", "dark", "system"]);
+const THEME_VALIDO = new Set(["light", "dark", "system"]);
 
-function normalizeTheme(v) {
-  const t = String(v || "").toLowerCase();
-  return VALID.has(t) ? t : "system";
+function normalizeTheme(value) {
+  const theme = String(value || "").trim().toLowerCase();
+
+  return THEME_VALIDO.has(theme) ? theme : "system";
 }
 
 /* ──────────────────────────────────────────────
    Helpers SSR-safe
 ────────────────────────────────────────────── */
+
 function safeWindow() {
   return typeof window !== "undefined" ? window : undefined;
 }
@@ -27,31 +32,56 @@ function safeDocument() {
   return typeof document !== "undefined" ? document : undefined;
 }
 
-/* ──────────────────────────────────────────────
-   Sistema (prefers-color-scheme)
-────────────────────────────────────────────── */
-export function getSystemTheme() {
+function safeLocalStorage() {
   const win = safeWindow();
-  if (!win || !win.matchMedia) return "light";
 
   try {
-    return win.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    return win?.localStorage || null;
+  } catch {
+    return null;
+  }
+}
+
+/* ──────────────────────────────────────────────
+   Sistema
+────────────────────────────────────────────── */
+
+export function getSystemTheme() {
+  const win = safeWindow();
+
+  if (!win || typeof win.matchMedia !== "function") {
+    return "light";
+  }
+
+  try {
+    return win.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
   } catch {
     return "light";
   }
 }
 
 export function getEffectiveTheme(theme) {
-  const t = normalizeTheme(theme);
-  return t === "system" ? getSystemTheme() : t;
+  const normalized = normalizeTheme(theme);
+
+  return normalized === "system" ? getSystemTheme() : normalized;
 }
 
 /* ──────────────────────────────────────────────
-   Storage seguro
+   Storage
 ────────────────────────────────────────────── */
+
 export function getStoredTheme() {
+  const storage = safeLocalStorage();
+
+  if (!storage) {
+    return null;
+  }
+
   try {
-    const raw = localStorage.getItem(ESCOLA_THEME_KEY);
+    const raw = storage.getItem(ESCOLA_THEME_KEY);
+
     return raw ? normalizeTheme(raw) : null;
   } catch {
     return null;
@@ -59,114 +89,159 @@ export function getStoredTheme() {
 }
 
 export function setStoredTheme(value) {
+  const storage = safeLocalStorage();
+
+  if (!storage) {
+    return;
+  }
+
   try {
-    localStorage.setItem(ESCOLA_THEME_KEY, normalizeTheme(value));
+    storage.setItem(ESCOLA_THEME_KEY, normalizeTheme(value));
   } catch {
-    /* noop */
+    // noop
   }
 }
 
 export function removeStoredTheme() {
+  const storage = safeLocalStorage();
+
+  if (!storage) {
+    return;
+  }
+
   try {
-    localStorage.removeItem(ESCOLA_THEME_KEY);
+    storage.removeItem(ESCOLA_THEME_KEY);
   } catch {
-    /* noop */
+    // noop
   }
 }
 
 /**
  * Lê tema com migração da chave legada.
- * Use isso no boot do main.jsx.
+ *
+ * Chave oficial:
+ * - escola_theme
+ *
+ * Chave legada:
+ * - theme
  */
 export function readStoredThemeWithMigration({
-  legacyKey = "theme",
+  legacyKey = ESCOLA_THEME_LEGACY_KEY,
   removeLegacy = false,
 } = {}) {
-  const currentRaw = (() => {
-    try {
-      return localStorage.getItem(ESCOLA_THEME_KEY);
-    } catch {
-      return null;
-    }
-  })();
+  const storage = safeLocalStorage();
 
-  if (currentRaw && VALID.has(String(currentRaw).toLowerCase())) {
-    return normalizeTheme(currentRaw);
+  if (!storage) {
+    return "system";
   }
 
   try {
-    const legacy = localStorage.getItem(legacyKey);
+    const currentRaw = storage.getItem(ESCOLA_THEME_KEY);
 
-    if (legacy && VALID.has(String(legacy).toLowerCase())) {
-      const normalized = normalizeTheme(legacy);
-      localStorage.setItem(ESCOLA_THEME_KEY, normalized);
-      if (removeLegacy) localStorage.removeItem(legacyKey);
+    if (currentRaw && THEME_VALIDO.has(String(currentRaw).toLowerCase())) {
+      return normalizeTheme(currentRaw);
+    }
+
+    const legacyRaw = storage.getItem(legacyKey);
+
+    if (legacyRaw && THEME_VALIDO.has(String(legacyRaw).toLowerCase())) {
+      const normalized = normalizeTheme(legacyRaw);
+
+      storage.setItem(ESCOLA_THEME_KEY, normalized);
+
+      if (removeLegacy) {
+        storage.removeItem(legacyKey);
+      }
+
       return normalized;
     }
   } catch {
-    /* noop */
+    // noop
   }
 
   return "system";
 }
 
 /* ──────────────────────────────────────────────
-   DOM apply (idempotente)
+   DOM apply
 ────────────────────────────────────────────── */
+
 function getDomAppliedTheme() {
   const doc = safeDocument();
-  if (!doc) return null;
+
+  if (!doc) {
+    return null;
+  }
 
   const root = doc.documentElement;
-  const data = root.getAttribute("data-theme");
+  const dataTheme = root.getAttribute("data-theme");
 
-  if (data === "dark" || data === "light") return data;
-  if (root.classList.contains("dark")) return "dark";
-  if (root.classList.contains("light")) return "light";
+  if (dataTheme === "dark" || dataTheme === "light") {
+    return dataTheme;
+  }
+
+  if (root.classList.contains("dark")) {
+    return "dark";
+  }
+
+  if (root.classList.contains("light")) {
+    return "light";
+  }
 
   return null;
 }
 
-function setBodyBgFallback(effective) {
+function setBodyBgFallback(effectiveTheme) {
   const doc = safeDocument();
-  if (!doc?.body) return;
 
-  doc.body.style.backgroundColor = effective === "dark" ? "#0b1220" : "#ffffff";
+  if (!doc?.body) {
+    return;
+  }
+
+  doc.body.style.backgroundColor =
+    effectiveTheme === "dark" ? "#0b1220" : "#ffffff";
 }
 
 export function applyThemeToHtml(theme) {
   const doc = safeDocument();
-  if (!doc) return;
 
-  const effective = getEffectiveTheme(theme);
-  const already = getDomAppliedTheme();
-  const root = doc.documentElement;
-
-  // Sempre garantir color-scheme
-  root.style.colorScheme = effective;
-
-  // Idempotência real
-  if (already === effective) {
-    setBodyBgFallback(effective);
-    return effective;
+  if (!doc) {
+    return getEffectiveTheme(theme);
   }
 
-  root.classList.toggle("dark", effective === "dark");
-  root.classList.toggle("light", effective === "light");
-  root.setAttribute("data-theme", effective);
+  const effectiveTheme = getEffectiveTheme(theme);
+  const alreadyApplied = getDomAppliedTheme();
+  const root = doc.documentElement;
 
-  setBodyBgFallback(effective);
-  return effective;
+  root.style.colorScheme = effectiveTheme;
+
+  if (alreadyApplied === effectiveTheme) {
+    setBodyBgFallback(effectiveTheme);
+    return effectiveTheme;
+  }
+
+  root.classList.toggle("dark", effectiveTheme === "dark");
+  root.classList.toggle("light", effectiveTheme === "light");
+  root.setAttribute("data-theme", effectiveTheme);
+
+  setBodyBgFallback(effectiveTheme);
+
+  return effectiveTheme;
 }
 
 /* ──────────────────────────────────────────────
-   Broadcast (mesma aba)
+   Broadcast
 ────────────────────────────────────────────── */
+
 export function emitThemeChange({ theme, effective, source = "engine" } = {}) {
   const win = safeWindow();
-  if (!win) return;
+
+  if (!win) {
+    return;
+  }
 
   const normalizedTheme = normalizeTheme(theme);
+
   const normalizedEffective =
     effective === "dark" || effective === "light"
       ? effective
@@ -184,60 +259,74 @@ export function emitThemeChange({ theme, effective, source = "engine" } = {}) {
       })
     );
   } catch {
-    /* noop */
+    // noop
   }
 }
 
 /**
- * Setter oficial do motor:
- * - persiste
- * - aplica no DOM
- * - emite evento para mesma aba
+ * Setter oficial do motor.
  */
 export function setThemeAndBroadcast(nextTheme, { source = "engine" } = {}) {
   const theme = normalizeTheme(nextTheme);
+
   setStoredTheme(theme);
+
   const effective = applyThemeToHtml(theme);
-  emitThemeChange({ theme, effective, source });
+
+  emitThemeChange({
+    theme,
+    effective,
+    source,
+  });
+
   return theme;
 }
 
 /* ──────────────────────────────────────────────
    Watcher do sistema
 ────────────────────────────────────────────── */
+
 export function watchSystemTheme(onChange) {
   const win = safeWindow();
-  if (!win || !win.matchMedia) return () => {};
 
-  const mq = win.matchMedia("(prefers-color-scheme: dark)");
-  const handler = () => onChange?.(mq.matches ? "dark" : "light");
+  if (!win || typeof win.matchMedia !== "function") {
+    return () => {};
+  }
+
+  const mediaQuery = win.matchMedia("(prefers-color-scheme: dark)");
+
+  const handler = () => {
+    onChange?.(mediaQuery.matches ? "dark" : "light");
+  };
 
   try {
-    mq.addEventListener?.("change", handler);
+    mediaQuery.addEventListener?.("change", handler);
   } catch {
-    mq.addListener?.(handler);
+    mediaQuery.addListener?.(handler);
   }
 
   return () => {
     try {
-      mq.removeEventListener?.("change", handler);
+      mediaQuery.removeEventListener?.("change", handler);
     } catch {
-      mq.removeListener?.(handler);
+      mediaQuery.removeListener?.(handler);
     }
   };
 }
 
 /**
- * Instala watcher do SO somente se o tema salvo for "system".
- * - Atualiza DOM
- * - Emite evento
+ * Instala watcher do sistema somente se o tema salvo for "system".
  */
 export function installSystemWatcherIfNeeded({ source = "system" } = {}) {
   const saved = normalizeTheme(getStoredTheme() || "system");
-  if (saved !== "system") return () => {};
+
+  if (saved !== "system") {
+    return () => {};
+  }
 
   return watchSystemTheme(() => {
     const effective = applyThemeToHtml("system");
+
     emitThemeChange({
       theme: "system",
       effective,
@@ -249,20 +338,26 @@ export function installSystemWatcherIfNeeded({ source = "system" } = {}) {
 /* ──────────────────────────────────────────────
    Sync entre abas
 ────────────────────────────────────────────── */
+
 export function listenThemeStorageSync(onThemeChange) {
   const win = safeWindow();
-  if (!win) return () => {};
 
-  const handler = (e) => {
-    if (e.key !== ESCOLA_THEME_KEY) return;
+  if (!win) {
+    return () => {};
+  }
 
-    const theme = normalizeTheme(e.newValue || "system");
+  const handler = (event) => {
+    if (event.key !== ESCOLA_THEME_KEY) {
+      return;
+    }
+
+    const theme = normalizeTheme(event.newValue || "system");
     const effective = applyThemeToHtml(theme);
 
     try {
       onThemeChange?.(theme, effective, "storage");
     } catch {
-      /* noop */
+      // noop
     }
 
     emitThemeChange({
@@ -273,12 +368,16 @@ export function listenThemeStorageSync(onThemeChange) {
   };
 
   win.addEventListener("storage", handler);
-  return () => win.removeEventListener("storage", handler);
+
+  return () => {
+    win.removeEventListener("storage", handler);
+  };
 }
 
 /* ──────────────────────────────────────────────
    Boot helper oficial
 ────────────────────────────────────────────── */
+
 /**
  * Uso sugerido no main.jsx:
  *
@@ -288,6 +387,8 @@ export function listenThemeStorageSync(onThemeChange) {
  */
 export function bootEscolaTheme(options = {}) {
   const theme = readStoredThemeWithMigration(options);
+
   applyThemeToHtml(theme);
+
   return theme;
 }

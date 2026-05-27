@@ -1,41 +1,62 @@
-// 📦 eslint.config.js — Configuração institucional premium (React + Vite + A11y)
+// 📦 eslint.config.js — Escola da Saúde
+// Configuração institucional para React + Vite + Acessibilidade.
+
 import js from "@eslint/js";
 import globals from "globals";
 import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
 import jsxA11y from "eslint-plugin-jsx-a11y";
 
-const isProd = process.env.NODE_ENV === "production";
-
 export default [
-  // 🚫 Ignora artefatos de build/cache
   {
     ignores: [
+      "**/node_modules/**",
+
       "**/dist/**",
       "**/dist-ssr/**",
-      "**/node_modules/**",
+      "**/build/**",
       "**/.vite/**",
+      "**/.next/**",
+      "**/out/**",
+
       "**/coverage/**",
+      "**/.nyc_output/**",
+      "**/.vitest/**",
+
       "**/.yarn/**",
       "**/.turbo/**",
       "**/.cache/**",
-      "**/cypress/**",
+      "**/.parcel-cache/**",
+
+      "**/cypress/videos/**",
+      "**/cypress/screenshots/**",
       "**/playwright-report/**",
+      "**/test-results/**",
+
+      "**/uploads/**",
+      "**/certificados/**",
+      "**/storage/**",
+      "**/backups/**",
+      "**/data/**",
+
+      "**/.vercel/**",
+      "**/.render/**",
+      "**/.neon/**",
     ],
   },
 
-  // ✅ Base recomendada do ESLint
   js.configs.recommended,
 
   {
-    // 📁 Arquivos da aplicação
-    files: ["**/*.{js,jsx}"],
+    files: ["src/**/*.{js,jsx}"],
 
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",
       parserOptions: {
-        ecmaFeatures: { jsx: true },
+        ecmaFeatures: {
+          jsx: true,
+        },
       },
       globals: {
         ...globals.browser,
@@ -57,47 +78,59 @@ export default [
       ...reactHooks.configs.recommended.rules,
       ...jsxA11y.configs.recommended.rules,
 
-      // ✳️ Código mais limpo
       "no-var": "error",
-      "prefer-const": "warn",
-      eqeqeq: ["warn", "smart"],
-      curly: ["error", "multi-line"],
+      "prefer-const": "error",
+      eqeqeq: ["error", "smart"],
+      curly: ["error", "all"],
       "no-duplicate-imports": "error",
 
-      // ⚙️ Variáveis não usadas
+      "no-alert": "error",
+      "no-debugger": "error",
+      "no-useless-catch": "error",
+      "no-return-await": "error",
+      "no-else-return": ["warn", { allowElseIf: false }],
+      "object-shorthand": ["warn", "always"],
+
       "no-unused-vars": [
         "error",
         {
           argsIgnorePattern: "^_",
-          ignoreRestSiblings: true,
+          varsIgnorePattern: "^_",
           caughtErrorsIgnorePattern: "^_",
+          ignoreRestSiblings: true,
         },
       ],
 
-      // 🔍 Console liberado em dev, restrito em produção
-      "no-console": isProd ? ["warn", { allow: ["warn", "error"] }] : "off",
-
-      // ♻️ React Refresh (Vite HMR)
-      "react-refresh/only-export-components": [
+      "no-console": [
         "warn",
-        { allowConstantExport: true },
+        {
+          allow: ["warn", "error"],
+        },
       ],
 
-      // ♿️ Acessibilidade
+      "react-hooks/rules-of-hooks": "error",
+      "react-hooks/exhaustive-deps": "warn",
+
+      "react-refresh/only-export-components": [
+        "warn",
+        {
+          allowConstantExport: true,
+        },
+      ],
+
       "jsx-a11y/alt-text": "warn",
       "jsx-a11y/aria-role": "warn",
       "jsx-a11y/anchor-is-valid": "warn",
       "jsx-a11y/no-autofocus": "off",
 
-      // ⚡ Outras melhorias
       "no-trailing-spaces": "warn",
       "eol-last": ["warn", "always"],
     },
   },
 
-  // 🧪 Testes (Vitest / Jest): relaxa regras
   {
-    files: ["**/*.{test,spec}.{js,jsx}"],
+    files: ["src/**/*.{test,spec}.{js,jsx}"],
+
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",
@@ -107,6 +140,7 @@ export default [
         vi: true,
         describe: true,
         it: true,
+        test: true,
         expect: true,
         beforeEach: true,
         afterEach: true,
@@ -114,26 +148,50 @@ export default [
         afterAll: true,
       },
     },
+
     rules: {
       "no-console": "off",
-      "no-unused-expressions": "off",
     },
   },
 
-  // ⚙️ Configurações Node / tooling
   {
     files: [
-      "**/*.config.{js,mjs,cjs}",
       "eslint.config.js",
-      "vite.config.{js,mjs,cjs}",
-      "scripts/**/*.{js,mjs,cjs}",
+      "vite.config.{js,mjs}",
+      "postcss.config.{js,mjs}",
+      "tailwind.config.{js,mjs}",
+      "scripts/**/*.{js,mjs}",
     ],
+
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",
       globals: {
         ...globals.node,
       },
+    },
+
+    rules: {
+      "no-console": "off",
+    },
+  },
+
+  {
+    files: [
+      "*.config.cjs",
+      "scripts/**/*.cjs",
+    ],
+
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "commonjs",
+      globals: {
+        ...globals.node,
+      },
+    },
+
+    rules: {
+      "no-console": "off",
     },
   },
 ];

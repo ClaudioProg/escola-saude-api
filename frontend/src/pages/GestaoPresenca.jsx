@@ -1,47 +1,67 @@
-/* eslint-disable no-console */
-// ✅ src/pages/GestaoPresenca.jsx (premium + mobile/PWA + a11y + filtros + ordenação desc + export PDF real)
-// - HeaderHero com identidade própria (teal + glow) + ministats
-// - Persistência do agrupamento e filtros (localStorage)
-// - AbortController + mountedRef (evita setState em unmount)
-// - Estados de erro premium + "Tentar novamente"
-// - Barra de progresso fina + live region
-// - Filtros premium: busca, status e mês
-// - Ordenação: data mais nova -> mais antiga (turmas e eventos)
-// - Export PDF real via backend
-// - Mantém regra: ListaTurmasPresenca continua “dona” do fluxo de presenças
+// ✅ frontend/src/pages/GestaoPresenca.jsx — v2.0
+// Atualizado em: 14/05/2026
+// Plataforma Escola da Saúde
+//
+// Página administrativa/organizador para gestão de presenças.
+//
+// Contratos aplicados:
+// - Sem toast direto;
+// - Sem Footer antigo;
+// - Sem Spinner antigo;
+// - Sem apiGet/apiGetFile direto;
+// - Sem /api manual no frontend;
+// - Sem /presencas;
+// - Presença administrativa: api.presenca.administrador();
+// - Inscritos por turma: api.inscricao.listarPorTurma(turma_id);
+// - PDF de presença: api.presenca.turmaPdf(turma_id);
+// - Status oficial: programado | andamento | encerrado;
+// - "todos" é apenas filtro visual;
+// - Date-only seguro em YYYY-MM-DD;
+// - ListaTurmasPresenca permanece como componente detalhado atualizado;
+// - Mobile-first, acessível, com aria-live, loading local, filtros persistidos;
+// - Upgrade visual v2.0 real, sem preservar visual antigo por padrão.
 
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { toast } from "react-toastify";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  ClipboardCheck,
-  RefreshCcw,
-  UsersRound,
-  CalendarDays,
   AlertTriangle,
-  Sparkles,
-  Layers,
-  Search,
+  CalendarDays,
+  CheckCircle2,
+  ClipboardCheck,
+  Clock3,
   Filter,
+  Layers,
+  RefreshCcw,
+  Search,
+  Sparkles,
+  TrendingUp,
+  UsersRound,
   X,
- Clock3,
-  Download,
 } from "lucide-react";
 
-import { apiGet, apiGetFile, downloadBlob } from "../services/api";
-import Footer from "../components/Footer";
-import Spinner from "../components/Spinner";
+import { api, downloadBlob } from "../services/api";
 import ListaTurmasPresenca from "../components/ListaTurmasPresenca";
+import { notifyError, notifySuccess } from "../components/ui/AppToast";
 
-/* ---------------- localStorage keys ---------------- */
-const LS_KEYS = {
+/* ─────────────────────────────────────────────────────────────
+ * localStorage keys
+ * ───────────────────────────────────────────────────────────── */
+
+const LS_KEYS = Object.freeze({
   agrupamento: "presenca:agrupamento",
   busca: "presenca:busca",
   status: "presenca:status",
   mes: "presenca:mes",
-};
+});
 
-/* ---------------- helpers de tempo (TZ BR / anti-fuso) ---------------- */
+/* ─────────────────────────────────────────────────────────────
+ * Helpers base
+ * ───────────────────────────────────────────────────────────── */
+
+function classNames(...classes) {
+  return classes.filter(Boolean).join(" ");
+}
+
 function nowBR() {
   return new Date();
 }
@@ -58,39 +78,56 @@ function nowSPParts() {
     hour12: false,
   })
     .formatToParts(new Date())
-    .reduce((acc, p) => {
-      acc[p.type] = p.value;
+    .reduce((acc, part) => {
+      acc[part.type] = part.value;
       return acc;
     }, {});
 }
 
 function nowSPComparable() {
-  const p = nowSPParts();
-  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}`;
+  const parts = nowSPParts();
+
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}`;
 }
 
 function normalizeYMD(value) {
-  const s = String(value || "").trim();
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
+  const safe = String(value || "").trim();
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(safe)) return safe;
+  if (/^\d{4}-\d{2}-\d{2}T/.test(safe)) return safe.slice(0, 10);
+
+  return "";
 }
 
 function normalizeHHMM(value, fallback = "00:00") {
-  const s = String(value || "").trim();
-  const m = s.match(/^(\d{2}):(\d{2})/);
-  return m ? `${m[1]}:${m[2]}` : fallback;
+  const safe = String(value || "").trim();
+
+  if (/^\d{2}:\d{2}$/.test(safe)) return safe;
+  if (/^\d{2}:\d{2}:\d{2}$/.test(safe)) return safe.slice(0, 5);
+
+  return fallback;
+}
+
+function normalizarTexto(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .trim()
+    .toLowerCase();
 }
 
 function turmaStartComparable(turma) {
-  const di = normalizeYMD(turma?.data_inicio);
-  const hi = normalizeHHMM(turma?.horario_inicio, "00:00");
-  return di ? `${di}T${hi}:00` : "";
+  const dataInicio = normalizeYMD(turma?.data_inicio);
+  const horarioInicio = normalizeHHMM(turma?.horario_inicio, "00:00");
+
+  return dataInicio ? `${dataInicio}T${horarioInicio}:00` : "";
 }
 
 function turmaEndComparable(turma) {
-  const df = normalizeYMD(turma?.data_fim);
-  const hf = normalizeHHMM(turma?.horario_fim, "23:59");
-  return df ? `${df}T${hf}:59` : "";
+  const dataFim = normalizeYMD(turma?.data_fim);
+  const horarioFim = normalizeHHMM(turma?.horario_fim, "23:59");
+
+  return dataFim ? `${dataFim}T${horarioFim}:59` : "";
 }
 
 function getTurmaStatus(turma) {
@@ -101,6 +138,7 @@ function getTurmaStatus(turma) {
   if (!start || !end) return "programado";
   if (now < start) return "programado";
   if (now > end) return "encerrado";
+
   return "andamento";
 }
 
@@ -109,8 +147,11 @@ function eventLatestComparable(evento) {
   let latest = "";
 
   for (const turma of turmas) {
-    const cmp = turmaStartComparable(turma);
-    if (cmp && (!latest || cmp > latest)) latest = cmp;
+    const comparable = turmaStartComparable(turma);
+
+    if (comparable && (!latest || comparable > latest)) {
+      latest = comparable;
+    }
   }
 
   return latest;
@@ -118,60 +159,145 @@ function eventLatestComparable(evento) {
 
 function sortTurmasDesc(turmas = []) {
   return [...turmas].sort((a, b) => {
-    const da = turmaStartComparable(a);
-    const db = turmaStartComparable(b);
-    if (db !== da) return db.localeCompare(da);
-    return String(b?.id || "").localeCompare(String(a?.id || ""));
+    const dataA = turmaStartComparable(a);
+    const dataB = turmaStartComparable(b);
+
+    if (dataB !== dataA) return dataB.localeCompare(dataA);
+
+    return String(b?.id || b?.turma_id || "").localeCompare(
+      String(a?.id || a?.turma_id || "")
+    );
   });
 }
 
 function sortEventosDesc(eventos = []) {
   return [...eventos].sort((a, b) => {
-    const da = eventLatestComparable(a);
-    const db = eventLatestComparable(b);
-    if (db !== da) return db.localeCompare(da);
-    return String(b?.titulo || "").localeCompare(String(a?.titulo || ""), "pt-BR");
+    const dataA = eventLatestComparable(a);
+    const dataB = eventLatestComparable(b);
+
+    if (dataB !== dataA) return dataB.localeCompare(dataA);
+
+    return String(a?.titulo || "").localeCompare(
+      String(b?.titulo || ""),
+      "pt-BR"
+    );
   });
 }
 
-function isAbortLike(err) {
-  const msg = String(err?.message || err || "").trim().toLowerCase();
+function isAbortLike(error) {
+  const name = String(error?.name || "");
+  const message = String(error?.message || error || "").trim().toLowerCase();
+
   return (
-    err?.name === "AbortError" ||
-    msg === "new-request" ||
-    msg === "unmount" ||
-    msg.includes("abort") ||
-    msg.includes("aborted") ||
-    msg.includes("canceled") ||
-    msg.includes("cancelled")
+    name === "AbortError" ||
+    message === "new-request" ||
+    message === "unmount" ||
+    message.includes("abort") ||
+    message.includes("aborted") ||
+    message.includes("canceled") ||
+    message.includes("cancelled")
   );
 }
 
-/* ---------------- MiniStats ---------------- */
-function MiniStat({
-  icon: Icon,
-  label,
-  value,
-  accent = "from-teal-600 to-emerald-500",
-}) {
+function getErrorMessage(error, fallback) {
   return (
-    <div className="rounded-2xl bg-white/10 border border-white/10 backdrop-blur px-4 py-3 text-left shadow-sm">
-      <div className="flex items-center gap-2 text-white/90">
-        <span
-          className={`inline-flex w-9 h-9 rounded-xl items-center justify-center bg-gradient-to-r ${accent}`}
-        >
-          <Icon className="w-4 h-4" aria-hidden="true" />
-        </span>
-        <div className="min-w-0">
-          <div className="text-xs text-white/80">{label}</div>
-          <div className="text-xl font-extrabold tracking-tight">{value}</div>
-        </div>
-      </div>
+    error?.data?.message ||
+    error?.response?.data?.message ||
+    error?.message ||
+    fallback
+  );
+}
+
+function unwrapEventosAdministrativos(response) {
+  const data = response?.data !== undefined ? response.data : response;
+
+  if (Array.isArray(data?.eventos)) return data.eventos;
+  if (Array.isArray(data)) return data;
+
+  return [];
+}
+
+function unwrapArray(response) {
+  const data = response?.data !== undefined ? response.data : response;
+
+  return Array.isArray(data) ? data : [];
+}
+
+function sanitizeFileName(value) {
+  return String(value || "lista-presenca")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[^a-zA-Z0-9_-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "")
+    .slice(0, 70)
+    .toLowerCase();
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * Componentes locais v2.0
+ * ───────────────────────────────────────────────────────────── */
+
+function LoadingInline({ label = "Carregando..." }) {
+  return (
+    <div
+      className="inline-flex items-center justify-center gap-2 text-sm font-bold text-emerald-700 dark:text-emerald-300"
+      role="status"
+      aria-live="polite"
+    >
+      <RefreshCcw className="h-5 w-5 animate-spin" aria-hidden="true" />
+      <span>{label}</span>
     </div>
   );
 }
 
-/* ---------------- HeaderHero (teal premium) ---------------- */
+function MiniStat({
+  icon: Icon,
+  label,
+  value,
+  description,
+  tone = "emerald",
+}) {
+  const toneClass = {
+    emerald: "from-emerald-500 to-teal-400",
+    cyan: "from-cyan-500 to-sky-400",
+    amber: "from-amber-400 to-orange-400",
+    rose: "from-rose-500 to-pink-400",
+    slate: "from-slate-500 to-slate-400",
+  };
+
+  return (
+    <article className="rounded-3xl border border-white/10 bg-white/10 p-3 text-left shadow-sm backdrop-blur">
+      <div className="flex items-start gap-3">
+        <span
+          className={classNames(
+            "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br text-white shadow-sm",
+            toneClass[tone] || toneClass.emerald
+          )}
+        >
+          <Icon className="h-5 w-5" aria-hidden="true" />
+        </span>
+
+        <div className="min-w-0">
+          <p className="text-[11px] font-black uppercase tracking-wide text-white/75">
+            {label}
+          </p>
+
+          <p className="mt-0.5 text-2xl font-black leading-none tracking-tight text-white">
+            {value ?? "—"}
+          </p>
+
+          {description && (
+            <p className="mt-1 text-[11px] font-medium leading-snug text-white/70">
+              {description}
+            </p>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
 function HeaderHero({
   onAtualizar,
   atualizando,
@@ -180,109 +306,129 @@ function HeaderHero({
   kpis,
 }) {
   return (
-    <header className="text-white relative overflow-hidden" role="banner">
-      <div className="absolute inset-0 bg-gradient-to-br from-teal-950 via-teal-800 to-cyan-700" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(255,255,255,0.10),transparent_45%),radial-gradient(circle_at_85%_35%,rgba(255,255,255,0.08),transparent_45%)]" />
+    <header className="relative isolate overflow-hidden text-white" role="banner">
+      <div className="absolute inset-0 bg-gradient-to-br from-emerald-950 via-teal-800 to-cyan-700" />
+      <div
+        className="absolute inset-0 bg-[radial-gradient(circle_at_18%_12%,rgba(255,255,255,0.16),transparent_34%),radial-gradient(circle_at_82%_28%,rgba(125,211,252,0.22),transparent_42%),radial-gradient(circle_at_50%_100%,rgba(16,185,129,0.20),transparent_45%)]"
+        aria-hidden="true"
+      />
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute -top-24 left-1/2 h-[320px] w-[900px] -translate-x-1/2 rounded-full blur-3xl opacity-25 bg-cyan-300"
+        className="pointer-events-none absolute -top-32 left-1/2 h-[360px] w-[960px] max-w-[95vw] -translate-x-1/2 rounded-full bg-cyan-300/25 blur-3xl"
       />
 
       <a
         href="#conteudo"
-        className="relative sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
+        className="relative sr-only px-3 py-2 text-sm focus:not-sr-only focus:block focus:bg-white/20 focus:text-white"
       >
         Ir para o conteúdo
       </a>
 
-      <div className="relative max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10 md:py-12 min-h-[160px] sm:min-h-[190px]">
-        <div className="flex flex-col items-center text-center gap-3 sm:gap-4">
-          <div className="inline-flex items-center justify-center gap-2">
-            <ClipboardCheck className="w-6 h-6" aria-hidden="true" />
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+      <div className="relative mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10 md:py-12">
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)] lg:items-end">
+          <div className="min-w-0 text-center lg:text-left">
+            <div className="inline-flex items-center justify-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-black uppercase tracking-wide ring-1 ring-white/15">
+              <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
+              Presença v2.0
+            </div>
+
+            <h1 className="mt-4 text-2xl font-black tracking-tight sm:text-4xl">
               Gestão de presenças
             </h1>
+
+            <p className="mt-3 max-w-2xl text-sm leading-relaxed text-white/88 sm:text-base">
+              Acompanhe turmas, inscritos, frequências e relatórios com fluxo
+              rastreável, acessível e alinhado ao contrato oficial da plataforma.
+            </p>
+
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-2 lg:justify-start">
+              <button
+                type="button"
+                onClick={onAtualizar}
+                disabled={atualizando}
+                className={classNames(
+                  "inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-black text-white shadow-sm transition",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80",
+                  atualizando
+                    ? "cursor-not-allowed bg-white/20 opacity-70"
+                    : "bg-white/15 hover:bg-white/25"
+                )}
+                aria-label="Atualizar lista de eventos"
+                aria-busy={atualizando ? "true" : "false"}
+              >
+                <RefreshCcw
+                  className={classNames(
+                    "h-4 w-4",
+                    atualizando && "animate-spin"
+                  )}
+                  aria-hidden="true"
+                />
+                {atualizando ? "Atualizando..." : "Atualizar dados"}
+              </button>
+
+              <div className="inline-flex items-center gap-1 rounded-2xl border border-white/10 bg-white/10 p-1">
+                <button
+                  type="button"
+                  onClick={() => setAgrupamento("pessoa")}
+                  className={classNames(
+                    "inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-sm font-bold transition",
+                    agrupamento === "pessoa"
+                      ? "bg-white text-teal-900"
+                      : "text-white/90 hover:bg-white/10"
+                  )}
+                  aria-pressed={agrupamento === "pessoa"}
+                >
+                  <UsersRound className="h-4 w-4" aria-hidden="true" />
+                  Pessoas
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setAgrupamento("data")}
+                  className={classNames(
+                    "inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-sm font-bold transition",
+                    agrupamento === "data"
+                      ? "bg-white text-teal-900"
+                      : "text-white/90 hover:bg-white/10"
+                  )}
+                  aria-pressed={agrupamento === "data"}
+                >
+                  <CalendarDays className="h-4 w-4" aria-hidden="true" />
+                  Datas
+                </button>
+              </div>
+            </div>
           </div>
 
-          <p className="text-sm sm:text-base text-white/90 max-w-2xl">
-            Visualize turmas, consulte inscritos e acompanhe presenças com segurança.
-          </p>
-
-          <div className="mt-1 grid grid-cols-2 lg:grid-cols-4 gap-3 w-full max-w-5xl">
+          <div className="grid grid-cols-2 gap-3">
             <MiniStat
               icon={Layers}
-              label="Eventos exibidos"
+              label="Eventos"
               value={kpis.eventos}
-              accent="from-cyan-600 to-sky-500"
+              description="na visualização"
+              tone="cyan"
             />
             <MiniStat
               icon={CalendarDays}
-              label="Turmas exibidas"
+              label="Turmas"
               value={kpis.turmas}
-              accent="from-emerald-600 to-teal-500"
+              description="após filtros"
+              tone="emerald"
             />
             <MiniStat
               icon={Clock3}
-              label="Em andamento"
+              label="Andamento"
               value={kpis.andamento}
-              accent="from-amber-500 to-orange-500"
+              description="turmas ativas"
+              tone="amber"
             />
             <MiniStat
-              icon={Sparkles}
-              label="Agrupamento"
-              value={agrupamento === "pessoa" ? "Pessoas" : "Datas"}
-              accent="from-teal-500 to-cyan-500"
+              icon={CheckCircle2}
+              label="Encerradas"
+              value={kpis.encerradas}
+              description="prontas para apuração"
+              tone="rose"
             />
-          </div>
-
-          <div className="mt-2 sm:mt-3 flex flex-wrap items-center justify-center gap-2">
-            <button
-              type="button"
-              onClick={onAtualizar}
-              disabled={atualizando}
-              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                atualizando
-                  ? "opacity-60 cursor-not-allowed bg-white/20"
-                  : "bg-white/15 hover:bg-white/25"
-              } text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70`}
-              aria-label="Atualizar lista de eventos"
-              aria-busy={atualizando ? "true" : "false"}
-              title="Atualizar"
-            >
-              <RefreshCcw className="w-4 h-4" aria-hidden="true" />
-              {atualizando ? "Atualizando…" : "Atualizar"}
-            </button>
-          </div>
-
-          <div className="mt-2 inline-flex items-center gap-1 bg-white/10 rounded-2xl p-1 border border-white/10">
-            <button
-              type="button"
-              onClick={() => setAgrupamento("pessoa")}
-              className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm font-semibold transition ${
-                agrupamento === "pessoa"
-                  ? "bg-white text-teal-800"
-                  : "text-white/90 hover:bg-white/10"
-              }`}
-              aria-pressed={agrupamento === "pessoa"}
-              title="Agrupar por pessoa (cada usuário e suas datas)"
-            >
-              <UsersRound className="w-4 h-4" aria-hidden="true" />
-              Pessoas
-            </button>
-            <button
-              type="button"
-              onClick={() => setAgrupamento("data")}
-              className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm font-semibold transition ${
-                agrupamento === "data"
-                  ? "bg-white text-teal-800"
-                  : "text-white/90 hover:bg-white/10"
-              }`}
-              aria-pressed={agrupamento === "data"}
-              title="Agrupar por data (cada data e todos os usuários)"
-            >
-              <CalendarDays className="w-4 h-4" aria-hidden="true" />
-              Datas
-            </button>
           </div>
         </div>
       </div>
@@ -292,7 +438,6 @@ function HeaderHero({
   );
 }
 
-/* ---------------- Toolbar premium ---------------- */
 function ToolbarFiltros({
   busca,
   setBusca,
@@ -303,87 +448,98 @@ function ToolbarFiltros({
   mesesDisponiveis,
   limparFiltros,
   filtrosAtivos,
+  totalEventos,
+  totalTurmas,
 }) {
   return (
     <section
       aria-label="Ferramentas de busca e filtros"
-      className="sticky top-1 z-30 mx-auto mb-5 w-full max-w-6xl rounded-2xl border border-zinc-200 bg-white/80 p-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/80"
+      className="sticky top-1 z-30 mx-auto mb-5 w-full max-w-7xl rounded-[1.75rem] border border-slate-200 bg-white/90 p-3 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-900/90"
     >
-      <div className="flex flex-col gap-3">
-        <div className="relative w-full">
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+        <label className="relative block">
+          <span className="sr-only">Buscar por evento ou turma</span>
+
           <Search
-            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500"
+            className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
             aria-hidden="true"
           />
+
           <input
-            type="text"
+            type="search"
             autoComplete="off"
-            placeholder="Buscar por evento ou turma…"
+            placeholder="Buscar por evento ou turma..."
             value={busca}
-            onChange={(e) => setBusca(e.target.value)}
-            className="w-full rounded-xl border px-9 py-2 text-sm ring-offset-2 focus:outline-none focus:ring-2 focus:ring-teal-700 dark:border-zinc-700 dark:bg-zinc-800"
-            aria-label="Buscar por evento ou turma"
+            onChange={(event) => setBusca(event.target.value)}
+            className="h-12 w-full rounded-2xl border border-slate-200 bg-white pl-11 pr-4 text-sm font-semibold text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/15 dark:border-slate-800 dark:bg-slate-950 dark:text-white"
           />
-        </div>
+        </label>
 
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-1 text-xs text-zinc-500">
-              <Filter className="h-3.5 w-3.5" aria-hidden="true" />
-              Filtros:
-            </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-black text-slate-600 dark:bg-slate-800 dark:text-slate-200">
+            <Filter className="h-3.5 w-3.5" aria-hidden="true" />
+            Filtros
+          </span>
 
-            <select
-              value={statusFiltro}
-              onChange={(e) => setStatusFiltro(e.target.value)}
-              className="rounded-xl border px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-teal-700 dark:border-zinc-700 dark:bg-zinc-800"
-              aria-label="Filtrar por status"
-              title="Filtrar por status"
+          <select
+            value={statusFiltro}
+            onChange={(event) => setStatusFiltro(event.target.value)}
+            className="h-10 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/15 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+            aria-label="Filtrar por status"
+          >
+            <option value="todos">Todos os status</option>
+            <option value="programado">Programadas</option>
+            <option value="andamento">Em andamento</option>
+            <option value="encerrado">Encerradas</option>
+          </select>
+
+          <select
+            value={mesFiltro}
+            onChange={(event) => setMesFiltro(event.target.value)}
+            className="h-10 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/15 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+            aria-label="Filtrar por mês"
+          >
+            <option value="todos">Todos os meses</option>
+            {mesesDisponiveis.map((mes) => (
+              <option key={mes} value={mes}>
+                {mes}
+              </option>
+            ))}
+          </select>
+
+          {filtrosAtivos && (
+            <button
+              type="button"
+              onClick={limparFiltros}
+              className="inline-flex h-10 items-center gap-1 rounded-2xl bg-slate-100 px-3 text-xs font-black text-slate-700 transition hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+              aria-label="Limpar filtros"
             >
-              <option value="todos">Todos os status</option>
-              <option value="programado">Programados</option>
-              <option value="andamento">Em andamento</option>
-              <option value="encerrado">Encerrados</option>
-            </select>
-
-            <select
-              value={mesFiltro}
-              onChange={(e) => setMesFiltro(e.target.value)}
-              className="rounded-xl border px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-teal-700 dark:border-zinc-700 dark:bg-zinc-800"
-              aria-label="Filtrar por mês"
-              title="Filtrar por mês"
-            >
-              <option value="todos">Todos os meses</option>
-              {mesesDisponiveis.map((mes) => (
-                <option key={mes} value={mes}>
-                  {mes}
-                </option>
-              ))}
-            </select>
-
-            {filtrosAtivos && (
-              <button
-                type="button"
-                onClick={limparFiltros}
-                className="inline-flex items-center gap-1 rounded-xl border border-white/0 bg-zinc-100 px-3 py-1.5 text-xs font-semibold hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-700"
-                aria-label="Limpar filtros"
-              >
-                <X className="h-3.5 w-3.5" aria-hidden="true" />
-                Limpar filtros
-              </button>
-            )}
-          </div>
-
-          <div className="text-xs text-zinc-500 dark:text-zinc-400">
-            Ordenação automática: <strong>mais novas → mais antigas</strong>
-          </div>
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+              Limpar
+            </button>
+          )}
         </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
+        <span>
+          {totalEventos} evento{totalEventos === 1 ? "" : "s"} • {totalTurmas}{" "}
+          turma{totalTurmas === 1 ? "" : "s"} na visualização
+        </span>
+
+        <span className="inline-flex items-center gap-1">
+          <TrendingUp className="h-3.5 w-3.5" aria-hidden="true" />
+          Ordenação: mais novas para mais antigas
+        </span>
       </div>
     </section>
   );
 }
 
-/* ---------------- Página ---------------- */
+/* ─────────────────────────────────────────────────────────────
+ * Página
+ * ───────────────────────────────────────────────────────────── */
+
 export default function PaginaGestaoPresencas() {
   const navigate = useNavigate();
 
@@ -400,9 +556,11 @@ export default function PaginaGestaoPresencas() {
   const [busca, setBusca] = useState(
     () => localStorage.getItem(LS_KEYS.busca) || ""
   );
+
   const [statusFiltro, setStatusFiltro] = useState(
     () => localStorage.getItem(LS_KEYS.status) || "todos"
   );
+
   const [mesFiltro, setMesFiltro] = useState(
     () => localStorage.getItem(LS_KEYS.mes) || "todos"
   );
@@ -414,149 +572,210 @@ export default function PaginaGestaoPresencas() {
   const abortRef = useRef(null);
   const mountedRef = useRef(true);
 
-  const setLive = (msg) => {
-    if (liveRef.current) liveRef.current.textContent = msg;
-  };
+  const setLive = useCallback((message) => {
+    if (liveRef.current) {
+      liveRef.current.textContent = message;
+    }
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
+
     return () => {
       mountedRef.current = false;
-      abortRef.current?.abort?.("unmount");
+
+      try {
+        abortRef.current?.abort?.("unmount");
+      } catch {
+        // noop
+      }
     };
   }, []);
 
   useEffect(() => {
     try {
       localStorage.setItem(LS_KEYS.agrupamento, agrupamento);
-    } catch {}
+    } catch {
+      // noop
+    }
   }, [agrupamento]);
 
   useEffect(() => {
     try {
       localStorage.setItem(LS_KEYS.busca, busca);
-    } catch {}
+    } catch {
+      // noop
+    }
   }, [busca]);
 
   useEffect(() => {
     try {
       localStorage.setItem(LS_KEYS.status, statusFiltro);
-    } catch {}
+    } catch {
+      // noop
+    }
   }, [statusFiltro]);
 
   useEffect(() => {
     try {
       localStorage.setItem(LS_KEYS.mes, mesFiltro);
-    } catch {}
+    } catch {
+      // noop
+    }
   }, [mesFiltro]);
 
   useEffect(() => {
-    const t = setTimeout(() => setQ(String(busca || "").trim().toLowerCase()), 250);
-    return () => clearTimeout(t);
+    const timer = window.setTimeout(() => {
+      setQ(normalizarTexto(busca));
+    }, 250);
+
+    return () => window.clearTimeout(timer);
   }, [busca]);
 
   const carregarEventos = useCallback(async () => {
     try {
       setCarregandoEventos(true);
       setErro("");
-      setLive("Carregando eventos…");
+      setLive("Carregando eventos.");
 
-      abortRef.current?.abort?.("new-request");
-      const ctrl = new AbortController();
-      abortRef.current = ctrl;
+      try {
+        abortRef.current?.abort?.("new-request");
+      } catch {
+        // noop
+      }
 
-      const data = await apiGet("/api/presencas/admin/listar-tudo", {
-        on403: "silent",
-        signal: ctrl.signal,
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      const response = await api.presenca.administrador({
+        signal: controller.signal,
       });
 
-      const listaEventos = Array.isArray(data?.eventos)
-        ? data.eventos
-        : Array.isArray(data)
-        ? data
-        : Array.isArray(data?.lista)
-        ? data.lista
-        : [];
+      const listaEventos = unwrapEventosAdministrativos(response);
 
       if (!mountedRef.current) return;
 
       setEventos(listaEventos);
       setLive(`Eventos carregados: ${listaEventos.length}.`);
-    } catch (err) {
-      if (isAbortLike(err)) return;
+    } catch (error) {
+      if (isAbortLike(error)) return;
 
-      const msg = err?.message || "Erro ao carregar eventos.";
+      const message = getErrorMessage(error, "Erro ao carregar eventos.");
+
       if (!mountedRef.current) return;
 
-      setErro(msg);
+      setErro(message);
       setEventos([]);
-      toast.error(msg);
+      notifyError(message);
       setLive("Falha ao carregar eventos.");
 
-      setTimeout(() => erroRef.current?.focus?.(), 0);
+      window.setTimeout(() => erroRef.current?.focus?.(), 0);
     } finally {
-      if (mountedRef.current) setCarregandoEventos(false);
+      if (mountedRef.current) {
+        setCarregandoEventos(false);
+      }
     }
-  }, []);
+  }, [setLive]);
 
   useEffect(() => {
     carregarEventos();
   }, [carregarEventos]);
 
-  async function carregarInscritos(turmaId) {
-    try {
-      setLive(`Carregando inscritos da turma ${turmaId}…`);
-      const data = await apiGet(`/api/inscricao/turma/${turmaId}`, { on403: "silent" });
-      const lista = Array.isArray(data) ? data : data?.lista;
-      if (!mountedRef.current) return;
-      setInscritosPorTurma((prev) => ({
-        ...prev,
-        [turmaId]: Array.isArray(lista) ? lista : [],
-      }));
-      setLive(`Inscritos da turma ${turmaId} carregados.`);
-    } catch {
-      toast.error("Erro ao carregar inscritos.");
-      setLive("Falha ao carregar inscritos.");
-    }
-  }
+  const carregarInscritos = useCallback(
+    async (turma_id) => {
+      try {
+        setLive(`Carregando inscritos da turma ${turma_id}.`);
 
-  async function carregarAvaliacao(turmaId) {
-    try {
-      setLive(`Carregando avaliações da turma ${turmaId}…`);
-      const data = await apiGet(`/api/avaliacao/turma/${turmaId}`, { on403: "silent" });
-      if (!mountedRef.current) return;
-      setAvaliacaoPorTurma((prev) => ({
-        ...prev,
-        [turmaId]: Array.isArray(data) ? data : [],
-      }));
-      setLive("Avaliações carregadas.");
-    } catch {
-      toast.error("Erro ao carregar avaliações.");
-      setLive("Falha ao carregar avaliações.");
-    }
-  }
+        const response = await api.inscricao.listarPorTurma(turma_id, {
+          on403: "silent",
+        });
 
-  const gerarRelatorioPDF = useCallback(async (turmaId, turmaNome = "lista-presenca") => {
-    try {
-      setLive(`Gerando PDF da turma ${turmaId}…`);
-      const { blob, filename } = await apiGetFile(`/api/presencas/turma/${turmaId}/pdf`);
-      downloadBlob(filename || `lista_presenca_${turmaNome}_${turmaId}.pdf`, blob);
-      toast.success("PDF gerado com sucesso.");
-      setLive("PDF gerado com sucesso.");
-    } catch (err) {
-      console.error("[GestaoPresenca] erro ao gerar PDF", err);
-      toast.error(err?.message || "Não foi possível gerar o PDF.");
-      setLive("Falha ao gerar PDF.");
-    }
-  }, []);
+        const lista = unwrapArray(response);
+
+        if (!mountedRef.current) return;
+
+        setInscritosPorTurma((prev) => ({
+          ...prev,
+          [turma_id]: lista,
+        }));
+
+        setLive(`Inscritos da turma ${turma_id} carregados.`);
+      } catch (error) {
+        notifyError(getErrorMessage(error, "Erro ao carregar inscritos."));
+        setLive("Falha ao carregar inscritos.");
+      }
+    },
+    [setLive]
+  );
+
+  const carregarAvaliacao = useCallback(
+    async (turma_id) => {
+      try {
+        if (typeof api.avaliacao?.porTurma !== "function") {
+          setAvaliacaoPorTurma((prev) => ({
+            ...prev,
+            [turma_id]: [],
+          }));
+          return;
+        }
+
+        setLive(`Carregando avaliações da turma ${turma_id}.`);
+
+        const response = await api.avaliacao.porTurma(turma_id, {
+          on403: "silent",
+        });
+
+        const lista = unwrapArray(response);
+
+        if (!mountedRef.current) return;
+
+        setAvaliacaoPorTurma((prev) => ({
+          ...prev,
+          [turma_id]: lista,
+        }));
+
+        setLive("Avaliações carregadas.");
+      } catch (error) {
+        notifyError(getErrorMessage(error, "Erro ao carregar avaliações."));
+        setLive("Falha ao carregar avaliações.");
+      }
+    },
+    [setLive]
+  );
+
+  const gerarRelatorioPDF = useCallback(
+    async (turma_id, turmaNome = "lista-presenca") => {
+      try {
+        setLive(`Gerando PDF da turma ${turma_id}.`);
+
+        const { blob, filename } = await api.presenca.turmaPdf(turma_id);
+
+        downloadBlob(
+          filename ||
+            `lista_presenca_${sanitizeFileName(turmaNome)}_${turma_id}.pdf`,
+          blob
+        );
+
+        notifySuccess("PDF gerado com sucesso.");
+        setLive("PDF gerado com sucesso.");
+      } catch (error) {
+        notifyError(getErrorMessage(error, "Não foi possível gerar o PDF."));
+        setLive("Falha ao gerar PDF.");
+      }
+    },
+    [setLive]
+  );
 
   const mesesDisponiveis = useMemo(() => {
     const set = new Set();
 
     for (const evento of eventos || []) {
       for (const turma of evento?.turmas || []) {
-        const ymd = normalizeYMD(turma?.data_inicio);
-        if (ymd) set.add(ymd.slice(0, 7));
+        const data = normalizeYMD(turma?.data_inicio);
+
+        if (data) {
+          set.add(data.slice(0, 7));
+        }
       }
     }
 
@@ -567,17 +786,19 @@ export default function PaginaGestaoPresencas() {
     const base = sortEventosDesc(
       (eventos || []).map((evento) => ({
         ...evento,
-        turmas: sortTurmasDesc(Array.isArray(evento?.turmas) ? evento.turmas : []),
+        turmas: sortTurmasDesc(
+          Array.isArray(evento?.turmas) ? evento.turmas : []
+        ),
       }))
     );
 
     const filtrados = [];
 
     for (const evento of base) {
-      const tituloEvento = String(evento?.titulo || "").toLowerCase();
+      const tituloEvento = normalizarTexto(evento?.titulo);
 
       const turmasFiltradas = (evento?.turmas || []).filter((turma) => {
-        const nomeTurma = String(turma?.nome || "").toLowerCase();
+        const nomeTurma = normalizarTexto(turma?.nome);
         const status = getTurmaStatus(turma);
         const mes = normalizeYMD(turma?.data_inicio)?.slice(0, 7) || "";
 
@@ -587,8 +808,7 @@ export default function PaginaGestaoPresencas() {
         const bateStatus =
           statusFiltro === "todos" ? true : status === statusFiltro;
 
-        const bateMes =
-          mesFiltro === "todos" ? true : mes === mesFiltro;
+        const bateMes = mesFiltro === "todos" ? true : mes === mesFiltro;
 
         return bateBusca && bateStatus && bateMes;
       });
@@ -605,21 +825,35 @@ export default function PaginaGestaoPresencas() {
   }, [eventos, q, statusFiltro, mesFiltro]);
 
   const kpis = useMemo(() => {
-    const evCount = Array.isArray(eventosProcessados) ? eventosProcessados.length : 0;
+    const eventosCount = Array.isArray(eventosProcessados)
+      ? eventosProcessados.length
+      : 0;
 
     let turmasCount = 0;
+    let programadoCount = 0;
     let andamentoCount = 0;
+    let encerradoCount = 0;
 
-    for (const ev of eventosProcessados || []) {
-      const ts = Array.isArray(ev?.turmas) ? ev.turmas : [];
-      turmasCount += ts.length;
-      andamentoCount += ts.filter((t) => getTurmaStatus(t) === "andamento").length;
+    for (const evento of eventosProcessados || []) {
+      const turmas = Array.isArray(evento?.turmas) ? evento.turmas : [];
+
+      turmasCount += turmas.length;
+
+      for (const turma of turmas) {
+        const status = getTurmaStatus(turma);
+
+        if (status === "programado") programadoCount += 1;
+        if (status === "andamento") andamentoCount += 1;
+        if (status === "encerrado") encerradoCount += 1;
+      }
     }
 
     return {
-      eventos: evCount,
+      eventos: eventosCount,
       turmas: turmasCount,
+      programado: programadoCount,
       andamento: andamentoCount,
+      encerradas: encerradoCount,
     };
   }, [eventosProcessados]);
 
@@ -636,8 +870,13 @@ export default function PaginaGestaoPresencas() {
   const agora = nowBR();
 
   return (
-    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
-      <p ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" />
+    <div className="flex min-h-dvh flex-col bg-slate-50 text-slate-950 dark:bg-slate-950 dark:text-white">
+      <p
+        ref={liveRef}
+        className="sr-only"
+        aria-live="polite"
+        aria-atomic="true"
+      />
 
       <HeaderHero
         onAtualizar={carregarEventos}
@@ -649,17 +888,20 @@ export default function PaginaGestaoPresencas() {
 
       {anyLoading && (
         <div
-          className="sticky top-0 left-0 w-full h-1 bg-emerald-100 dark:bg-emerald-950 z-40"
+          className="sticky top-0 z-40 h-1 w-full bg-emerald-100 dark:bg-emerald-950"
           role="progressbar"
           aria-valuemin={0}
           aria-valuemax={100}
           aria-label="Carregando dados"
         >
-          <div className="h-full bg-emerald-700 dark:bg-emerald-600 animate-pulse w-1/3" />
+          <div className="h-full w-1/3 animate-pulse bg-emerald-700 dark:bg-emerald-500" />
         </div>
       )}
 
-      <main id="conteudo" className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-6 w-full">
+      <main
+        id="conteudo"
+        className="mx-auto w-full max-w-7xl flex-1 px-3 py-6 sm:px-4 lg:px-6"
+      >
         <ToolbarFiltros
           busca={busca}
           setBusca={setBusca}
@@ -670,62 +912,90 @@ export default function PaginaGestaoPresencas() {
           mesesDisponiveis={mesesDisponiveis}
           limparFiltros={limparFiltros}
           filtrosAtivos={filtrosAtivos}
+          totalEventos={kpis.eventos}
+          totalTurmas={kpis.turmas}
         />
 
         {!!erro && !carregandoEventos && (
-          <div
+          <section
             ref={erroRef}
             tabIndex={-1}
-            className="mb-4 rounded-2xl border border-rose-200 dark:border-rose-900/40 bg-rose-50 dark:bg-rose-950/25 p-4 outline-none"
+            className="mb-5 rounded-[1.75rem] border border-rose-200 bg-rose-50 p-5 outline-none dark:border-rose-900/50 dark:bg-rose-950/30"
             role="alert"
             aria-live="assertive"
           >
             <div className="flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 mt-0.5 text-rose-600 dark:text-rose-300" aria-hidden="true" />
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-200">
+                <AlertTriangle className="h-5 w-5" aria-hidden="true" />
+              </span>
+
               <div className="min-w-0">
-                <p className="font-semibold text-rose-800 dark:text-rose-200">
+                <h2 className="text-base font-black text-rose-900 dark:text-rose-100">
                   Não foi possível carregar a gestão de presenças
+                </h2>
+
+                <p className="mt-1 break-words text-sm text-rose-800/90 dark:text-rose-100/90">
+                  {erro}
                 </p>
-                <p className="text-sm text-rose-800/90 dark:text-rose-200/90 break-words">{erro}</p>
+
                 <button
                   type="button"
                   onClick={carregarEventos}
-                  className="mt-3 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold bg-rose-100 hover:bg-rose-200 dark:bg-rose-900/40 dark:hover:bg-rose-900/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
+                  className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-rose-700 px-4 py-2 text-sm font-black text-white transition hover:bg-rose-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
                 >
-                  <RefreshCcw className="w-4 h-4" aria-hidden="true" />
+                  <RefreshCcw className="h-4 w-4" aria-hidden="true" />
                   Tentar novamente
                 </button>
               </div>
             </div>
-          </div>
+          </section>
         )}
 
         {carregandoEventos ? (
-          <div className="flex justify-center py-10" aria-busy="true" aria-live="polite">
-            <Spinner label="Carregando eventos..." />
-          </div>
+          <section
+            className="rounded-[2rem] border border-slate-200 bg-white p-10 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900"
+            aria-busy="true"
+            aria-live="polite"
+          >
+            <LoadingInline label="Carregando eventos e turmas..." />
+          </section>
         ) : eventosProcessados.length === 0 ? (
-          <div className="rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-8 text-center shadow-sm">
-            <div className="mx-auto mb-3 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300">
-              <ClipboardCheck className="w-6 h-6" />
+          <section className="rounded-[2rem] border border-slate-200 bg-white p-8 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-3xl bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-200">
+              <ClipboardCheck className="h-7 w-7" aria-hidden="true" />
             </div>
-            <h2 className="text-lg font-extrabold text-zinc-900 dark:text-white">
+
+            <h2 className="text-lg font-black text-slate-950 dark:text-white">
               Nenhum resultado encontrado
             </h2>
-            <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
-              Ajuste os filtros ou limpe a busca para visualizar mais turmas.
+
+            <p className="mx-auto mt-2 max-w-md text-sm text-slate-600 dark:text-slate-300">
+              Ajuste os filtros, limpe a busca ou atualize os dados para
+              visualizar outras turmas.
             </p>
-            {filtrosAtivos && (
+
+            <div className="mt-5 flex flex-wrap justify-center gap-2">
+              {filtrosAtivos && (
+                <button
+                  type="button"
+                  onClick={limparFiltros}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-emerald-700 px-4 py-2 text-sm font-black text-white transition hover:bg-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                >
+                  <X className="h-4 w-4" aria-hidden="true" />
+                  Limpar filtros
+                </button>
+              )}
+
               <button
                 type="button"
-                onClick={limparFiltros}
-                className="mt-4 inline-flex items-center gap-2 rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800"
+                onClick={carregarEventos}
+                className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-800"
               >
-                <X className="w-4 h-4" />
-                Limpar filtros
+                <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+                Atualizar
               </button>
-            )}
-          </div>
+            </div>
+          </section>
         ) : (
           <ListaTurmasPresenca
             eventos={eventosProcessados}
@@ -741,8 +1011,6 @@ export default function PaginaGestaoPresencas() {
           />
         )}
       </main>
-
-      <Footer />
     </div>
   );
 }

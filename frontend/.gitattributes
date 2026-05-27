@@ -1,9 +1,10 @@
 # ================================================================
-# Git Attributes — normalização de final de linha e tratamento de binários
-# Projeto: Escola da Saúde
-# Padrão:
-# - Texto => LF
-# - Binários => sem normalização
+# Git Attributes — Escola da Saúde
+#
+# Padrão oficial:
+# - Arquivos de texto: LF
+# - Scripts Windows: CRLF
+# - Binários: sem normalização
 # ================================================================
 
 # ----------------------------------------------------------------
@@ -12,44 +13,45 @@
 * text=auto eol=lf
 
 # ----------------------------------------------------------------
-# Código-fonte / frontend / backend
+# Código-fonte
 # ----------------------------------------------------------------
-*.js         text eol=lf
-*.jsx        text eol=lf
-*.ts         text eol=lf
-*.tsx        text eol=lf
-*.mjs        text eol=lf
-*.cjs        text eol=lf
-*.json       text eol=lf
-*.css        text eol=lf
-*.scss       text eol=lf
-*.html       text eol=lf
-*.md         text eol=lf
-*.txt        text eol=lf
-*.csv        text eol=lf
-*.xml        text eol=lf
-*.yml        text eol=lf
-*.yaml       text eol=lf
-*.sql        text eol=lf
-*.graphql    text eol=lf
-*.gql        text eol=lf
-*.map        text eol=lf
+*.js          text eol=lf
+*.jsx         text eol=lf
+*.ts          text eol=lf
+*.tsx         text eol=lf
+*.mjs         text eol=lf
+*.cjs         text eol=lf
+
+*.json        text eol=lf
+*.map         text eol=lf
 *.webmanifest text eol=lf
 
-# ----------------------------------------------------------------
-# Configurações / dotfiles / scripts
-# ----------------------------------------------------------------
-.env         text eol=lf
-.env.*       text eol=lf
-*.sh         text eol=lf
-*.bash       text eol=lf
-*.zsh        text eol=lf
+*.css         text eol=lf
+*.scss        text eol=lf
+*.sass        text eol=lf
+*.less        text eol=lf
 
-# scripts Windows
-*.bat        text eol=crlf
-*.cmd        text eol=crlf
-*.ps1        text eol=crlf
+*.html        text eol=lf
+*.xml         text eol=lf
+*.svg         text eol=lf
 
+*.md          text eol=lf
+*.txt         text eol=lf
+*.csv         text eol=lf
+
+*.sql         text eol=lf
+*.graphql     text eol=lf
+*.gql         text eol=lf
+
+*.yml         text eol=lf
+*.yaml        text eol=lf
+*.toml        text eol=lf
+*.ini         text eol=lf
+*.conf        text eol=lf
+
+# ----------------------------------------------------------------
+# Configurações / dotfiles
+# ----------------------------------------------------------------
 .gitattributes text eol=lf
 .gitignore     text eol=lf
 .editorconfig  text eol=lf
@@ -58,44 +60,71 @@
 .eslintrc      text eol=lf
 .eslintrc.*    text eol=lf
 .nvmrc         text eol=lf
-Dockerfile     text eol=lf
+
+.env.example   text eol=lf
+.env.sample    text eol=lf
+
+package-lock.json text eol=lf
+yarn.lock         text eol=lf
+pnpm-lock.yaml    text eol=lf
+
+Dockerfile        text eol=lf
 docker-compose*.yml text eol=lf
 
 # ----------------------------------------------------------------
-# Assets texto (manter diff)
+# Scripts
 # ----------------------------------------------------------------
-*.svg        text eol=lf
+*.sh          text eol=lf
+*.bash        text eol=lf
+*.zsh         text eol=lf
+
+*.bat         text eol=crlf
+*.cmd         text eol=crlf
+*.ps1         text eol=crlf
 
 # ----------------------------------------------------------------
 # Binários / mídia / documentos
 # ----------------------------------------------------------------
-*.png        binary
-*.jpg        binary
-*.jpeg       binary
-*.gif        binary
-*.webp       binary
-*.avif       binary
-*.ico        binary
+*.png         binary
+*.jpg         binary
+*.jpeg        binary
+*.gif         binary
+*.webp        binary
+*.avif        binary
+*.ico         binary
 
-*.ttf        binary
-*.otf        binary
-*.woff       binary
-*.woff2      binary
-*.eot        binary
+*.ttf         binary
+*.otf         binary
+*.woff        binary
+*.woff2       binary
+*.eot         binary
 
-*.pdf        binary
-*.zip        binary
-*.rar        binary
-*.7z         binary
+*.pdf         binary
+*.zip         binary
+*.rar         binary
+*.7z          binary
+*.gz          binary
+*.tar         binary
 
-*.mp3        binary
-*.mp4        binary
-*.mov        binary
-*.webm       binary
+*.mp3         binary
+*.mp4         binary
+*.mov         binary
+*.webm        binary
+*.wav         binary
 
-*.doc        binary
-*.docx       binary
-*.xls        binary
-*.xlsx       binary
-*.ppt        binary
-*.pptx       binary
+*.doc         binary
+*.docx        binary
+*.xls         binary
+*.xlsx        binary
+*.ppt         binary
+*.pptx        binary
+
+*.sqlite      binary
+*.sqlite3     binary
+*.db          binary
+
+*.pem         binary
+*.key         binary
+*.p12         binary
+*.pfx         binary
+*.crt         text eol=lf

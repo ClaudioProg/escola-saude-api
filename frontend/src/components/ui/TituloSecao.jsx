@@ -1,185 +1,301 @@
-// 📁 src/components/ui/TituloSecao.jsx
-import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
+// ✅ src/components/ui/TituloSecao.jsx — v2.0
+// Plataforma Escola da Saúde
+//
+// Título genérico oficial de seção.
+//
+// Revisão premium:
+// - componente genérico real de UI;
+// - heading semântico controlado por level/as;
+// - visual premium consistente;
+// - sem classes Tailwind dinâmicas inseguras;
+// - sem <style> interno;
+// - reduced motion via framer-motion;
+// - suporte a ícone, subtítulo, kicker, actions, count e anchor;
+// - suporte a sticky;
+// - mobile-first;
+// - dark mode;
+// - pronto para todos os domínios da plataforma.
 
-/**
- * Título de seção semântico, responsivo e moderno.
- * - Gradiente 3-cores (accent configurável).
- * - Ícone, subtítulo, kicker (eyebrow), ações e contador opcionais.
- * - Acessível (heading real + aria-level quando aplicável).
- * - Tamanhos sm/md/lg/xl; alinhamento flexível; linha decorativa customizável.
- * - Suporte a anchor-link (#id), sticky, animação respeitando prefers-reduced-motion.
- */
+import PropTypes from "prop-types";
+import { motion, useReducedMotion } from "framer-motion";
+import { Link as LinkIcon } from "lucide-react";
+
+const SIZE_CLASSES = {
+  sm: {
+    title: "text-lg sm:text-xl",
+    subtitle: "text-sm",
+    kicker: "text-[10px] sm:text-[11px]",
+    icon: "h-5 w-5",
+  },
+  md: {
+    title: "text-xl sm:text-2xl",
+    subtitle: "text-sm sm:text-base",
+    kicker: "text-[11px] sm:text-xs",
+    icon: "h-5 w-5",
+  },
+  lg: {
+    title: "text-2xl sm:text-3xl",
+    subtitle: "text-base",
+    kicker: "text-xs",
+    icon: "h-6 w-6",
+  },
+  xl: {
+    title: "text-3xl sm:text-4xl",
+    subtitle: "text-base sm:text-lg",
+    kicker: "text-xs",
+    icon: "h-7 w-7",
+  },
+};
+
+const ALIGN_CLASSES = {
+  left: {
+    root: "items-start text-left",
+    top: "justify-between",
+    main: "justify-start",
+    subtitle: "text-left",
+    border: "mr-auto",
+  },
+  center: {
+    root: "items-center text-center",
+    top: "justify-center",
+    main: "justify-center",
+    subtitle: "text-center",
+    border: "mx-auto",
+  },
+  right: {
+    root: "items-end text-right",
+    top: "justify-end",
+    main: "justify-end",
+    subtitle: "text-right",
+    border: "ml-auto",
+  },
+};
+
+const ACCENT_CLASSES = {
+  emerald: {
+    title: "from-emerald-950 via-emerald-700 to-emerald-500",
+    icon: "text-emerald-800 dark:text-emerald-300",
+    line: "from-emerald-700 via-emerald-500 to-lime-400",
+    badge:
+      "bg-emerald-50 text-emerald-800 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-200 dark:ring-emerald-900/60",
+  },
+  violet: {
+    title: "from-violet-950 via-violet-700 to-fuchsia-500",
+    icon: "text-violet-800 dark:text-violet-300",
+    line: "from-violet-700 via-fuchsia-500 to-purple-400",
+    badge:
+      "bg-violet-50 text-violet-800 ring-violet-200 dark:bg-violet-950/40 dark:text-violet-200 dark:ring-violet-900/60",
+  },
+  amber: {
+    title: "from-amber-900 via-amber-700 to-yellow-500",
+    icon: "text-amber-800 dark:text-amber-300",
+    line: "from-amber-700 via-yellow-500 to-orange-400",
+    badge:
+      "bg-amber-50 text-amber-900 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-900/60",
+  },
+  rose: {
+    title: "from-rose-950 via-rose-700 to-orange-500",
+    icon: "text-rose-800 dark:text-rose-300",
+    line: "from-rose-700 via-red-500 to-orange-400",
+    badge:
+      "bg-rose-50 text-rose-800 ring-rose-200 dark:bg-rose-950/40 dark:text-rose-200 dark:ring-rose-900/60",
+  },
+  teal: {
+    title: "from-teal-950 via-teal-700 to-cyan-500",
+    icon: "text-teal-800 dark:text-teal-300",
+    line: "from-teal-700 via-cyan-500 to-emerald-400",
+    badge:
+      "bg-teal-50 text-teal-800 ring-teal-200 dark:bg-teal-950/40 dark:text-teal-200 dark:ring-teal-900/60",
+  },
+  indigo: {
+    title: "from-indigo-950 via-indigo-700 to-blue-500",
+    icon: "text-indigo-800 dark:text-indigo-300",
+    line: "from-indigo-700 via-blue-500 to-violet-400",
+    badge:
+      "bg-indigo-50 text-indigo-800 ring-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-200 dark:ring-indigo-900/60",
+  },
+  petroleo: {
+    title: "from-slate-950 via-cyan-950 to-teal-700",
+    icon: "text-cyan-900 dark:text-cyan-300",
+    line: "from-slate-900 via-cyan-700 to-teal-500",
+    badge:
+      "bg-cyan-50 text-cyan-900 ring-cyan-200 dark:bg-cyan-950/40 dark:text-cyan-200 dark:ring-cyan-900/60",
+  },
+  orange: {
+    title: "from-orange-950 via-orange-700 to-amber-500",
+    icon: "text-orange-800 dark:text-orange-300",
+    line: "from-orange-700 via-amber-500 to-yellow-400",
+    badge:
+      "bg-orange-50 text-orange-800 ring-orange-200 dark:bg-orange-950/40 dark:text-orange-200 dark:ring-orange-900/60",
+  },
+  sky: {
+    title: "from-sky-950 via-sky-700 to-cyan-500",
+    icon: "text-sky-800 dark:text-sky-300",
+    line: "from-sky-700 via-cyan-500 to-blue-400",
+    badge:
+      "bg-sky-50 text-sky-800 ring-sky-200 dark:bg-sky-950/40 dark:text-sky-200 dark:ring-sky-900/60",
+  },
+  lousa: {
+    title: "from-[#0f2c1f] via-[#114b2d] to-[#166534]",
+    icon: "text-emerald-950 dark:text-emerald-200",
+    line: "from-[#0f2c1f] via-[#114b2d] to-[#166534]",
+    badge:
+      "bg-emerald-50 text-emerald-950 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-200 dark:ring-emerald-900/60",
+  },
+};
+
+const LINE_SIZE_CLASSES = {
+  sm: "h-0.5 w-14 sm:w-20",
+  md: "h-1 w-16 sm:w-24",
+  lg: "h-1 w-20 sm:w-28",
+  xl: "h-1.5 w-24 sm:w-32",
+};
+
+function classNames(...classes) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function getHeadingTag({ as, level }) {
+  if (as) return as;
+
+  const safeLevel = Math.min(6, Math.max(1, Number(level) || 2));
+
+  return `h${safeLevel}`;
+}
+
+function isNativeHeading(tag) {
+  return /^h[1-6]$/i.test(String(tag));
+}
+
 export default function TituloSecao({
   children,
   subtitle,
   icon = null,
   size = "md",
   align = "left",
-  accent = "lousa", // emerald|violet|amber|rose|teal|indigo|petroleo|orange|sky|lousa
+  accent = "lousa",
   id,
   className = "",
   noBorder = false,
-
-  // 🔥 Novos opcionais (backward-compatible)
-  level = 2,              // 1..6 (define semântica do heading)
-  as,                     // força a tag (ex.: "h2", "div")
-  kicker,                 // eyebrow pequeno acima do título
-  actions,                // nó à direita (botões, filtros, etc.)
-  count,                  // número/badge ao lado do título
-  anchor = false,         // mostra ícone de link que ancora em `id`
-  sticky = false,         // torna o header "grudado" no topo da seção
-  animate = true,         // entrada suave (respeita reduced-motion)
-  borderWidth = "3px",    // espessura da linha decorativa
-  borderWidthSm = "3px",  // espessura em telas maiores
-  borderLength = "4rem",  // largura da linha (mobile)
-  borderLengthSm = "6rem" // largura da linha (sm+)
+  level = 2,
+  as,
+  kicker,
+  actions,
+  count,
+  anchor = false,
+  sticky = false,
+  animate = true,
+  compact = false,
 }) {
-  // motion respeitando preferências do usuário
-  const [reducedMotion, setReducedMotion] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-    const handler = () => setReducedMotion(Boolean(mq?.matches));
-    handler();
-    mq?.addEventListener?.("change", handler);
-    return () => mq?.removeEventListener?.("change", handler);
-  }, []);
+  const reduceMotion = useReducedMotion();
 
-  const sizes = {
-    sm: "text-lg sm:text-xl",
-    md: "text-xl sm:text-2xl",
-    lg: "text-2xl sm:text-3xl",
-    xl: "text-3xl sm:text-4xl",
-  };
+  const sizeClass = SIZE_CLASSES[size] || SIZE_CLASSES.md;
+  const alignClass = ALIGN_CLASSES[align] || ALIGN_CLASSES.left;
+  const accentClass = ACCENT_CLASSES[accent] || ACCENT_CLASSES.lousa;
 
-  const alignments = {
-    left: "text-left items-start",
-    center: "text-center items-center",
-    right: "text-right items-end",
-  };
-
-  const accents = {
-    emerald: "from-emerald-900 via-emerald-700 to-emerald-500",
-    violet: "from-violet-900 via-violet-700 to-violet-500",
-    amber: "from-amber-900 via-amber-700 to-amber-500",
-    rose: "from-rose-900 via-rose-700 to-rose-500",
-    teal: "from-teal-900 via-teal-700 to-teal-500",
-    indigo: "from-indigo-900 via-indigo-700 to-indigo-500",
-    petroleo: "from-slate-900 via-teal-900 to-slate-700",
-    orange: "from-orange-900 via-orange-700 to-orange-500",
-    sky: "from-sky-900 via-sky-700 to-sky-500",
-    lousa: "from-[#0f2c1f] via-[#114b2d] to-[#166534]",
-  };
-
-  const grad = accents[accent] ?? accents.lousa;
-
-  // heading tag semântica automática, a menos que `as` seja fornecido
+  const HeadingTag = getHeadingTag({ as, level });
+  const nativeHeading = isNativeHeading(HeadingTag);
   const safeLevel = Math.min(6, Math.max(1, Number(level) || 2));
-  const AutoTag = as || (`h${safeLevel}`);
 
-  // borda decorativa custom sem util arbitrária (usa style inline)
-  const BorderLine = !noBorder ? (
-    <div
-      aria-hidden
-      className="relative mt-1"
-      style={{
-        height: 0,
-      }}
-    >
-      <div
-        className="rounded-full bg-gradient-to-r"
-        style={{
-          backgroundImage: `linear-gradient(135deg, var(--tw-gradient-from), var(--tw-gradient-to))`,
-        }}
-      />
-      <style>{`
-        /* aplica gradiente com classes existentes */
-      `}</style>
-      <div
-        className={`after:content-[''] after:block after:rounded-full after:bg-gradient-to-r after:${grad}`}
-        style={{
-          height: borderWidth,
-          width: borderLength,
-        }}
-      />
-      <div
-        className={`hidden sm:block after:content-[''] after:rounded-full after:bg-gradient-to-r after:${grad}`}
-        style={{
-          height: borderWidthSm,
-          width: borderLengthSm,
-        }}
-      />
-    </div>
-  ) : null;
-
-  // container sticky opcional
-  const stickyCls = sticky ? "sticky top-0 z-10 bg-white/70 dark:bg-gray-900/70 backdrop-blur supports-[backdrop-filter]:backdrop-blur-md py-2" : "";
-
-  // animação sutil
-  const animCls = animate && !reducedMotion ? "motion-safe:animate-[fadeInUp_.5s_ease-out]" : "";
-  const animKeyframes = `
-    @keyframes fadeInUp {
-      from { opacity: 0; transform: translateY(6px); }
-      to   { opacity: 1; transform: translateY(0); }
-    }
-  `;
+  const motionProps =
+    animate && !reduceMotion
+      ? {
+          initial: { opacity: 0, y: 8 },
+          animate: { opacity: 1, y: 0 },
+          transition: { duration: 0.24, ease: "easeOut" },
+        }
+      : {};
 
   return (
-    <div
+    <motion.section
+      {...motionProps}
       id={id}
-      className={[
-        "flex flex-col w-full mb-6",
-        alignments[align],
-        stickyCls,
-        animCls,
-        className,
-      ].filter(Boolean).join(" ")}
+      className={classNames(
+        "flex w-full flex-col",
+        compact ? "mb-4" : "mb-6",
+        alignClass.root,
+        sticky &&
+          "sticky top-0 z-10 rounded-3xl bg-white/80 px-3 py-2 backdrop-blur supports-[backdrop-filter]:backdrop-blur-md dark:bg-slate-950/80",
+        className
+      )}
     >
-      {animate && !reducedMotion && <style>{animKeyframes}</style>}
-
-      {/* Kicker + ações */}
       {(kicker || actions) && (
-        <div className={[
-          "flex w-full gap-3 mb-1",
-          align === "center" ? "justify-center" : align === "right" ? "justify-end" : "justify-between",
-        ].join(" ")}>
+        <div
+          className={classNames(
+            "mb-2 flex w-full flex-col gap-2 sm:flex-row sm:items-center",
+            align === "center"
+              ? "sm:justify-center"
+              : align === "right"
+                ? "sm:justify-end"
+                : "sm:justify-between"
+          )}
+        >
           {kicker && (
-            <div className="text-[11px] sm:text-xs font-semibold tracking-wide uppercase text-gray-600 dark:text-gray-300">
+            <div
+              className={classNames(
+                "font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400",
+                sizeClass.kicker
+              )}
+            >
               {kicker}
             </div>
           )}
+
           {actions && (
-            <div className={align === "left" ? "ml-auto" : ""}>
+            <div
+              className={classNames(
+                "flex flex-wrap gap-2",
+                align === "right"
+                  ? "justify-end"
+                  : align === "center"
+                    ? "justify-center"
+                    : "justify-start sm:justify-end"
+              )}
+            >
               {actions}
             </div>
           )}
         </div>
       )}
 
-      {/* Linha principal: ícone + título + count + anchor */}
-      <div className="flex items-center gap-2">
+      <div
+        className={classNames(
+          "flex min-w-0 flex-wrap items-center gap-2",
+          alignClass.main
+        )}
+      >
         {icon && (
-          <span className="text-verde-900 dark:text-verde-800 shrink-0" aria-hidden>
+          <span
+            className={classNames(
+              "grid shrink-0 place-items-center",
+              accentClass.icon,
+              sizeClass.icon
+            )}
+            aria-hidden="true"
+          >
             {icon}
           </span>
         )}
 
-        <AutoTag
-          role={/h[1-6]/i.test(String(AutoTag)) ? undefined : "heading"}
-          aria-level={/h[1-6]/i.test(String(AutoTag)) ? undefined : safeLevel}
-          className={[
-            "font-bold tracking-tight leading-snug text-transparent bg-clip-text bg-gradient-to-br",
-            grad,
-            sizes[size],
-            "dark:brightness-110",
-          ].join(" ")}
+        <HeadingTag
+          role={nativeHeading ? undefined : "heading"}
+          aria-level={nativeHeading ? undefined : safeLevel}
+          className={classNames(
+            "min-w-0 break-words bg-gradient-to-br bg-clip-text font-black leading-tight tracking-tight text-transparent",
+            accentClass.title,
+            sizeClass.title,
+            "dark:brightness-110"
+          )}
         >
           {children}
-        </AutoTag>
+        </HeadingTag>
 
-        {typeof count !== "undefined" && count !== null && (
+        {count !== undefined && count !== null && (
           <span
-            className="ml-1 inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-black/10 dark:bg-white/10 text-gray-800 dark:text-gray-100"
+            className={classNames(
+              "inline-flex shrink-0 items-center justify-center rounded-full px-2.5 py-1 text-xs font-black ring-1",
+              accentClass.badge
+            )}
             aria-label={`Quantidade: ${count}`}
           >
             {count}
@@ -189,38 +305,48 @@ export default function TituloSecao({
         {anchor && id && (
           <a
             href={`#${id}`}
-            className="ml-1 opacity-70 hover:opacity-100 transition text-gray-700 dark:text-gray-200"
-            aria-label="Copiar link da seção"
-            title="Copiar link da seção"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+            aria-label="Abrir link desta seção"
+            title="Abrir link desta seção"
           >
-            #
+            <LinkIcon className="h-4 w-4" aria-hidden="true" />
           </a>
         )}
       </div>
 
       {subtitle && (
-        <p className="text-sm sm:text-base text-gray-600 dark:text-gray-300 mt-1 max-w-prose">
+        <p
+          className={classNames(
+            "mt-2 max-w-prose font-medium leading-relaxed text-slate-500 dark:text-slate-400",
+            sizeClass.subtitle,
+            alignClass.subtitle
+          )}
+        >
           {subtitle}
         </p>
       )}
 
-      {BorderLine}
-    </div>
+      {!noBorder && (
+        <div
+          aria-hidden="true"
+          className={classNames(
+            "mt-3 rounded-full bg-gradient-to-r",
+            accentClass.line,
+            LINE_SIZE_CLASSES[size] || LINE_SIZE_CLASSES.md,
+            alignClass.border
+          )}
+        />
+      )}
+    </motion.section>
   );
 }
 
 TituloSecao.propTypes = {
-  /** Conteúdo do título */
   children: PropTypes.node.isRequired,
-  /** Subtítulo opcional */
   subtitle: PropTypes.node,
-  /** Ícone opcional */
   icon: PropTypes.node,
-  /** Tamanho do texto */
   size: PropTypes.oneOf(["sm", "md", "lg", "xl"]),
-  /** Alinhamento do título */
   align: PropTypes.oneOf(["left", "center", "right"]),
-  /** Tema de cor (gradiente) */
   accent: PropTypes.oneOf([
     "emerald",
     "violet",
@@ -233,31 +359,16 @@ TituloSecao.propTypes = {
     "sky",
     "lousa",
   ]),
-  /** id opcional para ancoragem/acessibilidade */
   id: PropTypes.string,
-  /** Classes adicionais */
   className: PropTypes.string,
-  /** Remove linha decorativa */
   noBorder: PropTypes.bool,
-  /** Nível semântico do heading (1..6) */
   level: PropTypes.oneOf([1, 2, 3, 4, 5, 6]),
-  /** Força a tag (ex.: "h2", "div") */
   as: PropTypes.oneOfType([PropTypes.string, PropTypes.elementType]),
-  /** Eyebrow acima do título */
   kicker: PropTypes.node,
-  /** Slot de ações à direita (botões, filtros) */
   actions: PropTypes.node,
-  /** Badge/contador ao lado do título */
   count: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
-  /** Mostrar link âncora (usa `id`) */
   anchor: PropTypes.bool,
-  /** Header sticky */
   sticky: PropTypes.bool,
-  /** Animação de entrada */
   animate: PropTypes.bool,
-  /** Personalização da linha decorativa */
-  borderWidth: PropTypes.string,
-  borderWidthSm: PropTypes.string,
-  borderLength: PropTypes.string,
-  borderLengthSm: PropTypes.string,
+  compact: PropTypes.bool,
 };

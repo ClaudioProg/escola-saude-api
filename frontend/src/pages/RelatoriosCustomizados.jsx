@@ -1,843 +1,1443 @@
-// ✅ src/pages/RelatoriosCustomizados.jsx — premium (hero + chips + ministats + a11y + motion-safe + abort + cache + UX)
-// Mantém sua lógica, mas melhora: abort de requests, hints, cards premium, paginação robusta, botões consistentes e sem "pulos" de data.
+// ✅ frontend/src/pages/RelatoriosCustomizados.jsx — v2.0
+// Atualizado em: 15/05/2026
+// Plataforma Escola da Saúde
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "react-toastify";
-import { saveAs } from "file-saver";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
+  Activity,
+  AlertTriangle,
   BarChart3,
-  RefreshCcw,
+  CalendarDays,
+  CheckCircle2,
+  ClipboardList,
   Download,
+  FileBadge2,
   FileSpreadsheet,
-  Search,
-  X,
-  Info,
-  Sparkles,
-  Layers,
-  Rows3,
-  FileDown,
+  Filter,
+  GraduationCap,
+  HeartPulse,
   Loader2,
-  SlidersHorizontal,
+  Mail,
+  RefreshCcw,
+  Search,
+  ShieldCheck,
+  Sparkles,
   Trash2,
+  UsersRound,
+  X,
 } from "lucide-react";
 
-import { apiGet, apiPostFile } from "../services/api";
-import Select from "../components/Select";
-import DateRangePicker from "../components/DateRangePicker";
-import RelatoriosTabela from "../components/RelatoriosTabela";
-import CarregandoSkeleton from "../components/CarregandoSkeleton";
-import ErroCarregamento from "../components/ErroCarregamento";
-import NadaEncontrado from "../components/NadaEncontrado";
-import Footer from "../components/Footer";
+import Footer from "../components/layout/Footer";
+import Botao from "../components/ui/Botao";
+import CarregandoSkeleton from "../components/ui/CarregandoSkeleton";
+import ErroCarregamento from "../components/ui/ErroCarregamento";
+import NadaEncontrado from "../components/ui/NadaEncontrado";
+import RelatoriosTabela from "../components/relatorios/RelatoriosTabela";
+import { notifyError, notifyInfo, notifySuccess, notifyWarning } from "../components/ui/AppToast";
+import { api } from "../services/api";
 
-/* ---------------- Utils ---------------- */
-const cx = (...c) => c.filter(Boolean).join(" ");
+/* ─────────────────────────────────────────────
+ * Contratos oficiais esperados no api.js
+ * ─────────────────────────────────────────────
+ *
+ * api.relatorio.resumoGeral(params?)
+ * api.relatorio.eventos(params?)
+ * api.relatorio.presencas(params?)
+ * api.relatorio.avaliacoes(params?)
+ * api.relatorio.organizadores(params?)
+ * api.relatorio.certificados(params?)
+ * api.relatorio.certificadosPendencias(params?)
+ * api.relatorio.usuarios(params?)
+ * api.relatorio.salas(params?)
+ * api.relatorio.notificacoes(params?)
+ * api.relatorio.saudePlataforma(params?)
+ * api.relatorio.exportarXlsx(tipo, params?)
+ *
+ * Rotas backend oficiais:
+ * GET /api/relatorio/resumo-geral
+ * GET /api/relatorio/eventos
+ * GET /api/relatorio/presencas
+ * GET /api/relatorio/avaliacoes
+ * GET /api/relatorio/organizadores
+ * GET /api/relatorio/certificados
+ * GET /api/relatorio/certificados/pendencias
+ * GET /api/relatorio/usuarios
+ * GET /api/relatorio/salas
+ * GET /api/relatorio/notificacoes
+ * GET /api/relatorio/saude-plataforma
+ * GET /api/relatorio/exportar/:tipo.xlsx
+ *
+ * Diretrizes v2.0:
+ * - Sem apiGet/apiPostFile direto.
+ * - Sem react-toastify direto.
+ * - Sem file-saver.
+ * - Sem endpoints antigos relatorios/opcao, relatorios/custom, relatorios/exportar.
+ * - Sem aliases de filtro.
+ * - Date-only como YYYY-MM-DD.
+ */
 
-/* ---------------- HeaderHero (paleta exclusiva) ---------------- */
-function HeaderHero({ onRefresh, carregando }) {
+/* ─────────────────────────────────────────────
+ * Configuração dos relatórios oficiais
+ * ───────────────────────────────────────────── */
+
+const RELATORIOS = [
+  {
+    key: "resumo-geral",
+    exportKey: null,
+    label: "Visão geral",
+    description: "Indicadores consolidados da plataforma.",
+    icon: BarChart3,
+    tone: "violet",
+  },
+  {
+    key: "eventos",
+    exportKey: "eventos",
+    label: "Eventos",
+    description: "Eventos, turmas, vagas, inscritos, presenças, certificados e avaliação.",
+    icon: CalendarDays,
+    tone: "cyan",
+  },
+  {
+    key: "presencas",
+    exportKey: "presencas",
+    label: "Presenças",
+    description: "Frequência por usuário, turma e evento.",
+    icon: CheckCircle2,
+    tone: "emerald",
+  },
+  {
+    key: "avaliacoes",
+    exportKey: "avaliacoes",
+    label: "Avaliações",
+    description: "Médias e respostas das avaliações oficiais.",
+    icon: ClipboardList,
+    tone: "amber",
+  },
+  {
+    key: "organizadores",
+    exportKey: "organizadores",
+    label: "organizadores",
+    description: "Atuação, avaliações e assinatura dos organizadores.",
+    icon: GraduationCap,
+    tone: "violet",
+  },
+  {
+    key: "certificados",
+    exportKey: "certificados",
+    label: "Certificados",
+    description: "Relatório documental de certificados regulares e avulsos.",
+    icon: FileBadge2,
+    tone: "emerald",
+  },
+  {
+    key: "certificados-pendencias",
+    exportKey: null,
+    label: "Pendências de certificado",
+    description: "Diagnóstico de bloqueios e pendências de emissão/envio.",
+    icon: AlertTriangle,
+    tone: "rose",
+  },
+  {
+    key: "usuarios",
+    exportKey: "usuarios",
+    label: "Usuários",
+    description: "Completude cadastral e institucional dos usuários.",
+    icon: UsersRound,
+    tone: "cyan",
+  },
+  {
+    key: "salas",
+    exportKey: null,
+    label: "Salas",
+    description: "Reservas, confirmação e uso das salas.",
+    icon: Activity,
+    tone: "amber",
+  },
+  {
+    key: "notificacoes",
+    exportKey: "notificacoes",
+    label: "Notificações",
+    description: "Notificações enviadas, lidas e pendentes.",
+    icon: Mail,
+    tone: "violet",
+  },
+  {
+    key: "saude-plataforma",
+    exportKey: "saude-plataforma",
+    label: "Saúde da plataforma",
+    description: "Diagnósticos administrativos e inconsistências críticas.",
+    icon: HeartPulse,
+    tone: "rose",
+  },
+];
+
+const RELATORIOS_MAP = new Map(RELATORIOS.map((item) => [item.key, item]));
+
+const EXPORTAVEIS = new Set([
+  "eventos",
+  "presencas",
+  "avaliacoes",
+  "organizadores",
+  "certificados",
+  "usuarios",
+  "notificacoes",
+  "saude-plataforma",
+]);
+
+/* ─────────────────────────────────────────────
+ * Helpers
+ * ───────────────────────────────────────────── */
+
+function cx(...parts) {
+  return parts.filter(Boolean).join(" ");
+}
+
+function extrairData(response) {
+  return response?.data ?? response ?? null;
+}
+
+function extrairMeta(response) {
+  return response?.meta || response?.data?.meta || {};
+}
+
+function obterMensagemErro(error, fallback) {
   return (
-    <header className="relative isolate overflow-hidden bg-gradient-to-br from-slate-900 via-purple-800 to-pink-700 text-white" role="banner">
-      <a
-        href="#conteudo"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[100] focus:bg-white focus:text-black focus:px-3 focus:py-2 focus:rounded-lg focus:shadow"
-      >
-        Ir para o conteúdo
-      </a>
-
-      <div
-        className="pointer-events-none absolute inset-0 opacity-60"
-        style={{
-          background:
-            "radial-gradient(52% 60% at 50% 0%, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0.06) 32%, rgba(255,255,255,0) 60%)",
-        }}
-        aria-hidden="true"
-      />
-
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-7 text-center flex flex-col items-center gap-3">
-        <div className="inline-flex items-center gap-2">
-          <BarChart3 className="w-5 h-5" aria-hidden="true" />
-          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">Relatórios Customizados</h1>
-        </div>
-
-        <p className="text-sm text-white/90 max-w-3xl">
-          Participação, frequência, avaliações, certificados, rankings e indicadores por curso/instrutor/unidade.
-          Exporte para PDF/Excel.
-        </p>
-
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/15 text-xs font-semibold">
-            <Sparkles className="w-4 h-4" aria-hidden="true" />
-            Admin • Relatórios avançados
-          </span>
-
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={carregando}
-            className={cx(
-              "inline-flex items-center justify-center gap-2 px-3 py-1.5 text-sm rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
-              carregando ? "opacity-70 cursor-not-allowed bg-white/20" : "bg-white/15 hover:bg-white/25"
-            )}
-            aria-label="Atualizar opções e dados"
-          >
-            {carregando ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <RefreshCcw className="w-4 h-4" aria-hidden="true" />}
-            {carregando ? "Atualizando…" : "Atualizar filtros"}
-          </button>
-        </div>
-      </div>
-
-      <div className="absolute bottom-0 left-0 right-0 h-px bg-white/25" aria-hidden="true" />
-    </header>
+    error?.response?.data?.message ||
+    error?.data?.message ||
+    error?.message ||
+    fallback
   );
 }
 
-/* ======================= Helpers de data (anti-UTC) ======================= */
-function parseLocalYMD(ymd) {
-  const m = String(ymd || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return new Date(NaN);
-  const y = +m[1],
-    mo = +m[2],
-    d = +m[3];
-  return new Date(y, mo - 1, d, 0, 0, 0, 0);
-}
-function toLocalNaiveISO(dt) {
-  const y = dt.getFullYear();
-  const m = String(dt.getMonth() + 1).padStart(2, "0");
-  const d = String(dt.getDate()).padStart(2, "0");
-  const hh = String(dt.getHours()).padStart(2, "0");
-  const mm = String(dt.getMinutes()).padStart(2, "0");
-  const ss = String(dt.getSeconds()).padStart(2, "0");
-  return `${y}-${m}-${d}T${hh}:${mm}:${ss}`;
-}
-function startOfDayLocalISO(dateLike) {
-  const dt = dateLike instanceof Date ? new Date(dateLike) : parseLocalYMD(dateLike);
-  dt.setHours(0, 0, 0, 0);
-  return toLocalNaiveISO(dt);
-}
-function endOfDayLocalISO(dateLike) {
-  const dt = dateLike instanceof Date ? new Date(dateLike) : parseLocalYMD(dateLike);
-  dt.setHours(23, 59, 59, 999);
-  dt.setMilliseconds(0);
-  return toLocalNaiveISO(dt);
+function validarFacade(nome, fn) {
+  if (typeof fn !== "function") {
+    throw new Error(`Facade ausente no api.js: ${nome}.`);
+  }
 }
 
-/* ======================= Metadata dos relatórios ======================= */
-const REPORTS = [
-  { key: "participacao_usuario", label: "Cursos por usuário", hint: "Cursos por usuário, com presenças/faltas e status de avaliação/certificado." },
-  { key: "frequencia_detalhada", label: "Frequência detalhada", hint: "Presenças e faltas por encontro, por turma/curso." },
-  { key: "avaliacao", label: "Avaliações", hint: "Status de avaliação, notas e médias por curso/usuário." },
-  { key: "certificados", label: "Certificados", hint: "Certificados gerados, pendentes e datas de emissão." },
-  { key: "por_curso", label: "Inscritos e presentes (curso)", hint: "Inscritos vs participantes, presenças e certificados por turma." },
-  { key: "ranking_presencas", label: "Ranking: mais presentes", hint: "Usuários com maior participação em eventos." },
-  { key: "ranking_faltas", label: "Ranking: mais faltas", hint: "Usuários com maior índice de faltas." },
-  { key: "notas_instrutores", label: "Notas por instrutor", hint: "Média por instrutor e contagem de avaliações." },
-];
+function isYMD(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
+}
 
-/* ======================= MiniStat ======================= */
-function MiniStat({ label, value, icon: Icon, tone = "neutral" }) {
+function hojeYMD() {
+  const date = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function primeiroDiaAnoYMD() {
+  const ano = new Date().getFullYear();
+
+  return `${ano}-01-01`;
+}
+
+function normalizarBusca(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function toPositiveIntOrEmpty(value) {
+  const text = String(value || "").trim();
+
+  if (!text) return "";
+
+  const number = Number(text);
+
+  return Number.isInteger(number) && number > 0 ? String(number) : "";
+}
+
+function getRelatorioAtual(key) {
+  return RELATORIOS_MAP.get(key) || RELATORIOS[0];
+}
+
+function getRowsFromData(data) {
+  if (Array.isArray(data)) return data;
+
+  if (data && typeof data === "object") {
+    return [data];
+  }
+
+  return [];
+}
+
+function getTotalRows(data) {
+  return getRowsFromData(data).length;
+}
+
+function formatarNumero(value) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) return "—";
+
+  return new Intl.NumberFormat("pt-BR").format(number);
+}
+
+function formatarPercentual(value) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) return "—";
+
+  return `${number.toFixed(1).replace(".", ",")}%`;
+}
+
+function downloadBlob(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+
+  anchor.href = url;
+  anchor.download = filename;
+
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+
+  URL.revokeObjectURL(url);
+}
+
+function inferirNomeArquivo(result, fallback) {
+  return result?.filename || result?.nome_arquivo || fallback;
+}
+
+function filtrarClientSide(rows, busca) {
+  const q = normalizarBusca(busca);
+
+  if (!q) return rows;
+
+  return rows.filter((row) => {
+    return Object.values(row || {}).some((value) => {
+      return normalizarBusca(value).includes(q);
+    });
+  });
+}
+
+function getStatusSaude(row) {
+  const severidade = String(row?.severidade || "").toLowerCase();
+
+  if (severidade === "critico") return "critico";
+  if (severidade === "alerta") return "alerta";
+  if (severidade === "info") return "info";
+
+  return "ok";
+}
+
+/* ─────────────────────────────────────────────
+ * Componentes locais
+ * ───────────────────────────────────────────── */
+
+function Badge({ tone = "slate", children }) {
   const tones = {
-    neutral: "bg-white dark:bg-zinc-800 border-slate-200 dark:border-zinc-700",
-    info: "bg-fuchsia-50 dark:bg-fuchsia-900/20 border-fuchsia-200/60 dark:border-fuchsia-800",
-    ok: "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200/60 dark:border-emerald-800",
+    slate:
+      "bg-slate-100 text-slate-700 ring-slate-200 dark:bg-zinc-800 dark:text-zinc-200 dark:ring-zinc-700",
+    emerald:
+      "bg-emerald-50 text-emerald-800 ring-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-100 dark:ring-emerald-800/60",
+    amber:
+      "bg-amber-50 text-amber-800 ring-amber-100 dark:bg-amber-950/40 dark:text-amber-100 dark:ring-amber-800/60",
+    rose:
+      "bg-rose-50 text-rose-800 ring-rose-100 dark:bg-rose-950/40 dark:text-rose-100 dark:ring-rose-800/60",
+    cyan:
+      "bg-cyan-50 text-cyan-800 ring-cyan-100 dark:bg-cyan-950/40 dark:text-cyan-100 dark:ring-cyan-800/60",
+    violet:
+      "bg-violet-50 text-violet-800 ring-violet-100 dark:bg-violet-950/40 dark:text-violet-100 dark:ring-violet-800/60",
   };
+
   return (
-    <div className={cx("rounded-2xl border p-4 text-center shadow-sm", tones[tone])}>
-      <div className="inline-flex items-center justify-center gap-2 text-[11px] sm:text-xs opacity-80">
-        {Icon ? <Icon className="w-4 h-4" aria-hidden="true" /> : null}
-        <span>{label}</span>
+    <span
+      className={cx(
+        "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-black ring-1",
+        tones[tone] || tones.slate
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function MiniStatHero({ icon: Icon, label, value, tone = "violet" }) {
+  const tones = {
+    violet: "bg-violet-400/15 text-violet-50 ring-violet-300/20",
+    emerald: "bg-emerald-400/15 text-emerald-50 ring-emerald-300/20",
+    amber: "bg-amber-400/15 text-amber-50 ring-amber-300/20",
+    rose: "bg-rose-400/15 text-rose-50 ring-rose-300/20",
+    cyan: "bg-cyan-400/15 text-cyan-50 ring-cyan-300/20",
+  };
+
+  return (
+    <div className={cx("rounded-3xl p-4 ring-1 backdrop-blur", tones[tone])}>
+      <div className="flex items-center gap-3">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/15">
+          <Icon className="h-5 w-5" aria-hidden="true" />
+        </div>
+
+        <div className="min-w-0">
+          <p className="text-[11px] font-black uppercase tracking-wide opacity-80">
+            {label}
+          </p>
+          <p className="text-2xl font-black leading-none">{value}</p>
+        </div>
       </div>
-      <div className="mt-1 text-2xl font-extrabold tracking-tight">{value}</div>
     </div>
   );
 }
 
-/* ======================= Página ======================= */
+function Hero({ kpis, carregando, exportando, onRefresh }) {
+  return (
+    <header className="relative overflow-hidden bg-gradient-to-br from-slate-950 via-violet-950 to-fuchsia-800 text-white">
+      <div className="absolute inset-0 opacity-30">
+        <div className="absolute -left-24 -top-24 h-72 w-72 rounded-full bg-violet-400 blur-3xl" />
+        <div className="absolute right-0 top-8 h-72 w-72 rounded-full bg-fuchsia-500 blur-3xl" />
+        <div className="absolute bottom-0 left-1/2 h-64 w-64 -translate-x-1/2 rounded-full bg-cyan-500 blur-3xl" />
+      </div>
+
+      <a
+        href="#conteudo"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-xl focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:font-bold focus:text-slate-950"
+      >
+        Ir para o conteúdo
+      </a>
+
+      <div className="relative mx-auto max-w-7xl px-4 py-7 sm:px-6 sm:py-9">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-3xl">
+            <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-black ring-1 ring-white/20 backdrop-blur">
+              <BarChart3 className="h-4 w-4" aria-hidden="true" />
+              Relatórios institucionais
+            </div>
+
+            <h1 className="mt-4 text-2xl font-black tracking-tight sm:text-4xl">
+              Painel de relatórios da Escola da Saúde
+            </h1>
+
+            <p className="mt-3 max-w-3xl text-sm text-white/85 sm:text-base">
+              Acompanhe eventos, presenças, avaliações, certificados, usuários,
+              salas, notificações e saúde da plataforma com filtros oficiais e
+              exportação institucional.
+            </p>
+          </div>
+
+          <div className="flex shrink-0">
+            <Botao
+              type="button"
+              variant="secondary"
+              onClick={onRefresh}
+              disabled={carregando || exportando}
+              className="bg-white/10 text-white ring-1 ring-white/20 hover:bg-white/15"
+            >
+              <span className="inline-flex items-center gap-2">
+                <RefreshCcw
+                  className={cx(
+                    "h-4 w-4",
+                    (carregando || exportando) && "animate-spin"
+                  )}
+                  aria-hidden="true"
+                />
+                {carregando ? "Atualizando..." : "Atualizar"}
+              </span>
+            </Botao>
+          </div>
+        </div>
+
+        <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <MiniStatHero
+            icon={CalendarDays}
+            label="Eventos"
+            value={formatarNumero(kpis.eventos)}
+            tone="cyan"
+          />
+          <MiniStatHero
+            icon={UsersRound}
+            label="Inscrições"
+            value={formatarNumero(kpis.inscricoes)}
+            tone="violet"
+          />
+          <MiniStatHero
+            icon={FileBadge2}
+            label="Certificados"
+            value={formatarNumero(kpis.certificados)}
+            tone="emerald"
+          />
+          <MiniStatHero
+            icon={HeartPulse}
+            label="Alertas"
+            value={formatarNumero(kpis.alertas)}
+            tone={kpis.alertas > 0 ? "rose" : "emerald"}
+          />
+        </div>
+
+        <div className="mt-5 rounded-3xl bg-white/10 p-4 text-sm text-white/85 ring-1 ring-white/15 backdrop-blur">
+          <div className="flex items-start gap-3">
+            <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+            <p>
+              Os relatórios v2.0 usam contratos oficiais, filtros padronizados e
+              dados rastreáveis para suporte, auditoria e tomada de decisão.
+            </p>
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function RelatorioTabs({ value, onChange, counts }) {
+  return (
+    <section
+      aria-label="Categorias de relatório"
+      className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0"
+    >
+      <div className="flex min-w-fit gap-2 py-1">
+        {RELATORIOS.map((item) => {
+          const Icon = item.icon;
+          const active = value === item.key;
+          const count = counts[item.key];
+
+          return (
+            <button
+              key={item.key}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => onChange(item.key)}
+              className={cx(
+                "inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-black ring-1 transition",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500",
+                active
+                  ? "bg-slate-950 text-white ring-slate-950 dark:bg-white dark:text-slate-950 dark:ring-white"
+                  : "bg-white text-slate-700 ring-slate-200 hover:bg-slate-50 dark:bg-zinc-900 dark:text-zinc-200 dark:ring-zinc-800 dark:hover:bg-zinc-800"
+              )}
+            >
+              <Icon className="h-4 w-4" aria-hidden="true" />
+              <span>{item.label}</span>
+              {Number.isFinite(count) ? (
+                <span
+                  className={cx(
+                    "inline-flex min-w-6 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px]",
+                    active
+                      ? "bg-white/15 text-white dark:bg-slate-950/10 dark:text-slate-950"
+                      : "bg-slate-100 text-slate-600 dark:bg-zinc-800 dark:text-zinc-300"
+                  )}
+                >
+                  {count}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function Filtros({
+  filtros,
+  setFiltros,
+  busca,
+  setBusca,
+  onBuscar,
+  onLimpar,
+  carregando,
+  exportando,
+  relatorioAtual,
+  onExportar,
+}) {
+  const exportavel = Boolean(relatorioAtual.exportKey);
+
+  return (
+    <section
+      aria-label="Filtros do relatório"
+      className="rounded-[1.5rem] bg-white/85 p-4 shadow-sm ring-1 ring-slate-200 backdrop-blur dark:bg-zinc-900/85 dark:ring-zinc-800"
+    >
+      <div className="mb-3 flex items-center gap-2">
+        <Filter className="h-4 w-4 text-slate-500" aria-hidden="true" />
+        <h2 className="text-sm font-black text-slate-950 dark:text-white">
+          Filtros oficiais
+        </h2>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6">
+        <CampoData
+          label="Data início"
+          value={filtros.data_inicio}
+          onChange={(value) =>
+            setFiltros((prev) => ({ ...prev, data_inicio: value }))
+          }
+        />
+
+        <CampoData
+          label="Data fim"
+          value={filtros.data_fim}
+          onChange={(value) =>
+            setFiltros((prev) => ({ ...prev, data_fim: value }))
+          }
+        />
+
+        <CampoTextoNumerico
+          label="Evento ID"
+          value={filtros.evento_id}
+          onChange={(value) =>
+            setFiltros((prev) => ({ ...prev, evento_id: value }))
+          }
+        />
+
+        <CampoTextoNumerico
+          label="Turma ID"
+          value={filtros.turma_id}
+          onChange={(value) =>
+            setFiltros((prev) => ({ ...prev, turma_id: value }))
+          }
+        />
+
+        <CampoTextoNumerico
+          label="organizador ID"
+          value={filtros.organizador_id}
+          onChange={(value) =>
+            setFiltros((prev) => ({ ...prev, organizador_id: value }))
+          }
+        />
+
+        <CampoTextoNumerico
+          label="Usuário ID"
+          value={filtros.usuario_id}
+          onChange={(value) =>
+            setFiltros((prev) => ({ ...prev, usuario_id: value }))
+          }
+        />
+      </div>
+
+      <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_220px]">
+        <div className="relative">
+          <Search
+            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+            aria-hidden="true"
+          />
+
+          <input
+            type="search"
+            value={busca}
+            onChange={(event) => setBusca(event.target.value)}
+            placeholder="Buscar nos resultados carregados..."
+            className="w-full rounded-2xl border border-slate-300 bg-white py-2 pl-9 pr-10 text-sm text-slate-950 outline-none transition focus:border-violet-700 focus:ring-4 focus:ring-violet-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white dark:focus:ring-violet-950"
+            aria-label="Buscar nos resultados"
+          />
+
+          {busca ? (
+            <button
+              type="button"
+              onClick={() => setBusca("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-xl p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-zinc-800"
+              aria-label="Limpar busca"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+
+        <select
+          value={filtros.status}
+          onChange={(event) =>
+            setFiltros((prev) => ({ ...prev, status: event.target.value }))
+          }
+          className="rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-4 focus:ring-violet-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:focus:ring-violet-950"
+          aria-label="Filtrar por status"
+        >
+          <option value="">Status: todos</option>
+          <option value="programado">programado</option>
+          <option value="andamento">andamento</option>
+          <option value="encerrado">encerrado</option>
+          <option value="emitido">emitido</option>
+          <option value="enviado">enviado</option>
+          <option value="cancelado">cancelado</option>
+          <option value="anulado">anulado</option>
+          <option value="substituido">substituido</option>
+          <option value="erro_emissao">erro_emissao</option>
+        </select>
+      </div>
+
+      <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        <Botao
+          type="button"
+          variant="primary"
+          onClick={onBuscar}
+          disabled={carregando || exportando}
+        >
+          <span className="inline-flex items-center gap-2">
+            {carregando ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Search className="h-4 w-4" aria-hidden="true" />
+            )}
+            {carregando ? "Buscando..." : "Buscar relatório"}
+          </span>
+        </Botao>
+
+        <Botao
+          type="button"
+          variant="secondary"
+          onClick={onExportar}
+          disabled={!exportavel || carregando || exportando}
+          title={
+            exportavel
+              ? "Exportar relatório atual em XLSX."
+              : "Este relatório ainda não possui exportação XLSX direta."
+          }
+        >
+          <span className="inline-flex items-center gap-2">
+            {exportando ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <FileSpreadsheet className="h-4 w-4" aria-hidden="true" />
+            )}
+            {exportando ? "Exportando..." : "Exportar XLSX"}
+          </span>
+        </Botao>
+
+        <Botao
+          type="button"
+          variant="secondary"
+          onClick={onLimpar}
+          disabled={carregando || exportando}
+        >
+          <span className="inline-flex items-center gap-2">
+            <Trash2 className="h-4 w-4" aria-hidden="true" />
+            Limpar
+          </span>
+        </Botao>
+      </div>
+
+      <p className="mt-3 text-xs font-semibold text-slate-500 dark:text-zinc-400">
+        Filtros enviados ao backend somente com nomes oficiais:{" "}
+        <code>data_inicio</code>, <code>data_fim</code>, <code>evento_id</code>,{" "}
+        <code>turma_id</code>, <code>organizador_id</code>, <code>usuario_id</code>,{" "}
+        <code>status</code>.
+      </p>
+    </section>
+  );
+}
+
+function CampoData({ label, value, onChange }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500 dark:text-zinc-400">
+        {label}
+      </span>
+      <input
+        type="date"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-4 focus:ring-violet-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:focus:ring-violet-950"
+      />
+    </label>
+  );
+}
+
+function CampoTextoNumerico({ label, value, onChange }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500 dark:text-zinc-400">
+        {label}
+      </span>
+      <input
+        type="number"
+        inputMode="numeric"
+        min="1"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="Opcional"
+        className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-4 focus:ring-violet-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:focus:ring-violet-950"
+      />
+    </label>
+  );
+}
+
+function RelatorioDescricao({ relatorio, total, meta }) {
+  const Icon = relatorio.icon;
+
+  return (
+    <section className="rounded-[1.5rem] bg-white p-4 shadow-sm ring-1 ring-slate-200 dark:bg-zinc-900 dark:ring-zinc-800">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <Badge tone={relatorio.tone}>
+            <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+            {relatorio.label}
+          </Badge>
+
+          <h2 className="mt-3 text-lg font-black text-slate-950 dark:text-white">
+            {relatorio.label}
+          </h2>
+
+          <p className="mt-1 text-sm text-slate-600 dark:text-zinc-300">
+            {relatorio.description}
+          </p>
+        </div>
+
+        <div className="grid min-w-[180px] grid-cols-2 gap-2">
+          <div className="rounded-2xl bg-slate-50 p-3 text-center ring-1 ring-slate-200 dark:bg-zinc-950 dark:ring-zinc-800">
+            <p className="text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-zinc-400">
+              Registros
+            </p>
+            <p className="mt-1 text-xl font-black text-slate-950 dark:text-white">
+              {formatarNumero(total)}
+            </p>
+          </div>
+
+          <div className="rounded-2xl bg-slate-50 p-3 text-center ring-1 ring-slate-200 dark:bg-zinc-950 dark:ring-zinc-800">
+            <p className="text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-zinc-400">
+              Fonte
+            </p>
+            <p className="mt-1 text-xs font-black text-slate-950 dark:text-white">
+              v2.0
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {meta?.filtros ? (
+        <p className="mt-3 rounded-2xl bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 dark:bg-zinc-950 dark:text-zinc-300 dark:ring-zinc-800">
+          Filtros aplicados: {JSON.stringify(meta.filtros)}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function ResumoGeralCards({ data }) {
+  const item = data && typeof data === "object" && !Array.isArray(data) ? data : {};
+
+  const cards = [
+    ["Eventos", item.total_eventos, CalendarDays, "cyan"],
+    ["Turmas", item.total_turmas, Activity, "violet"],
+    ["Inscrições", item.total_inscricoes, UsersRound, "amber"],
+    ["Presenças", item.total_presencas, CheckCircle2, "emerald"],
+    ["Avaliações", item.total_avaliacoes, ClipboardList, "violet"],
+    ["Certificados", item.total_certificados, FileBadge2, "emerald"],
+    ["Avulsos", item.total_certificados_avulsos, FileBadge2, "cyan"],
+    ["Usuários", item.total_usuarios, UsersRound, "amber"],
+  ];
+
+  return (
+    <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {cards.map(([label, value, Icon, tone]) => (
+        <div
+          key={label}
+          className="rounded-[1.5rem] bg-white p-4 shadow-sm ring-1 ring-slate-200 dark:bg-zinc-900 dark:ring-zinc-800"
+        >
+          <div className="flex items-center gap-3">
+            <span
+              className={cx(
+                "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl",
+                tone === "emerald" &&
+                  "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300",
+                tone === "cyan" &&
+                  "bg-cyan-50 text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300",
+                tone === "amber" &&
+                  "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300",
+                tone === "violet" &&
+                  "bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300"
+              )}
+            >
+              <Icon className="h-5 w-5" aria-hidden="true" />
+            </span>
+
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-zinc-400">
+                {label}
+              </p>
+              <p className="mt-1 text-2xl font-black text-slate-950 dark:text-white">
+                {formatarNumero(value)}
+              </p>
+            </div>
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function SaudeCards({ rows }) {
+  const counts = rows.reduce(
+    (acc, row) => {
+      const status = getStatusSaude(row);
+      acc[status] = (acc[status] || 0) + 1;
+      return acc;
+    },
+    { ok: 0, info: 0, alerta: 0, critico: 0 }
+  );
+
+  return (
+    <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <StatusCard label="OK" value={counts.ok} tone="emerald" />
+      <StatusCard label="Info" value={counts.info} tone="cyan" />
+      <StatusCard label="Alertas" value={counts.alerta} tone="amber" />
+      <StatusCard label="Críticos" value={counts.critico} tone="rose" />
+    </section>
+  );
+}
+
+function StatusCard({ label, value, tone }) {
+  const classes = {
+    emerald:
+      "bg-emerald-50 text-emerald-900 ring-emerald-100 dark:bg-emerald-950/30 dark:text-emerald-100 dark:ring-emerald-800/60",
+    cyan:
+      "bg-cyan-50 text-cyan-900 ring-cyan-100 dark:bg-cyan-950/30 dark:text-cyan-100 dark:ring-cyan-800/60",
+    amber:
+      "bg-amber-50 text-amber-900 ring-amber-100 dark:bg-amber-950/30 dark:text-amber-100 dark:ring-amber-800/60",
+    rose:
+      "bg-rose-50 text-rose-900 ring-rose-100 dark:bg-rose-950/30 dark:text-rose-100 dark:ring-rose-800/60",
+  };
+
+  return (
+    <div className={cx("rounded-[1.5rem] p-4 shadow-sm ring-1", classes[tone])}>
+      <p className="text-[11px] font-black uppercase tracking-wide opacity-70">
+        {label}
+      </p>
+      <p className="mt-1 text-3xl font-black">{Number(value) || 0}</p>
+    </div>
+  );
+}
+
+function Resultado({
+  relatorioKey,
+  relatorio,
+  data,
+  rows,
+  rowsFiltradas,
+  meta,
+  carregando,
+  erro,
+  onRetry,
+  busca,
+}) {
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+
+  useEffect(() => {
+    setPage(1);
+  }, [relatorioKey, busca, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(rowsFiltradas.length / pageSize));
+  const pageSafe = Math.min(Math.max(1, page), totalPages);
+
+  const slice = useMemo(() => {
+    const start = (pageSafe - 1) * pageSize;
+    return rowsFiltradas.slice(start, start + pageSize);
+  }, [rowsFiltradas, pageSafe, pageSize]);
+
+  if (carregando) {
+    return (
+      <section className="rounded-[1.5rem] bg-white p-4 shadow-sm ring-1 ring-slate-200 dark:bg-zinc-900 dark:ring-zinc-800">
+        <div className="space-y-3">
+          <CarregandoSkeleton height={72} />
+          <CarregandoSkeleton height={260} />
+        </div>
+      </section>
+    );
+  }
+
+  if (erro) {
+    return <ErroCarregamento mensagem={erro} onRetry={onRetry} />;
+  }
+
+  if (relatorioKey === "resumo-geral") {
+    return (
+      <div className="space-y-4">
+        <ResumoGeralCards data={data} />
+        <RelatorioDescricao relatorio={relatorio} total={getTotalRows(data)} meta={meta} />
+        <RelatoriosTabela data={rows} />
+      </div>
+    );
+  }
+
+  if (relatorioKey === "saude-plataforma") {
+    return (
+      <div className="space-y-4">
+        <SaudeCards rows={rows} />
+        <RelatorioDescricao relatorio={relatorio} total={rowsFiltradas.length} meta={meta} />
+        <TabelaResultado
+          rows={slice}
+          total={rowsFiltradas.length}
+          pageSafe={pageSafe}
+          totalPages={totalPages}
+          pageSize={pageSize}
+          setPage={setPage}
+          setPageSize={setPageSize}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <RelatorioDescricao
+        relatorio={relatorio}
+        total={rowsFiltradas.length}
+        meta={meta}
+      />
+
+      <TabelaResultado
+        rows={slice}
+        total={rowsFiltradas.length}
+        pageSafe={pageSafe}
+        totalPages={totalPages}
+        pageSize={pageSize}
+        setPage={setPage}
+        setPageSize={setPageSize}
+      />
+    </div>
+  );
+}
+
+function TabelaResultado({
+  rows,
+  total,
+  pageSafe,
+  totalPages,
+  pageSize,
+  setPage,
+  setPageSize,
+}) {
+  return (
+    <section className="rounded-[1.5rem] bg-white p-4 shadow-sm ring-1 ring-slate-200 dark:bg-zinc-900 dark:ring-zinc-800">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm font-semibold text-slate-600 dark:text-zinc-300">
+          {formatarNumero(total)} registro(s)
+        </p>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-xs font-bold text-slate-500 dark:text-zinc-400">
+            Por página
+          </label>
+
+          <select
+            value={pageSize}
+            onChange={(event) => {
+              setPageSize(Number(event.target.value) || 25);
+              setPage(1);
+            }}
+            className="rounded-xl border border-slate-300 bg-white px-2 py-1.5 text-sm font-bold text-slate-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200"
+          >
+            {[10, 25, 50, 100].map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+
+          <button
+            type="button"
+            onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+            disabled={pageSafe <= 1}
+            className="rounded-xl border border-slate-300 px-3 py-1.5 text-sm font-black disabled:opacity-50 dark:border-zinc-700"
+            aria-label="Página anterior"
+          >
+            ‹
+          </button>
+
+          <span className="text-sm font-black text-slate-700 dark:text-zinc-200">
+            {pageSafe}/{totalPages}
+          </span>
+
+          <button
+            type="button"
+            onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+            disabled={pageSafe >= totalPages}
+            className="rounded-xl border border-slate-300 px-3 py-1.5 text-sm font-black disabled:opacity-50 dark:border-zinc-700"
+            aria-label="Próxima página"
+          >
+            ›
+          </button>
+        </div>
+      </div>
+
+      {rows.length > 0 ? (
+        <RelatoriosTabela data={rows} />
+      ) : (
+        <NadaEncontrado
+          titulo="Nenhum resultado encontrado"
+          descricao="Ajuste os filtros e clique em Buscar relatório."
+        />
+      )}
+    </section>
+  );
+}
+
+/* ─────────────────────────────────────────────
+ * Página principal
+ * ───────────────────────────────────────────── */
+
 export default function RelatoriosCustomizados() {
   const reduceMotion = useReducedMotion();
 
-  // contexto do usuário
-  const perfilRaw = (localStorage.getItem("perfil") || "").toLowerCase();
-  const usuarioObj = (() => {
-    try {
-      return JSON.parse(localStorage.getItem("usuario") || "{}");
-    } catch {
-      return {};
-    }
-  })();
-  const usuarioId = usuarioObj?.id ?? null;
+  const [relatorioKey, setRelatorioKey] = useState("resumo-geral");
+  const [filtros, setFiltros] = useState(() => ({
+    data_inicio: primeiroDiaAnoYMD(),
+    data_fim: hojeYMD(),
+    evento_id: "",
+    turma_id: "",
+    organizador_id: "",
+    usuario_id: "",
+    status: "",
+  }));
 
-  // filtros persistidos
-  const loadPersisted = () => {
-    try {
-      const raw = localStorage.getItem("relatorios:filtros");
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
-  };
-  const persisted = loadPersisted();
-
-  const [reportKey, setReportKey] = useState(
-    persisted?.reportKey && REPORTS.some((r) => r.key === persisted.reportKey) ? persisted.reportKey : REPORTS[0].key
-  );
-
-  const [filtros, setFiltros] = useState({
-    eventoId: persisted?.eventoId || "",
-    instrutorId:
-      persisted?.instrutorId ||
-      ((perfilRaw.includes("instrutor") || perfilRaw.includes("administrador")) && usuarioId ? String(usuarioId) : ""),
-    unidadeId: persisted?.unidadeId || "",
-    turmaId: persisted?.turmaId || "",
-    periodo: persisted?.periodo || ["", ""], // [YYYY-MM-DD, YYYY-MM-DD]
-    busca: persisted?.busca || "",
-  });
-
-  const [buscaValue, setBuscaValue] = useState(filtros.busca || "");
-  const [buscaDebounced, setBuscaDebounced] = useState(filtros.busca || "");
-
-  const [opcao, setOpcao] = useState({
-    eventos: [],
-    turmas: [],
-    instrutor: [],
-    unidades: [],
-  });
-
-  const [dados, setDados] = useState([]);
+  const [busca, setBusca] = useState("");
+  const [data, setData] = useState(null);
+  const [meta, setMeta] = useState({});
+  const [erro, setErro] = useState("");
   const [carregando, setCarregando] = useState(false);
-  const [erroCarregamento, setErroCarregamento] = useState(false);
   const [exportando, setExportando] = useState(false);
 
-  // paginação simples (client-side)
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
-
-  // a11y
   const liveRef = useRef(null);
-  const searchRef = useRef(null);
-  const abortRef = useRef(null);
+  const mountedRef = useRef(true);
 
-  const setLive = useCallback((msg) => {
-    if (liveRef.current) liveRef.current.textContent = msg || "";
+  const relatorioAtual = getRelatorioAtual(relatorioKey);
+
+  const setLive = useCallback((message) => {
+    if (liveRef.current) liveRef.current.textContent = message;
   }, []);
 
-  const motionWrap = useMemo(
+  const paramsOficiais = useMemo(() => {
+    const params = {};
+
+    if (isYMD(filtros.data_inicio)) params.data_inicio = filtros.data_inicio;
+    if (isYMD(filtros.data_fim)) params.data_fim = filtros.data_fim;
+
+    const eventoId = toPositiveIntOrEmpty(filtros.evento_id);
+    const turmaId = toPositiveIntOrEmpty(filtros.turma_id);
+    const organizadorId = toPositiveIntOrEmpty(filtros.organizador_id);
+    const usuarioId = toPositiveIntOrEmpty(filtros.usuario_id);
+
+    if (eventoId) params.evento_id = eventoId;
+    if (turmaId) params.turma_id = turmaId;
+    if (organizadorId) params.organizador_id = organizadorId;
+    if (usuarioId) params.usuario_id = usuarioId;
+
+    if (filtros.status) params.status = filtros.status;
+
+    return params;
+  }, [filtros]);
+
+  const validarFiltros = useCallback(() => {
+    if (filtros.data_inicio && !isYMD(filtros.data_inicio)) {
+      notifyWarning("Data inicial inválida. Use uma data válida.");
+      return false;
+    }
+
+    if (filtros.data_fim && !isYMD(filtros.data_fim)) {
+      notifyWarning("Data final inválida. Use uma data válida.");
+      return false;
+    }
+
+    if (
+      filtros.data_inicio &&
+      filtros.data_fim &&
+      filtros.data_inicio > filtros.data_fim
+    ) {
+      notifyWarning("A data inicial não pode ser maior que a data final.");
+      return false;
+    }
+
+    return true;
+  }, [filtros]);
+
+  const chamarRelatorio = useCallback(
+    async (key, params) => {
+      switch (key) {
+        case "resumo-geral":
+          validarFacade("api.relatorio.resumoGeral", api?.relatorio?.resumoGeral);
+          return api.relatorio.resumoGeral(params);
+
+        case "eventos":
+          validarFacade("api.relatorio.eventos", api?.relatorio?.eventos);
+          return api.relatorio.eventos(params);
+
+        case "presencas":
+          validarFacade("api.relatorio.presencas", api?.relatorio?.presencas);
+          return api.relatorio.presencas(params);
+
+        case "avaliacoes":
+          validarFacade("api.relatorio.avaliacoes", api?.relatorio?.avaliacoes);
+          return api.relatorio.avaliacoes(params);
+
+        case "organizadores":
+          validarFacade("api.relatorio.organizadores", api?.relatorio?.organizadores);
+          return api.relatorio.organizadores(params);
+
+        case "certificados":
+          validarFacade("api.relatorio.certificados", api?.relatorio?.certificados);
+          return api.relatorio.certificados(params);
+
+        case "certificados-pendencias":
+          validarFacade(
+            "api.relatorio.certificadosPendencias",
+            api?.relatorio?.certificadosPendencias
+          );
+          return api.relatorio.certificadosPendencias(params);
+
+        case "usuarios":
+          validarFacade("api.relatorio.usuarios", api?.relatorio?.usuarios);
+          return api.relatorio.usuarios(params);
+
+        case "salas":
+          validarFacade("api.relatorio.salas", api?.relatorio?.salas);
+          return api.relatorio.salas(params);
+
+        case "notificacoes":
+          validarFacade("api.relatorio.notificacoes", api?.relatorio?.notificacoes);
+          return api.relatorio.notificacoes(params);
+
+        case "saude-plataforma":
+          validarFacade(
+            "api.relatorio.saudePlataforma",
+            api?.relatorio?.saudePlataforma
+          );
+          return api.relatorio.saudePlataforma(params);
+
+        default:
+          throw new Error("Relatório inválido.");
+      }
+    },
+    []
+  );
+
+  const buscarRelatorio = useCallback(async () => {
+    if (!validarFiltros()) return;
+
+    try {
+      setCarregando(true);
+      setErro("");
+      setLive(`Carregando relatório: ${relatorioAtual.label}.`);
+
+      const response = await chamarRelatorio(relatorioKey, paramsOficiais);
+      const payload = extrairData(response);
+      const responseMeta = extrairMeta(response);
+
+      if (!mountedRef.current) return;
+
+      setData(payload);
+      setMeta(responseMeta || {});
+      setLive("Relatório carregado com sucesso.");
+    } catch (error) {
+      console.error("[RelatoriosCustomizados] erro:", error);
+
+      if (!mountedRef.current) return;
+
+      const message = obterMensagemErro(
+        error,
+        "Não foi possível carregar o relatório."
+      );
+
+      setErro(message);
+      setData(null);
+      setMeta({});
+      notifyError(message);
+      setLive("Erro ao carregar relatório.");
+    } finally {
+      if (mountedRef.current) setCarregando(false);
+    }
+  }, [
+    chamarRelatorio,
+    paramsOficiais,
+    relatorioAtual.label,
+    relatorioKey,
+    setLive,
+    validarFiltros,
+  ]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    document.title = "Relatórios Institucionais | Escola da Saúde";
+
+    buscarRelatorio();
+
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [buscarRelatorio]);
+
+  const limparFiltros = useCallback(() => {
+    setFiltros({
+      data_inicio: primeiroDiaAnoYMD(),
+      data_fim: hojeYMD(),
+      evento_id: "",
+      turma_id: "",
+      organizador_id: "",
+      usuario_id: "",
+      status: "",
+    });
+
+    setBusca("");
+    setLive("Filtros limpos.");
+  }, [setLive]);
+
+  const exportarAtual = useCallback(async () => {
+    const exportKey = relatorioAtual.exportKey;
+
+    if (!exportKey || !EXPORTAVEIS.has(exportKey)) {
+      notifyInfo("Este relatório ainda não possui exportação XLSX direta.");
+      return;
+    }
+
+    if (!validarFiltros()) return;
+
+    try {
+      validarFacade("api.relatorio.exportarXlsx", api?.relatorio?.exportarXlsx);
+
+      setExportando(true);
+      setLive("Exportando relatório XLSX.");
+
+      const result = await api.relatorio.exportarXlsx(exportKey, paramsOficiais);
+      const blob = result?.blob || result?.data || result;
+      const filename = inferirNomeArquivo(
+        result,
+        `relatorio_${exportKey}_${hojeYMD()}.xlsx`
+      );
+
+      downloadBlob(filename, blob);
+      notifySuccess("Exportação iniciada.");
+      setLive("Exportação iniciada.");
+    } catch (error) {
+      console.error("[RelatoriosCustomizados] erro ao exportar:", error);
+
+      notifyError(
+        obterMensagemErro(error, "Não foi possível exportar o relatório.")
+      );
+      setLive("Erro ao exportar relatório.");
+    } finally {
+      setExportando(false);
+    }
+  }, [paramsOficiais, relatorioAtual.exportKey, setLive, validarFiltros]);
+
+  const rows = useMemo(() => getRowsFromData(data), [data]);
+  const rowsFiltradas = useMemo(() => filtrarClientSide(rows, busca), [rows, busca]);
+
+  const counts = useMemo(() => {
+    const base = {};
+
+    if (relatorioKey) {
+      base[relatorioKey] = rows.length;
+    }
+
+    return base;
+  }, [relatorioKey, rows.length]);
+
+  const kpis = useMemo(() => {
+    const resumo = data && typeof data === "object" && !Array.isArray(data) ? data : {};
+
+    if (relatorioKey === "resumo-geral") {
+      return {
+        eventos: Number(resumo.total_eventos || 0),
+        inscricoes: Number(resumo.total_inscricoes || 0),
+        certificados:
+          Number(resumo.total_certificados || 0) +
+          Number(resumo.total_certificados_avulsos || 0),
+        alertas:
+          Number(resumo.certificados_erro || 0) +
+          Number(resumo.certificados_avulsos_erro || 0),
+      };
+    }
+
+    if (relatorioKey === "saude-plataforma") {
+      const criticos = rows.filter((row) => getStatusSaude(row) === "critico").length;
+      const alertas = rows.filter((row) => getStatusSaude(row) === "alerta").length;
+
+      return {
+        eventos: rows.length,
+        inscricoes: 0,
+        certificados: 0,
+        alertas: criticos + alertas,
+      };
+    }
+
+    return {
+      eventos: relatorioKey === "eventos" ? rows.length : 0,
+      inscricoes: relatorioKey === "presencas" ? rows.length : 0,
+      certificados: relatorioKey === "certificados" ? rows.length : 0,
+      alertas: relatorioKey === "certificados-pendencias" ? rows.length : 0,
+    };
+  }, [data, relatorioKey, rows]);
+
+  const motionProps = useMemo(
     () => ({
-      initial: reduceMotion ? false : { opacity: 0, y: 10 },
-      animate: reduceMotion ? {} : { opacity: 1, y: 0 },
-      exit: reduceMotion ? {} : { opacity: 0, y: 10 },
+      initial: reduceMotion ? false : { opacity: 0, y: 8 },
+      animate: reduceMotion ? undefined : { opacity: 1, y: 0 },
+      exit: reduceMotion ? undefined : { opacity: 0, y: 8 },
       transition: { duration: 0.18 },
     }),
     [reduceMotion]
   );
 
-  // persistência leve
-  useEffect(() => {
-    const toSave = { ...filtros, reportKey };
-    try {
-      localStorage.setItem("relatorios:filtros", JSON.stringify(toSave));
-    } catch {}
-  }, [filtros, reportKey]);
-
-  // debounce da busca
-  useEffect(() => {
-    const t = setTimeout(() => {
-      const v = buscaValue.trim();
-      setBuscaDebounced(v.toLowerCase());
-      setFiltros((f) => ({ ...f, busca: v }));
-      setPage(1);
-    }, 250);
-    return () => clearTimeout(t);
-  }, [buscaValue]);
-
-  /* --------- Carregar opções (eventos, turmas, instrutor, unidades) --------- */
-  const carregarOpcao = useCallback(async () => {
-    // abort request anterior
-    try {
-      abortRef.current?.abort?.();
-    } catch {}
-    const ac = typeof AbortController !== "undefined" ? new AbortController() : null;
-    abortRef.current = ac;
-
-    try {
-      setErroCarregamento(false);
-      setLive("Carregando filtros de relatório…");
-
-      const data = await apiGet("relatorios/opcao", { on403: "silent", signal: ac?.signal });
-
-      const eventos = (data?.eventos || []).map((e) => ({
-        value: String(e.id),
-        label: e.titulo || e.nome || "Sem título",
-      }));
-      const instrutor = (data?.instrutor || []).map((i) => ({
-        value: String(i.id),
-        label: i.nome,
-      }));
-      const unidades = (data?.unidades || []).map((u) => ({
-        value: String(u.id),
-        label: u.nome,
-      }));
-
-      // turmas podem depender do evento selecionado
-      let turmas = [];
-      if (filtros.eventoId) {
-        try {
-          const ts = await apiGet(`turmas/evento/${filtros.eventoId}`, { on403: "silent", signal: ac?.signal });
-          turmas = (Array.isArray(ts) ? ts : []).map((t) => ({
-            value: String(t.id),
-            label: t.nome || `Turma #${t.id}`,
-          }));
-        } catch {
-          turmas = [];
-        }
-      }
-
-      setOpcao({ eventos, instrutor, unidades, turmas });
-      setLive("Filtros atualizados.");
-    } catch (e) {
-      if (e?.name === "AbortError") return;
-      setErroCarregamento(true);
-      setLive("Falha ao carregar filtros de relatório.");
-      toast.error("Erro ao carregar filtros.");
-    }
-  }, [filtros.eventoId, setLive]);
-
-  useEffect(() => {
-    carregarOpcao();
-    return () => abortRef.current?.abort?.();
-  }, [carregarOpcao]);
-
-  // recarrega turmas ao mudar evento
-  useEffect(() => {
-    (async () => {
-      if (!filtros.eventoId) {
-        setOpcao((o) => ({ ...o, turmas: [] }));
-        setFiltros((f) => ({ ...f, turmaId: "" }));
-        return;
-      }
-      try {
-        const ts = await apiGet(`turmas/evento/${filtros.eventoId}`, { on403: "silent" });
-        const turmas = (Array.isArray(ts) ? ts : []).map((t) => ({
-          value: String(t.id),
-          label: t.nome || `Turma #${t.id}`,
-        }));
-        setOpcao((o) => ({ ...o, turmas }));
-        if (!turmas.some((t) => t.value === filtros.turmaId)) {
-          setFiltros((f) => ({ ...f, turmaId: "" }));
-        }
-      } catch {
-        setOpcao((o) => ({ ...o, turmas: [] }));
-        setFiltros((f) => ({ ...f, turmaId: "" }));
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtros.eventoId]);
-
-  /* -------------------- Valida período -------------------- */
-  const validarPeriodo = useCallback(() => {
-    const [ini, fim] = filtros.periodo || [];
-    if ((ini && !fim) || (!ini && fim)) {
-      toast.warning("Informe as duas datas do período.");
-      return false;
-    }
-    if (ini && fim) {
-      const dIni = parseLocalYMD(ini);
-      const dFim = parseLocalYMD(fim);
-      if (Number.isNaN(dIni.getTime()) || Number.isNaN(dFim.getTime())) {
-        toast.warning("Período inválido.");
-        return false;
-      }
-      if (dIni > dFim) {
-        toast.warning("Data inicial não pode ser maior que a final.");
-        return false;
-      }
-    }
-    return true;
-  }, [filtros.periodo]);
-
-  /* -------------------- Buscar dados -------------------- */
-  const buscar = useCallback(async () => {
-    if (!validarPeriodo()) return;
-    setPage(1);
-
-    const qs = new URLSearchParams();
-    qs.append("tipo", reportKey);
-    if (filtros.eventoId) qs.append("evento", filtros.eventoId);
-    if (filtros.turmaId) qs.append("turma", filtros.turmaId);
-    if (filtros.instrutorId) qs.append("instrutor", filtros.instrutorId);
-    if (filtros.unidadeId) qs.append("unidade", filtros.unidadeId);
-    if (filtros.busca) qs.append("q", filtros.busca);
-
-    const [ini, fim] = filtros.periodo;
-    if (ini && fim) {
-      qs.append("from", startOfDayLocalISO(ini));
-      qs.append("to", endOfDayLocalISO(fim));
-    }
-
-    setCarregando(true);
-    setLive("Buscando dados do relatório…");
-
-    try {
-      const res = await apiGet(`relatorios/custom?${qs.toString()}`, { on403: "silent" });
-      setDados(Array.isArray(res) ? res : []);
-      setLive(`Busca concluída. ${Array.isArray(res) ? res.length : 0} registro(s).`);
-    } catch (e) {
-      console.error(e);
-      toast.error("❌ Não foi possível gerar relatório.");
-      setDados([]);
-      setLive("Falha ao gerar relatório.");
-    } finally {
-      setCarregando(false);
-    }
-  }, [filtros, reportKey, setLive, validarPeriodo]);
-
-  /* -------------------- Exportações -------------------- */
-  const exportar = useCallback(
-    async (tipo) => {
-      if (!dados.length) return toast.info("Sem dados para exportar.");
-      if (!["pdf", "excel"].includes(tipo)) return toast.error("Formato inválido.");
-      if (!validarPeriodo()) return;
-
-      const payload = {
-        tipo: reportKey,
-        filtros: {
-          eventoId: filtros.eventoId || null,
-          turmaId: filtros.turmaId || null,
-          instrutorId: filtros.instrutorId || null,
-          unidadeId: filtros.unidadeId || null,
-          q: filtros.busca || null,
-          periodo:
-            filtros.periodo[0] && filtros.periodo[1]
-              ? [startOfDayLocalISO(filtros.periodo[0]), endOfDayLocalISO(filtros.periodo[1])]
-              : null,
-        },
-        formato: tipo,
-      };
-
-      try {
-        setExportando(true);
-        setLive(`Exportando ${tipo === "pdf" ? "PDF" : "Excel"}…`);
-
-        const { blob, filename } = await apiPostFile("relatorios/exportar", payload, { on403: "silent" });
-
-        const stamp = new Date();
-        const stampStr = `${stamp.getFullYear()}-${String(stamp.getMonth() + 1).padStart(2, "0")}-${String(stamp.getDate()).padStart(2, "0")}`;
-        const ext = tipo === "pdf" ? "pdf" : "xlsx";
-        const fallbackName = `relatorio_${reportKey}_${stampStr}.${ext}`;
-
-        saveAs(blob, filename || fallbackName);
-        setLive("Exportação concluída.");
-      } catch (e) {
-        console.error(e);
-        toast.error("Falha no download.");
-        setLive("Falha ao exportar.");
-      } finally {
-        setExportando(false);
-      }
-    },
-    [dados.length, filtros, reportKey, setLive, validarPeriodo]
-  );
-
-  /* -------------------- Filtros & UI helpers -------------------- */
-  const limparFiltros = useCallback(() => {
-    setFiltros({
-      eventoId: "",
-      turmaId: "",
-      instrutorId:
-        (perfilRaw.includes("instrutor") || perfilRaw.includes("administrador")) && usuarioId ? String(usuarioId) : "",
-      unidadeId: "",
-      periodo: ["", ""],
-      busca: "",
-    });
-    setBuscaValue("");
-    setDados([]);
-    setPage(1);
-    setLive("Filtros limpos.");
-    setTimeout(() => searchRef.current?.focus?.(), 50);
-  }, [perfilRaw, setLive, usuarioId]);
-
-  // limpar dados ao trocar o tipo de relatório (evita confusão visual)
-  useEffect(() => {
-    setDados([]);
-    setPage(1);
-  }, [reportKey]);
-
-  // filtro de busca client-side adicional (UX)
-  const dadosFiltrados = useMemo(() => {
-    if (!buscaDebounced) return dados;
-    const q = buscaDebounced;
-    return dados.filter((row) => Object.values(row || {}).some((v) => String(v ?? "").toLowerCase().includes(q)));
-  }, [dados, buscaDebounced]);
-
-  // paginação
-  const totalPages = Math.max(1, Math.ceil(dadosFiltrados.length / pageSize));
-  const pageSafe = Math.min(Math.max(1, page), totalPages);
-  const pageSlice = useMemo(() => {
-    const start = (pageSafe - 1) * pageSize;
-    return dadosFiltrados.slice(start, start + pageSize);
-  }, [dadosFiltrados, pageSafe, pageSize]);
-
-  // KPIs contextuais
-  const kpis = useMemo(() => {
-    const base = { a: 0, b: 0, c: 0, aLabel: "", bLabel: "", cLabel: "" };
-    if (!dadosFiltrados.length) return { ...base, aLabel: "Registros", bLabel: "Página", cLabel: "Páginas", a: 0, b: pageSafe, c: totalPages };
-
-    switch (reportKey) {
-      case "participacao_usuario": {
-        const cursosUnicos = new Set(dadosFiltrados.map((r) => r.curso_id || r.cursoId || r.curso));
-        const usuariosUnicos = new Set(dadosFiltrados.map((r) => r.usuario_id || r.usuarioId || r.usuario));
-        const certificados = dadosFiltrados.filter((r) => r.certificado_gerado || r.certificado === true).length;
-        return { a: usuariosUnicos.size, b: cursosUnicos.size, c: certificados, aLabel: "Usuários", bLabel: "Cursos", cLabel: "Certificados" };
-      }
-      case "ranking_presencas":
-      case "ranking_faltas": {
-        const usuarios = new Set(dadosFiltrados.map((r) => r.usuario_id || r.usuarioId || r.usuario));
-        return { a: usuarios.size, b: dadosFiltrados.length, c: totalPages, aLabel: "Usuários", bLabel: "Entradas", cLabel: "Páginas" };
-      }
-      case "notas_instrutores": {
-        const instrutores = new Set(dadosFiltrados.map((r) => r.instrutor_id || r.instrutorId || r.instrutor));
-        const vals = dadosFiltrados.map((r) => Number(r.nota_media || r.nota || NaN)).filter((n) => Number.isFinite(n));
-        const media = vals.length ? Number((vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1)) : 0.0;
-        return { a: instrutores.size, b: media, c: dadosFiltrados.length, aLabel: "Instrutores", bLabel: "Média", cLabel: "Avaliações" };
-      }
-      default:
-        return { a: dadosFiltrados.length, b: pageSafe, c: totalPages, aLabel: "Registros", bLabel: "Página", cLabel: "Páginas" };
-    }
-  }, [dadosFiltrados, pageSafe, reportKey, totalPages]);
-
-  const reportHint = useMemo(() => REPORTS.find((r) => r.key === reportKey)?.hint || "", [reportKey]);
-
-  const vazio = !carregando && !erroCarregamento && dadosFiltrados.length === 0;
-
   return (
-    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
-      <HeaderHero onRefresh={carregarOpcao} carregando={carregando || exportando} />
+    <div className="flex min-h-dvh flex-col bg-slate-50 text-slate-950 dark:bg-zinc-950 dark:text-white">
+      <Hero
+        kpis={kpis}
+        carregando={carregando}
+        exportando={exportando}
+        onRefresh={buscarRelatorio}
+      />
 
-      {/* barra de progresso fina no topo */}
-      {(carregando || exportando) && (
+      <p ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" />
+
+      {(carregando || exportando) ? (
         <div
-          className="sticky top-0 left-0 w-full h-1 bg-purple-200 z-40"
+          className="sticky top-0 z-50 h-1 w-full bg-violet-100 dark:bg-violet-950"
           role="progressbar"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-label="Processando"
-          aria-busy="true"
+          aria-label="Processando relatório"
         >
-          <div className={cx("h-full bg-pink-600 w-1/3", reduceMotion ? "" : "animate-pulse")} />
+          <div
+            className={cx(
+              "h-full w-1/3 bg-violet-700",
+              reduceMotion ? "" : "animate-pulse"
+            )}
+          />
         </div>
-      )}
+      ) : null}
 
-      <main id="conteudo" role="main" className="flex-1 px-3 sm:px-4 py-6 max-w-7xl mx-auto w-full">
-        {/* Live region acessível */}
-        <p ref={liveRef} className="sr-only" aria-live="polite" role="status" />
+      <main
+        id="conteudo"
+        className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-5 px-4 py-6 sm:px-6"
+      >
+        <RelatorioTabs
+          value={relatorioKey}
+          onChange={(key) => {
+            setRelatorioKey(key);
+            setBusca("");
+            setErro("");
+            setData(null);
+            setMeta({});
+          }}
+          counts={counts}
+        />
 
         <AnimatePresence mode="wait">
-          {erroCarregamento ? (
-            <motion.div key="erro" {...motionWrap} className="space-y-3">
-              <ErroCarregamento mensagem="Falha ao carregar os filtros disponíveis." />
-              <div className="text-center">
-                <button
-                  onClick={carregarOpcao}
-                  className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold border border-pink-600 text-pink-700 hover:bg-pink-50 dark:text-pink-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-pink-600 transition"
-                >
-                  <RefreshCcw className="w-4 h-4" />
-                  Tentar novamente
-                </button>
-              </div>
-            </motion.div>
-          ) : (
-            <motion.div key="ok" {...motionWrap} className="space-y-5">
-              {/* Chips de relatórios (scroll horizontal no mobile) */}
-              <section
-                aria-label="Tipo de relatório"
-                className="-mx-3 px-3 overflow-x-auto scrollbar-thin scrollbar-thumb-purple-300 dark:scrollbar-thumb-purple-700"
-              >
-                <div className="flex gap-2 sm:gap-3 min-w-fit py-1">
-                  {REPORTS.map((r) => {
-                    const active = reportKey === r.key;
-                    return (
-                      <button
-                        key={r.key}
-                        role="tab"
-                        aria-selected={active}
-                        onClick={() => {
-                          setReportKey(r.key);
-                          setPage(1);
-                          setLive(`Relatório: ${r.label}`);
-                        }}
-                        className={cx(
-                          "px-3 py-2 rounded-full text-sm font-extrabold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500",
-                          active
-                            ? "bg-pink-600 text-white"
-                            : "bg-white text-gray-900 hover:bg-gray-100 dark:bg-zinc-800 dark:text-white"
-                        )}
-                      >
-                        {r.label}
-                      </button>
-                    );
-                  })}
-                </div>
+          <motion.div key={relatorioKey} {...motionProps} className="space-y-5">
+            <Filtros
+              filtros={filtros}
+              setFiltros={setFiltros}
+              busca={busca}
+              setBusca={setBusca}
+              onBuscar={buscarRelatorio}
+              onLimpar={limparFiltros}
+              carregando={carregando}
+              exportando={exportando}
+              relatorioAtual={relatorioAtual}
+              onExportar={exportarAtual}
+            />
 
-                {!!reportHint && (
-                  <p className="mt-2 text-xs sm:text-sm text-gray-600 dark:text-gray-300 flex items-start gap-2">
-                    <Info className="w-4 h-4 mt-0.5" aria-hidden="true" />
-                    {reportHint}
-                  </p>
-                )}
-              </section>
-
-              {/* Filtros */}
-              <section aria-labelledby="filtros-heading">
-                <h2 id="filtros-heading" className="sr-only">
-                  Filtros do relatório
-                </h2>
-
-                <div className="rounded-3xl border border-slate-200 dark:border-zinc-700 bg-white/80 dark:bg-zinc-900/35 backdrop-blur shadow-sm p-4 sm:p-5">
-                  <div className="flex items-center gap-2 mb-3">
-                    <SlidersHorizontal className="w-4 h-4" aria-hidden="true" />
-                    <p className="text-sm font-extrabold">Filtros</p>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                    <Select
-                      label="Evento"
-                      options={opcao.eventos}
-                      value={filtros.eventoId}
-                      onChange={(v) => setFiltros((f) => ({ ...f, eventoId: v }))}
-                      placeholder="Selecione..."
-                    />
-                    <Select
-                      label="Turma"
-                      options={opcao.turmas}
-                      value={filtros.turmaId}
-                      onChange={(v) => setFiltros((f) => ({ ...f, turmaId: v }))}
-                      placeholder="—"
-                    />
-                    <Select
-                      label="Instrutor"
-                      options={opcao.instrutor}
-                      value={filtros.instrutorId}
-                      onChange={(v) => setFiltros((f) => ({ ...f, instrutorId: v }))}
-                      placeholder="Selecione..."
-                    />
-                    <Select
-                      label="Unidade"
-                      options={opcao.unidades}
-                      value={filtros.unidadeId}
-                      onChange={(v) => setFiltros((f) => ({ ...f, unidadeId: v }))}
-                      placeholder="Selecione..."
-                    />
-                    <DateRangePicker
-                      label="Período"
-                      value={filtros.periodo}
-                      onChange={(r) => setFiltros((f) => ({ ...f, periodo: r }))}
-                    />
-                  </div>
-
-                  {/* Busca livre */}
-                  <div className="mt-4">
-                    <label htmlFor="busca" className="sr-only">
-                      Buscar nos resultados
-                    </label>
-
-                    <div className="relative">
-                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-300" aria-hidden="true" />
-                      <input
-                        id="busca"
-                        ref={searchRef}
-                        type="search"
-                        inputMode="search"
-                        value={buscaValue}
-                        onChange={(e) => setBuscaValue(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            buscar();
-                          }
-                        }}
-                        placeholder="Buscar por nome, curso, e-mail…"
-                        className="pl-10 pr-10 py-2.5 w-full rounded-2xl border border-gray-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-pink-500"
-                        aria-label="Buscar nos resultados"
-                      />
-                      {!!buscaValue && (
-                        <button
-                          type="button"
-                          onClick={() => setBuscaValue("")}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-pink-500"
-                          aria-label="Limpar busca"
-                          title="Limpar"
-                        >
-                          <X className="w-4 h-4" aria-hidden="true" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Ações */}
-                  <div className="flex flex-wrap gap-2 sm:gap-3 mt-4 items-center">
-                    <button
-                      onClick={buscar}
-                      disabled={carregando}
-                      aria-busy={carregando ? "true" : "false"}
-                      className={cx(
-                        "inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-extrabold text-white bg-pink-600 hover:bg-pink-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-pink-600 transition",
-                        carregando ? "opacity-80 cursor-not-allowed" : ""
-                      )}
-                      aria-label="Buscar relatórios"
-                      title="Buscar"
-                    >
-                      {carregando ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Rows3 className="w-4 h-4" aria-hidden="true" />}
-                      {carregando ? "Buscando..." : "Buscar"}
-                    </button>
-
-                    <button
-                      onClick={() => exportar("pdf")}
-                      disabled={!dados.length || exportando}
-                      className={cx(
-                        "inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-extrabold border border-pink-600 text-pink-700 hover:bg-pink-50 dark:text-pink-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-pink-600 transition",
-                        !dados.length || exportando ? "opacity-60 cursor-not-allowed" : ""
-                      )}
-                      aria-label="Exportar relatório em PDF"
-                      title="Exportar PDF"
-                    >
-                      <FileDown className="w-4 h-4" aria-hidden="true" />
-                      PDF
-                    </button>
-
-                    <button
-                      onClick={() => exportar("excel")}
-                      disabled={!dados.length || exportando}
-                      className={cx(
-                        "inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-extrabold border border-pink-600 text-pink-700 hover:bg-pink-50 dark:text-pink-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-pink-600 transition",
-                        !dados.length || exportando ? "opacity-60 cursor-not-allowed" : ""
-                      )}
-                      aria-label="Exportar relatório em Excel"
-                      title="Exportar Excel"
-                    >
-                      <FileSpreadsheet className="w-4 h-4" aria-hidden="true" />
-                      Excel
-                    </button>
-
-                    <button
-                      onClick={limparFiltros}
-                      className="ml-auto inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold bg-gray-200 hover:bg-gray-300 text-gray-900 dark:bg-zinc-700 dark:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-gray-400 transition"
-                      aria-label="Limpar filtros"
-                      title="Limpar filtros"
-                    >
-                      <Trash2 className="w-4 h-4" aria-hidden="true" />
-                      Limpar
-                    </button>
-                  </div>
-                </div>
-              </section>
-
-              {/* KPIs rápidos */}
-              <section className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <MiniStat label={kpis.aLabel || "Registros"} value={kpis.a} icon={Layers} tone="neutral" />
-                <MiniStat label={kpis.bLabel || "Página"} value={kpis.b} icon={Rows3} tone="info" />
-                <MiniStat label={kpis.cLabel || "Páginas"} value={kpis.c} icon={Layers} tone="ok" />
-              </section>
-
-              {/* Resultado */}
-              <section aria-labelledby="resultado-heading">
-                <h2 id="resultado-heading" className="sr-only">
-                  Resultados do relatório
-                </h2>
-
-                <div className="rounded-3xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 shadow-sm p-3 sm:p-4">
-                  {carregando ? (
-                    <CarregandoSkeleton height="260px" />
-                  ) : (
-                    <>
-                      {/* paginação header */}
-                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-2">
-                        <p className="text-sm text-gray-600 dark:text-gray-300" aria-live="polite">
-                          {dadosFiltrados.length} registro{dadosFiltrados.length !== 1 ? "s" : ""}{" "}
-                          {dadosFiltrados.length ? (
-                            <>
-                              • mostrando {(pageSafe - 1) * pageSize + 1}–{Math.min(pageSafe * pageSize, dadosFiltrados.length)}
-                            </>
-                          ) : null}
-                        </p>
-
-                        <div className="flex items-center gap-2">
-                          <label htmlFor="pageSize" className="text-xs">
-                            por página:
-                          </label>
-
-                          <select
-                            id="pageSize"
-                            value={pageSize}
-                            onChange={(e) => {
-                              setPageSize(Number(e.target.value) || 20);
-                              setPage(1);
-                            }}
-                            className="border p-1.5 rounded-xl dark:bg-zinc-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-pink-500 text-sm"
-                          >
-                            {[10, 20, 50, 100].map((n) => (
-                              <option key={n} value={n}>
-                                {n}
-                              </option>
-                            ))}
-                          </select>
-
-                          <div className="flex items-center gap-1 ml-2">
-                            <button
-                              type="button"
-                              onClick={() => setPage((p) => Math.max(1, p - 1))}
-                              disabled={pageSafe <= 1}
-                              className="px-2.5 py-1.5 rounded-xl border text-sm dark:border-zinc-700 disabled:opacity-60"
-                              aria-label="Página anterior"
-                              title="Anterior"
-                            >
-                              ‹
-                            </button>
-                            <span className="text-sm tabular-nums">
-                              {pageSafe}/{totalPages}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                              disabled={pageSafe >= totalPages}
-                              className="px-2.5 py-1.5 rounded-xl border text-sm dark:border-zinc-700 disabled:opacity-60"
-                              aria-label="Próxima página"
-                              title="Próxima"
-                            >
-                              ›
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      {dadosFiltrados.length ? (
-                        <RelatoriosTabela
-                          data={pageSlice}
-                          hiddenKeys={[
-                            "evento_id",
-                            "eventoId",
-                            "turma_id",
-                            "turmaId",
-                            "usuario_id",
-                            "usuarioId",
-                            "instrutor_id",
-                            "instrutorId",
-                            "unidade_id",
-                            "unidadeId",
-                          ]}
-                        />
-                      ) : (
-                        <div className="py-10">
-                          <div className="mb-3 text-center text-sm text-gray-600 dark:text-gray-300">
-                            {vazio ? "Nenhum resultado para os filtros atuais." : "Sem dados."}
-                          </div>
-                          <NadaEncontrado mensagem="Ajuste os filtros e clique em Buscar." />
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              </section>
-            </motion.div>
-          )}
+            <Resultado
+              relatorioKey={relatorioKey}
+              relatorio={relatorioAtual}
+              data={data}
+              rows={rows}
+              rowsFiltradas={rowsFiltradas}
+              meta={meta}
+              carregando={carregando}
+              erro={erro}
+              onRetry={buscarRelatorio}
+              busca={busca}
+            />
+          </motion.div>
         </AnimatePresence>
       </main>
 

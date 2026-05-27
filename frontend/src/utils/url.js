@@ -1,72 +1,141 @@
-// ✅ src/utils/url.js — PREMIUM++
+// 📁 src/utils/url.js — v2.0
+
 /**
- * Resolve URLs da API e de arquivos de forma segura e previsível.
+ * Utilitário oficial de URLs da API.
  *
- * Regras:
- * - URL absoluta (http/https) → retorna como está
- * - Caminho relativo de API → usa base da API
- * - Caminho relativo de arquivo (/uploads/...) → usa origem do backend
- * - Evita duplicação de /api
- * - Normaliza barras sem quebrar protocolo
+ * Função:
+ * - Resolver base da API.
+ * - Resolver endpoints REST.
+ * - Normalizar paths relativos.
+ *
+ * Contrato oficial:
+ * - VITE_API_BASE_URL
+ *
+ * Não usar:
+ * - VITE_API_URL
+ * - aliases de env
+ * - fallbacks legados
+ * - resolução de arquivos/assets aqui
+ *
+ * Para arquivos/assets, usar:
+ * - src/utils/assetUrl.js
  */
 
-function isBrowser() {
+function canUseWindow() {
   return typeof window !== "undefined";
 }
 
-export function isAbsoluteUrl(url) {
-  return typeof url === "string" && /^https?:\/\//i.test(url.trim());
+function normalizeInput(value = "") {
+  return String(value || "").trim().replace(/\\/g, "/");
+}
+
+export function isAbsoluteUrl(value) {
+  return /^https?:\/\//i.test(normalizeInput(value));
+}
+
+export function hasDangerousUrlScheme(value = "") {
+  return /^(javascript|data|vbscript|file|blob):/i.test(normalizeInput(value));
 }
 
 function stripTrailingSlashes(value = "") {
-  return String(value || "").replace(/\/+$/, "");
-}
-
-function normalizeRelativePath(value = "") {
-  return String(value || "")
-    .trim()
-    .replace(/^\.?\/*/, "/")
-    .replace(/\/{2,}/g, "/");
+  return normalizeInput(value).replace(/\/+$/, "");
 }
 
 function stripApiSuffix(value = "") {
   return stripTrailingSlashes(value).replace(/\/api$/i, "");
 }
 
+function normalizeRelativePath(value = "") {
+  const clean = normalizeInput(value);
+
+  if (!clean) {
+    return "";
+  }
+
+  return clean
+    .replace(/^\.?\/*/, "/")
+    .replace(/\/{2,}/g, "/");
+}
+
 function ensureApiPrefix(path = "") {
-  const p = normalizeRelativePath(path);
-  return /^\/api(\/|$)/i.test(p) ? p : `/api${p}`;
+  const normalized = normalizeRelativePath(path);
+
+  if (!normalized) {
+    return "/api";
+  }
+
+  return /^\/api(\/|$)/i.test(normalized) ? normalized : `/api${normalized}`;
+}
+
+function normalizeAbsoluteUrl(value = "") {
+  const clean = normalizeInput(value);
+
+  if (!clean || hasDangerousUrlScheme(clean)) {
+    return "";
+  }
+
+  if (!isAbsoluteUrl(clean)) {
+    return "";
+  }
+
+  try {
+    const url = new URL(clean);
+
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function joinUrl(base, path) {
+  const safeBase = stripTrailingSlashes(base);
+  const safePath = normalizeRelativePath(path);
+
+  if (!safeBase) {
+    return safePath;
+  }
+
+  return `${safeBase}${safePath}`.replace(/([^:]\/)\/+/g, "$1");
 }
 
 /**
- * Origem do backend SEM /api
- * Ex.:
- * - VITE_API_BASE_URL=https://api.site.com/api → https://api.site.com
- * - fallback browser → window.location.origin
+ * Origem do backend sem /api.
+ *
+ * Exemplo:
+ * VITE_API_BASE_URL=https://api.site.com/api
+ * retorna:
+ * https://api.site.com
  */
 export function getBackendOrigin() {
-  const envBase = stripTrailingSlashes(import.meta.env?.VITE_API_BASE_URL || "");
-  if (envBase) return stripApiSuffix(envBase);
+  const envBase = normalizeAbsoluteUrl(import.meta.env?.VITE_API_BASE_URL || "");
 
-  if (isBrowser()) return stripTrailingSlashes(window.location.origin);
+  if (envBase) {
+    return stripApiSuffix(envBase);
+  }
+
+  if (canUseWindow()) {
+    return stripTrailingSlashes(window.location.origin);
+  }
 
   return "";
 }
 
 /**
- * Base da API COM /api
- * Ex.:
- * - https://api.site.com/api
- * - http://localhost:3000/api
- * - /api (SSR fallback simples)
+ * Base da API com /api.
+ *
+ * Exemplo:
+ * VITE_API_BASE_URL=https://api.site.com
+ * retorna:
+ * https://api.site.com/api
  */
 export function getApiBaseUrl() {
-  const envBase = stripTrailingSlashes(import.meta.env?.VITE_API_BASE_URL || "");
+  const envBase = normalizeAbsoluteUrl(import.meta.env?.VITE_API_BASE_URL || "");
+
   if (envBase) {
     return /\/api$/i.test(envBase) ? envBase : `${envBase}/api`;
   }
 
-  if (isBrowser()) {
+  if (canUseWindow()) {
     return `${stripTrailingSlashes(window.location.origin)}/api`;
   }
 
@@ -74,66 +143,44 @@ export function getApiBaseUrl() {
 }
 
 /**
- * Resolve um caminho de arquivo/endereço retornado pelo backend.
+ * Resolve endpoint REST da API.
  *
  * Exemplos:
- * - "/uploads/eventos/a.png" → backend origin + path
- * - "uploads/eventos/a.png"  → backend origin + /uploads...
- * - "/api/certificados/1/pdf" → api base corretamente sem duplicar /api
+ * - "usuario"      -> https://.../api/usuario
+ * - "/usuario"     -> https://.../api/usuario
+ * - "/api/usuario" -> https://.../api/usuario
  */
-export function resolveApiFile(url) {
-  if (!url || typeof url !== "string") return "";
+export function resolveApiUrl(value) {
+  const clean = normalizeInput(value);
 
-  const clean = url.trim();
-  if (!clean) return "";
-
-  if (isAbsoluteUrl(clean)) return clean;
-
-  const normalized = normalizeRelativePath(clean);
-
-  // Se já vier como rota da API, usa base da API sem duplicar /api
-  if (/^\/api(\/|$)/i.test(normalized)) {
-    const apiBase = getApiBaseUrl();
-    const pathWithoutApiDup = normalized.replace(/^\/api/i, "");
-    return `${stripTrailingSlashes(apiBase)}${pathWithoutApiDup}`.replace(/([^:]\/)\/+/g, "$1");
+  if (!clean || hasDangerousUrlScheme(clean)) {
+    return "";
   }
 
-  // Arquivos e caminhos relativos comuns → origem do backend
-  const backendOrigin = getBackendOrigin();
-  const full = `${stripTrailingSlashes(backendOrigin)}${normalized}`;
-
-  return full.replace(/([^:]\/)\/+/g, "$1");
-}
-
-/**
- * Resolve um endpoint REST da API.
- *
- * Exemplos:
- * - "usuarios" -> https://.../api/usuarios
- * - "/usuarios" -> https://.../api/usuarios
- * - "/api/usuarios" -> https://.../api/usuarios
- */
-export function resolveApiUrl(url) {
-  if (!url || typeof url !== "string") return "";
-
-  const clean = url.trim();
-  if (!clean) return "";
-
-  if (isAbsoluteUrl(clean)) return clean;
+  if (isAbsoluteUrl(clean)) {
+    return normalizeAbsoluteUrl(clean);
+  }
 
   const apiBase = getApiBaseUrl();
   const path = ensureApiPrefix(clean);
 
-  const full = `${stripTrailingSlashes(stripApiSuffix(apiBase))}${path}`;
-  return full.replace(/([^:]\/)\/+/g, "$1");
+  return joinUrl(stripApiSuffix(apiBase), path);
 }
 
 /**
- * Normaliza somente paths relativos.
- * Não deve ser usada para URL absoluta.
+ * Normaliza path relativo.
+ * Não resolve origem.
  */
-export function normalizeUrlPath(url) {
-  if (typeof url !== "string") return "";
-  if (isAbsoluteUrl(url)) return url.trim();
-  return normalizeRelativePath(url);
+export function normalizeUrlPath(value) {
+  const clean = normalizeInput(value);
+
+  if (!clean || hasDangerousUrlScheme(clean)) {
+    return "";
+  }
+
+  if (isAbsoluteUrl(clean)) {
+    return normalizeAbsoluteUrl(clean);
+  }
+
+  return normalizeRelativePath(clean);
 }

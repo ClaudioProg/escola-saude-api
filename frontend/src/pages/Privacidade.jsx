@@ -1,84 +1,132 @@
-// ✅ src/pages/Privacidade.jsx — premium (kit base Escola) + a11y + motion safe + chips + “Sumário” + cards com ícones
-import { useMemo } from "react";
+// 📁 src/pages/Privacidade.jsx
+// Atualizado em: 15/05/2026
+//
+// Plataforma Escola da Saúde — v2.0
+//
+// Página:
+// - Política de Privacidade.
+//
+// Função:
+// - Informar usuários sobre coleta, uso, armazenamento, segurança,
+//   compartilhamento, direitos, retenção e contato institucional.
+//
+// Diretrizes v2.0:
+// - sem Footer antigo;
+// - sem useEscolaTheme;
+// - sem ThemeTogglePills;
+// - sem controle local de tema;
+// - tema global via escola_theme/boot-theme;
+// - dark mode via classe global;
+// - UX/UI premium real;
+// - mobile-first;
+// - acessível;
+// - motion safe.
+
+import { useEffect, useMemo } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
-  ShieldCheck,
-  LockKeyhole,
+  ArrowLeft,
   Ban,
+  ChevronRight,
+  ClipboardList,
+  Clock,
   Database,
   FileText,
-  ArrowLeft,
-  Sparkles,
-  ClipboardList,
-  UserRound,
-  Share2,
-  Clock,
+  LockKeyhole,
   Mail,
-  ChevronRight,
+  Share2,
+  ShieldCheck,
+  Sparkles,
+  UserRound,
 } from "lucide-react";
-import Footer from "../components/Footer";
 
-import useEscolaTheme from "../hooks/useEscolaTheme";
-import ThemeTogglePills from "../components/ThemeTogglePills";
+import Footer from "../components/layout/Footer";
 
-/* ───────── helpers ───────── */
-const cx = (...c) => c.filter(Boolean).join(" ");
+/* =========================================================================
+   Helpers
+=========================================================================== */
+
+function cx(...classes) {
+  return classes.filter(Boolean).join(" ");
+}
+
+/* =========================================================================
+   UI local
+=========================================================================== */
 
 function Badge({ icon: Icon, children, tone = "glass" }) {
   const tones = {
-    glass: "bg-white/15 text-white",
-    ok: "bg-emerald-500/15 text-emerald-50",
+    glass: "border-white/15 bg-white/10 text-white",
+    ok: "border-emerald-200/30 bg-emerald-300/15 text-emerald-50",
   };
+
   return (
-    <span className={cx("inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold", tones[tone])}>
-      {Icon ? <Icon className="w-4 h-4" aria-hidden="true" /> : null}
+    <span
+      className={cx(
+        "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold backdrop-blur",
+        tones[tone] || tones.glass
+      )}
+    >
+      {Icon ? <Icon className="h-4 w-4" aria-hidden="true" /> : null}
       {children}
     </span>
   );
 }
 
-/* ───────── HeaderHero premium ───────── */
-function HeaderHero({ theme, setTheme, isDark }) {
+function HeaderHero() {
   return (
-    <header className="relative overflow-hidden" role="banner" aria-label="Cabeçalho da Política de Privacidade">
-      <div className="absolute inset-0 bg-gradient-to-br from-emerald-900 via-teal-800 to-cyan-700" />
-      {isDark && <div className="absolute inset-0 bg-black/35" />}
+    <header
+      className="relative isolate overflow-hidden text-white"
+      role="banner"
+      aria-label="Cabeçalho da Política de Privacidade"
+    >
+      <div
+        className="absolute inset-0 bg-gradient-to-br from-slate-950 via-emerald-800 to-cyan-700"
+        aria-hidden="true"
+      />
+      <div
+        className="absolute -left-28 -top-28 h-96 w-96 rounded-full bg-emerald-300/20 blur-3xl"
+        aria-hidden="true"
+      />
+      <div
+        className="absolute -bottom-28 -right-28 h-96 w-96 rounded-full bg-cyan-300/20 blur-3xl"
+        aria-hidden="true"
+      />
+      <div
+        className="absolute inset-0 opacity-[0.10] bg-[radial-gradient(circle_at_1px_1px,rgba(255,255,255,0.65)_1px,transparent_0)] [background-size:18px_18px]"
+        aria-hidden="true"
+      />
 
-      {/* blobs */}
-      <div className="absolute -top-24 -left-24 h-72 w-72 rounded-full bg-white/20 blur-3xl" aria-hidden="true" />
-      <div className="absolute -bottom-28 -right-28 h-80 w-80 rounded-full bg-white/15 blur-3xl" aria-hidden="true" />
-
-      {/* skip link */}
       <a
         href="#conteudo"
-        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 rounded-xl bg-white/20 px-4 py-2 text-sm font-semibold text-white shadow"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-xl focus:bg-white/20 focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-white focus:shadow"
       >
         Pular para o conteúdo
       </a>
 
-      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-12">
-        {/* toggle */}
-        <div className="lg:absolute lg:right-4 lg:top-6 flex justify-end">
-          <ThemeTogglePills variant="glass" />
-        </div>
-
-        {/* conteúdo central */}
-        <div className="flex flex-col items-center text-center gap-3">
-          <div className="inline-flex items-center gap-2 text-white/90 text-xs font-semibold">
+      <div className="relative z-10 mx-auto max-w-7xl px-4 py-9 sm:px-6 md:py-12">
+        <div className="mx-auto flex max-w-4xl flex-col items-center text-center">
+          <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-bold text-white/90 backdrop-blur">
             <Sparkles className="h-4 w-4" aria-hidden="true" />
-            <span>Portal oficial • transparência e proteção de dados</span>
+            Portal oficial • transparência e proteção de dados
           </div>
 
-          <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight text-white">
-            Política de Privacidade
-          </h1>
+          <div className="mt-4 inline-flex items-center gap-3">
+            <span className="grid h-12 w-12 place-items-center rounded-2xl bg-white/15 ring-1 ring-white/20 backdrop-blur">
+              <ShieldCheck className="h-7 w-7 text-white" aria-hidden="true" />
+            </span>
 
-          <p className="text-sm sm:text-base text-white/90 max-w-2xl">
-            Como cuidamos dos seus dados e garantimos segurança, transparência e responsabilidade.
+            <h1 className="text-3xl font-black tracking-tight sm:text-4xl">
+              Política de Privacidade
+            </h1>
+          </div>
+
+          <p className="mt-4 max-w-2xl text-sm leading-relaxed text-white/88 sm:text-base">
+            Como cuidamos dos seus dados e garantimos segurança, transparência e responsabilidade no uso da Plataforma Escola da Saúde.
           </p>
 
-          <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
-            <Badge icon={FileText}>Atualizado em 10/2025</Badge>
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+            <Badge icon={FileText}>Atualizado em 15/05/2026</Badge>
             <Badge icon={ShieldCheck} tone="ok">
               LGPD • boas práticas
             </Badge>
@@ -86,90 +134,98 @@ function HeaderHero({ theme, setTheme, isDark }) {
         </div>
       </div>
 
-      <div className="absolute bottom-0 left-0 right-0 h-px bg-white/25" aria-hidden="true" />
+      <div
+        className="absolute bottom-0 left-0 right-0 h-px bg-white/25"
+        aria-hidden="true"
+      />
     </header>
   );
 }
 
-/* ───────── MiniStat ───────── */
-function MiniStat({ icon: Icon, title, desc, isDark }) {
+function MiniStat({ icon: Icon, title, desc }) {
   return (
-    <div
-      className={cx(
-        "rounded-2xl border p-5 transition-all",
-        isDark ? "bg-zinc-900/50 border-white/10 hover:bg-white/5" : "bg-white border-zinc-200 shadow-sm hover:shadow-md"
-      )}
-    >
+    <div className="rounded-3xl border border-zinc-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900/65">
       <div className="flex items-start gap-3">
-        <div
-          className={cx(
-            "shrink-0 rounded-xl p-2",
-            isDark ? "bg-emerald-900/30 text-emerald-300" : "bg-emerald-50 text-emerald-700"
-          )}
-        >
-          <Icon className="w-5 h-5" aria-hidden="true" />
+        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-emerald-100 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/25 dark:text-emerald-300">
+          <Icon className="h-5 w-5" aria-hidden="true" />
         </div>
-        <div>
-          <p className="text-sm font-extrabold">{title}</p>
-          <p className={cx("text-sm mt-0.5", isDark ? "text-zinc-300" : "text-zinc-600")}>{desc}</p>
+
+        <div className="min-w-0">
+          <p className="text-sm font-extrabold leading-5 text-slate-950 dark:text-white">
+            {title}
+          </p>
+          <p className="mt-1 text-sm leading-relaxed text-slate-600 dark:text-zinc-300">
+            {desc}
+          </p>
         </div>
       </div>
     </div>
   );
 }
 
-/* ───────── Link do sumário ───────── */
-function TocLink({ href, label, isDark }) {
+function TocLink({ href, label }) {
   return (
     <a
       href={href}
-      className={cx(
-        "group flex items-center justify-between rounded-2xl border px-4 py-3 text-sm font-semibold transition-all",
-        isDark
-          ? "border-white/10 bg-zinc-900/45 hover:bg-white/5"
-          : "border-zinc-200 bg-white hover:bg-slate-50 shadow-sm"
-      )}
+      className="group flex items-center justify-between rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm font-bold text-slate-900 shadow-sm transition hover:bg-slate-50 dark:border-zinc-800 dark:bg-zinc-900/65 dark:text-zinc-100 dark:hover:bg-white/5"
     >
-      <span className={cx("flex items-center gap-2", isDark ? "text-zinc-100" : "text-slate-900")}>
-        <ChevronRight className={cx("w-4 h-4 transition-transform group-hover:translate-x-0.5", isDark ? "text-emerald-300" : "text-emerald-700")} />
-        {label}
+      <span className="flex min-w-0 items-center gap-2">
+        <ChevronRight className="h-4 w-4 shrink-0 text-emerald-700 transition-transform group-hover:translate-x-0.5 dark:text-emerald-300" />
+        <span className="truncate">{label}</span>
       </span>
-      <span className={cx("text-xs", isDark ? "text-zinc-400" : "text-slate-500")}>Ver</span>
+
+      <span className="ml-3 text-xs font-semibold text-slate-500 dark:text-zinc-400">
+        Ver
+      </span>
     </a>
   );
 }
 
-/* ───────── Página ───────── */
+function SectionTitle({ icon: Icon, children }) {
+  return (
+    <div className="flex items-center gap-2">
+      <Icon className="h-4 w-4 text-emerald-700 dark:text-emerald-300" aria-hidden="true" />
+      <h3 className="text-lg font-black text-slate-950 dark:text-white">
+        {children}
+      </h3>
+    </div>
+  );
+}
+
+/* =========================================================================
+   Página
+=========================================================================== */
+
 export default function Privacidade() {
-  const { theme, setTheme, isDark } = useEscolaTheme();
   const reduceMotion = useReducedMotion();
+
+  useEffect(() => {
+    document.title = "Política de Privacidade | Escola da Saúde";
+  }, []);
 
   const anim = useMemo(
     () => ({
       initial: reduceMotion ? false : { opacity: 0, y: 10 },
       animate: reduceMotion ? {} : { opacity: 1, y: 0 },
-      transition: { duration: 0.35 },
+      transition: { duration: 0.3 },
     }),
     [reduceMotion]
   );
 
   return (
-    <main
-      className={cx(
-        "min-h-screen flex flex-col transition-colors",
-        isDark ? "bg-gradient-to-b from-zinc-950 to-zinc-900 text-zinc-100" : "bg-slate-50 text-slate-900"
-      )}
-    >
-      <HeaderHero theme={theme} setTheme={setTheme} isDark={isDark} />
+    <main className="flex min-h-screen flex-col bg-gradient-to-b from-slate-50 via-white to-white text-slate-950 transition-colors dark:from-zinc-950 dark:via-zinc-950 dark:to-black dark:text-zinc-100">
+      <HeaderHero />
 
       <section
         id="conteudo"
         role="main"
-        className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8"
+        className="mx-auto w-full max-w-5xl flex-1 px-4 py-8 sm:px-6 lg:px-8"
         aria-label="Conteúdo da Política de Privacidade"
       >
-        {/* Mini-stats */}
-        <section aria-labelledby="confianca" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-6">
+        <section
+          aria-labelledby="confianca"
+          className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3"
+        >
           <h2 id="confianca" className="sr-only">
             Compromissos de privacidade
           </h2>
@@ -177,191 +233,194 @@ export default function Privacidade() {
           <MiniStat
             icon={Database}
             title="Coleta mínima"
-            desc="Somente dados necessários para inscrições, presença e certificação."
-            isDark={isDark}
+            desc="Somente dados necessários para inscrições, presença, certificação e gestão institucional."
           />
+
           <MiniStat
             icon={LockKeyhole}
             title="Acesso restrito"
-            desc="Controles técnicos e administrativos para proteger seus dados."
-            isDark={isDark}
+            desc="Controles técnicos e administrativos para proteger dados pessoais e registros da plataforma."
           />
+
           <MiniStat
             icon={Ban}
             title="Sem venda de dados"
-            desc="Nunca comercializamos suas informações pessoais."
-            isDark={isDark}
+            desc="Não comercializamos informações pessoais nem utilizamos dados para fins comerciais."
           />
         </section>
 
-        {/* Sumário */}
         <motion.section {...anim} className="mb-6">
           <div
-            className={cx(
-              "rounded-3xl border p-5 md:p-6",
-              isDark ? "bg-zinc-900/55 border-white/10" : "bg-white border-zinc-200 shadow-sm"
-            )}
+            className="rounded-3xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/65 md:p-6"
             aria-label="Sumário"
           >
             <div className="flex items-start gap-3">
-              <div className={cx("rounded-2xl p-2", isDark ? "bg-emerald-900/30 text-emerald-300" : "bg-emerald-50 text-emerald-700")}>
-                <ClipboardList className="w-5 h-5" aria-hidden="true" />
+              <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-emerald-100 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/25 dark:text-emerald-300">
+                <ClipboardList className="h-5 w-5" aria-hidden="true" />
               </div>
-              <div className="flex-1">
-                <h2 className="text-base sm:text-lg font-extrabold">Sumário</h2>
-                <p className={cx("text-sm mt-0.5", isDark ? "text-zinc-300" : "text-zinc-600")}>
-                  Acesse rapidamente os tópicos principais.
+
+              <div className="min-w-0 flex-1">
+                <h2 className="text-base font-black text-slate-950 dark:text-white sm:text-lg">
+                  Sumário
+                </h2>
+
+                <p className="mt-1 text-sm leading-relaxed text-slate-600 dark:text-zinc-300">
+                  Acesse rapidamente os tópicos principais da política.
                 </p>
 
-                <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <TocLink href="#coleta" label="Coleta e uso de dados" isDark={isDark} />
-                  <TocLink href="#seguranca" label="Armazenamento e segurança" isDark={isDark} />
-                  <TocLink href="#compartilhamento" label="Compartilhamento" isDark={isDark} />
-                  <TocLink href="#direitos" label="Direitos do usuário" isDark={isDark} />
-                  <TocLink href="#retencao" label="Retenção e prazos" isDark={isDark} />
-                  <TocLink href="#contato" label="Contato" isDark={isDark} />
+                <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <TocLink href="#coleta" label="Coleta e uso de dados" />
+                  <TocLink href="#seguranca" label="Armazenamento e segurança" />
+                  <TocLink href="#compartilhamento" label="Compartilhamento" />
+                  <TocLink href="#direitos" label="Direitos do usuário" />
+                  <TocLink href="#retencao" label="Retenção e prazos" />
+                  <TocLink href="#contato" label="Contato" />
                 </div>
               </div>
             </div>
           </div>
         </motion.section>
 
-        {/* Conteúdo principal */}
         <motion.article
           {...anim}
-          className={cx(
-            "rounded-3xl border p-6 md:p-8",
-            isDark ? "bg-zinc-900/55 border-white/10" : "bg-white border-zinc-200 shadow-sm"
-          )}
+          className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/65 md:p-8"
           aria-labelledby="titulo-privacidade"
         >
           <div className="flex items-start gap-3">
-            <div className={cx("rounded-2xl p-2", isDark ? "bg-emerald-900/30 text-emerald-300" : "bg-emerald-50 text-emerald-700")}>
-              <ShieldCheck className="w-5 h-5" aria-hidden="true" />
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-emerald-100 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/25 dark:text-emerald-300">
+              <ShieldCheck className="h-5 w-5" aria-hidden="true" />
             </div>
 
-            <div className="flex-1">
+            <div className="min-w-0 flex-1">
               <h2
                 id="titulo-privacidade"
-                className="text-xl sm:text-2xl md:text-3xl font-extrabold text-emerald-800 dark:text-emerald-200"
+                className="text-xl font-black text-emerald-800 dark:text-emerald-200 sm:text-2xl md:text-3xl"
               >
                 Política de Privacidade
               </h2>
 
-              <p className="mt-2 text-sm sm:text-base text-zinc-700 dark:text-zinc-300">
-                A Escola Municipal de Saúde de Santos respeita sua privacidade e está comprometida em proteger seus dados pessoais,
-                observando a legislação aplicável e boas práticas de segurança.
+              <p className="mt-2 text-sm leading-relaxed text-zinc-700 dark:text-zinc-300 sm:text-base">
+                A Escola Municipal de Saúde Pública de Santos respeita sua privacidade e está comprometida em proteger seus dados pessoais, observando a legislação aplicável, a finalidade institucional da plataforma e boas práticas de segurança.
               </p>
             </div>
           </div>
 
-          {/* Seções */}
-          <section className="mt-6 space-y-6 text-zinc-800 dark:text-zinc-200">
-            <div id="coleta" className="scroll-mt-24">
-              <div className="flex items-center gap-2">
-                <UserRound className={cx("w-4 h-4", isDark ? "text-emerald-300" : "text-emerald-700")} aria-hidden="true" />
-                <h3 className="text-lg font-extrabold">Coleta e uso de dados</h3>
-              </div>
-              <ul className="list-disc pl-5 mt-2 space-y-1 text-sm sm:text-base">
-                <li>Coletamos apenas o necessário para o funcionamento da plataforma (ex.: nome, CPF, e-mail, unidade, presenças, certificados).</li>
-                <li>Usamos seus dados para gerenciar inscrições, presenças, emitir certificados e enviar comunicações institucionais.</li>
-                <li>Podemos utilizar registros técnicos (ex.: logs) para auditoria, segurança e melhoria contínua do serviço.</li>
+          <section className="mt-7 space-y-7 text-zinc-800 dark:text-zinc-200">
+            <div id="coleta" className="scroll-mt-28">
+              <SectionTitle icon={UserRound}>Coleta e uso de dados</SectionTitle>
+
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-relaxed sm:text-base">
+                <li>
+                  Coletamos apenas dados necessários ao funcionamento da plataforma, como nome, CPF, e-mail, celular, unidade, cargo, inscrições, presenças, avaliações e certificados.
+                </li>
+                <li>
+                  Os dados são utilizados para gerenciar inscrições, registrar presenças, emitir certificados, enviar comunicações institucionais, organizar ações educacionais e apoiar a gestão administrativa.
+                </li>
+                <li>
+                  Registros técnicos, como logs de acesso e ações administrativas, podem ser utilizados para segurança, auditoria, diagnóstico e melhoria contínua do serviço.
+                </li>
               </ul>
             </div>
 
-            <div id="seguranca" className="scroll-mt-24">
-              <div className="flex items-center gap-2">
-                <LockKeyhole className={cx("w-4 h-4", isDark ? "text-emerald-300" : "text-emerald-700")} aria-hidden="true" />
-                <h3 className="text-lg font-extrabold">Armazenamento e segurança</h3>
-              </div>
-              <ul className="list-disc pl-5 mt-2 space-y-1 text-sm sm:text-base">
-                <li>Dados armazenados em ambiente seguro, com acesso controlado e segregação por perfis.</li>
-                <li>Medidas técnicas e administrativas para prevenir acesso não autorizado, perda, vazamento ou alteração indevida.</li>
-                <li>Práticas de proteção incluem monitoramento, backups e controles de autenticação e autorização.</li>
+            <div id="seguranca" className="scroll-mt-28">
+              <SectionTitle icon={LockKeyhole}>Armazenamento e segurança</SectionTitle>
+
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-relaxed sm:text-base">
+                <li>
+                  Os dados são armazenados em ambiente controlado, com acesso restrito conforme perfil e necessidade institucional.
+                </li>
+                <li>
+                  São adotadas medidas técnicas e administrativas para reduzir riscos de acesso não autorizado, perda, vazamento, alteração indevida ou uso inadequado.
+                </li>
+                <li>
+                  A plataforma utiliza controles de autenticação, autorização, logs administrativos, rastreabilidade e boas práticas de proteção operacional.
+                </li>
               </ul>
             </div>
 
-            <div id="compartilhamento" className="scroll-mt-24">
-              <div className="flex items-center gap-2">
-                <Share2 className={cx("w-4 h-4", isDark ? "text-emerald-300" : "text-emerald-700")} aria-hidden="true" />
-                <h3 className="text-lg font-extrabold">Compartilhamento</h3>
-              </div>
-              <ul className="list-disc pl-5 mt-2 space-y-1 text-sm sm:text-base">
-                <li>Não vendemos dados nem compartilhamos para fins comerciais.</li>
-                <li>Poderemos fornecer dados quando exigido por lei, ordem judicial ou obrigação legal.</li>
-                <li>Quando aplicável, o compartilhamento ocorre pelo mínimo necessário e com finalidade legítima.</li>
+            <div id="compartilhamento" className="scroll-mt-28">
+              <SectionTitle icon={Share2}>Compartilhamento</SectionTitle>
+
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-relaxed sm:text-base">
+                <li>
+                  Não vendemos dados pessoais nem compartilhamos informações para fins comerciais.
+                </li>
+                <li>
+                  Dados podem ser compartilhados internamente com setores autorizados da Administração Pública, quando necessário para finalidade institucional legítima.
+                </li>
+                <li>
+                  Poderemos fornecer dados quando houver obrigação legal, solicitação administrativa legítima, ordem judicial ou necessidade de auditoria.
+                </li>
+                <li>
+                  Quando aplicável, o compartilhamento deve observar o mínimo necessário para a finalidade pretendida.
+                </li>
               </ul>
             </div>
 
-            <div id="direitos" className="scroll-mt-24">
-              <div className="flex items-center gap-2">
-                <ShieldCheck className={cx("w-4 h-4", isDark ? "text-emerald-300" : "text-emerald-700")} aria-hidden="true" />
-                <h3 className="text-lg font-extrabold">Direitos do usuário</h3>
-              </div>
-              <ul className="list-disc pl-5 mt-2 space-y-1 text-sm sm:text-base">
-                <li>Acessar, corrigir ou atualizar seus dados pessoais, quando aplicável.</li>
-                <li>Solicitar informações sobre tratamento dos dados, observadas as limitações legais.</li>
-                <li>Solicitar exclusão da conta (observadas obrigações legais de guarda e registros administrativos).</li>
+            <div id="direitos" className="scroll-mt-28">
+              <SectionTitle icon={ShieldCheck}>Direitos do usuário</SectionTitle>
+
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-relaxed sm:text-base">
+                <li>
+                  Acessar, corrigir ou atualizar seus dados pessoais, quando aplicável.
+                </li>
+                <li>
+                  Solicitar informações sobre o tratamento dos dados, observadas as limitações legais e administrativas.
+                </li>
+                <li>
+                  Solicitar exclusão ou revisão de dados, quando possível, considerando obrigações legais de guarda, histórico institucional, certificados, presenças e registros administrativos.
+                </li>
               </ul>
             </div>
 
-            <div id="retencao" className="scroll-mt-24">
-              <div className="flex items-center gap-2">
-                <Clock className={cx("w-4 h-4", isDark ? "text-emerald-300" : "text-emerald-700")} aria-hidden="true" />
-                <h3 className="text-lg font-extrabold">Retenção e prazos</h3>
-              </div>
-              <ul className="list-disc pl-5 mt-2 space-y-1 text-sm sm:text-base">
-                <li>Manteremos dados pelo tempo necessário ao cumprimento de finalidades institucionais e obrigações legais.</li>
-                <li>Registros ligados a certificados e presenças podem ser preservados para fins de auditoria e comprovação.</li>
+            <div id="retencao" className="scroll-mt-28">
+              <SectionTitle icon={Clock}>Retenção e prazos</SectionTitle>
+
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-relaxed sm:text-base">
+                <li>
+                  Dados serão mantidos pelo tempo necessário ao cumprimento das finalidades institucionais, educacionais, administrativas e legais.
+                </li>
+                <li>
+                  Registros ligados a certificados, presenças, avaliações, inscrições e auditoria podem ser preservados para fins de comprovação, validação pública, prestação de contas e rastreabilidade.
+                </li>
               </ul>
             </div>
 
-            <div id="contato" className="scroll-mt-24">
-              <div className="flex items-center gap-2">
-                <Mail className={cx("w-4 h-4", isDark ? "text-emerald-300" : "text-emerald-700")} aria-hidden="true" />
-                <h3 className="text-lg font-extrabold">Contato</h3>
-              </div>
-              <p className="mt-2 text-sm sm:text-base">
-                Em caso de dúvidas, entre em contato pelo e-mail{" "}
-                <strong>escoladasaude@santos.sp.gov.br</strong>.
+            <div id="contato" className="scroll-mt-28">
+              <SectionTitle icon={Mail}>Contato</SectionTitle>
+
+              <p className="mt-2 text-sm leading-relaxed sm:text-base">
+                Em caso de dúvidas sobre esta Política de Privacidade ou sobre o uso dos seus dados na Plataforma Escola da Saúde, entre em contato pelo e-mail{" "}
+                <strong className="font-black text-slate-950 dark:text-white">
+                  escoladasaude@santos.sp.gov.br
+                </strong>
+                .
               </p>
             </div>
           </section>
 
-          {/* CTA */}
-          <div className="mt-8 flex flex-col sm:flex-row gap-2">
+          <div className="mt-8 flex flex-col gap-2 sm:flex-row">
             <a
               href="/"
-              className={cx(
-                "inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-2 border font-extrabold transition-all",
-                isDark
-                  ? "border-emerald-400/40 text-emerald-300 hover:bg-emerald-400/10"
-                  : "border-emerald-700 text-emerald-800 hover:bg-emerald-50"
-              )}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-emerald-700 px-4 py-2 text-sm font-black text-emerald-800 transition hover:bg-emerald-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:border-emerald-500/50 dark:text-emerald-300 dark:hover:bg-emerald-500/10"
               aria-label="Voltar para a página inicial"
             >
-              <ArrowLeft className="w-4 h-4" aria-hidden="true" />
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
               Voltar para a página inicial
             </a>
 
             <a
               href="#conteudo"
-              className={cx(
-                "inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-2 font-semibold transition-all",
-                isDark ? "text-zinc-200 hover:bg-white/5" : "text-slate-700 hover:bg-slate-100"
-              )}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:text-zinc-200 dark:hover:bg-white/5"
               aria-label="Voltar ao topo do conteúdo"
             >
               <span>Ir para o topo</span>
-              <ChevronRight className="w-4 h-4 rotate-[-90deg]" aria-hidden="true" />
+              <ChevronRight className="h-4 w-4 -rotate-90" aria-hidden="true" />
             </a>
           </div>
 
-          {/* rodapé pequeno */}
-          <div className={cx("mt-6 text-xs", isDark ? "text-zinc-400" : "text-slate-500")}>
-            <p>
-              Esta página tem finalidade informativa. Ajustes podem ocorrer para refletir atualizações institucionais e legais.
-            </p>
+          <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs leading-relaxed text-slate-600 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-400">
+            Esta página tem finalidade informativa. Ajustes podem ocorrer para refletir atualizações institucionais, técnicas, operacionais ou legais.
           </div>
         </motion.article>
       </section>

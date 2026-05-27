@@ -1,181 +1,178 @@
+// 📁 src/hooks/usePerfilPermitido.js — v2.0
 import { useEffect, useMemo, useState } from "react";
 
 /**
- * Evento interno para sincronização de perfil na mesma aba.
- * Pode ser disparado manualmente em qualquer ponto da aplicação:
+ * Hook para verificar se o usuário possui pelo menos um dos perfis permitidos.
  *
- * window.dispatchEvent(new CustomEvent("escola-perfil-change", {
- *   detail: { storageKey: "perfil", value: "administrador,usuario" }
- * }));
+ * Uso:
+ * const { temAcesso } = usePerfilPermitido(["administrador"]);
+ *
+ * Contrato oficial:
+ * - localStorage["perfil"]
+ * - evento global: "auth:changed"
+ *
+ * Perfis oficiais:
+ * - usuario
+ * - organizador
+ * - administrador
+ *
+ * Não usar:
+ * - roles
+ * - role
+ * - perfis
+ * - admin
  */
-const PERFIL_EVENT = "escola-perfil-change";
 
-/**
- * localStorage SSR-safe.
- */
+const STORAGE_KEY_PERFIL = "perfil";
+const AUTH_EVENT = "auth:changed";
+
+const PERFIL_OFICIAL = new Set(["usuario", "organizador", "administrador"]);
+
+function canUseWindow() {
+  return typeof window !== "undefined";
+}
+
 function getSafeLocalStorage() {
   try {
-    if (typeof window !== "undefined" && window.localStorage) {
+    if (canUseWindow() && window.localStorage) {
       return window.localStorage;
     }
   } catch {
-    /* noop */
+    // noop
   }
 
   return null;
 }
 
-/**
- * Normaliza perfis para array em lowercase, sem vazios.
- */
-function normalizeRoles(input) {
-  if (!input) return [];
+function removerDuplicado(lista) {
+  return [...new Set(lista)];
+}
 
-  if (Array.isArray(input)) {
-    return [...new Set(
-      input
-        .map(String)
-        .map((r) => r.trim().toLowerCase())
-        .filter(Boolean)
-    )];
+function normalizarPerfil(value) {
+  if (!value) {
+    return [];
   }
 
-  return [...new Set(
-    String(input)
-      .split(",")
-      .map((r) => r.trim().toLowerCase())
+  const lista = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/[;,|]/g)
+      : [];
+
+  return removerDuplicado(
+    lista
+      .map((item) => String(item || "").trim().toLowerCase())
       .filter(Boolean)
-  )];
+  );
 }
 
-/**
- * Checa interseção entre roles do usuário e permitidos.
- */
-function hasAny(allowed, user) {
-  if (!allowed.length || !user.length) return false;
-
-  const userSet = new Set(user);
-  return allowed.some((role) => userSet.has(role));
+function filtrarPerfilOficial(lista) {
+  return normalizarPerfil(lista).filter((perfil) =>
+    PERFIL_OFICIAL.has(perfil)
+  );
 }
 
-/**
- * Lê roles do localStorage com segurança.
- */
-function readRolesFromStorage(storageKey) {
-  const ls = getSafeLocalStorage();
-  if (!ls) return [];
+function lerPerfilStorage() {
+  const localStorageSafe = getSafeLocalStorage();
+
+  if (!localStorageSafe) {
+    return [];
+  }
 
   try {
-    return normalizeRoles(ls.getItem(storageKey));
+    return filtrarPerfilOficial(localStorageSafe.getItem(STORAGE_KEY_PERFIL));
   } catch {
     return [];
   }
 }
 
+function possuiIntersecao(perfilPermitido, perfilUsuario) {
+  if (!perfilPermitido.length || !perfilUsuario.length) {
+    return false;
+  }
+
+  const usuarioSet = new Set(perfilUsuario);
+
+  return perfilPermitido.some((perfil) => usuarioSet.has(perfil));
+}
+
 /**
- * Hook para verificar se o usuário logado possui pelo menos um dos perfis permitidos.
- *
- * Prioridade da origem dos perfis:
- *   1) prop `userRoles`
- *   2) localStorage[storageKey]
- *
- * @param {string[]|string} perfilPermitidos
+ * @param {string[]|string} perfilPermitido
  * @param {object} options
- * @param {string[]|string} [options.userRoles]
- * @param {string} [options.storageKey="perfil"]
+ * @param {string[]|string} [options.perfilUsuario]
  * @returns {{
  *   temAcesso: boolean,
- *   carregando: boolean,
- *   rolesEfetivos: string[],
- *   allowedRoles: string[],
- *   source: "prop" | "storage"
+ *   perfilEfetivo: string[],
+ *   perfilPermitido: string[]
  * }}
  */
-export default function usePerfilPermitidos(
-  perfilPermitidos = [],
-  { userRoles, storageKey = "perfil" } = {}
+export default function usePerfilPermitido(
+  perfilPermitido = [],
+  { perfilUsuario } = {}
 ) {
-  const allowedRoles = useMemo(
-    () => normalizeRoles(perfilPermitidos),
-    [perfilPermitidos]
+  const perfilPermitidoNormalizado = useMemo(
+    () => filtrarPerfilOficial(perfilPermitido),
+    [perfilPermitido]
   );
 
-  const propRoles = useMemo(
-    () => normalizeRoles(userRoles),
-    [userRoles]
+  const perfilUsuarioProp = useMemo(
+    () => filtrarPerfilOficial(perfilUsuario),
+    [perfilUsuario]
   );
 
-  const [storageRoles, setStorageRoles] = useState(() =>
-    readRolesFromStorage(storageKey)
-  );
+  const [perfilStorage, setPerfilStorage] = useState(() => lerPerfilStorage());
 
-  // sincroniza quando a chave do storage mudar
   useEffect(() => {
-    if (propRoles.length > 0) return;
-    setStorageRoles(readRolesFromStorage(storageKey));
-  }, [storageKey, propRoles]);
+    if (perfilUsuarioProp.length > 0) {
+      return undefined;
+    }
 
-  // sincroniza entre abas/janelas
+    setPerfilStorage(lerPerfilStorage());
+
+    return undefined;
+  }, [perfilUsuarioProp]);
+
   useEffect(() => {
-    if (typeof window === "undefined") return undefined;
+    if (!canUseWindow()) {
+      return undefined;
+    }
 
-    const onStorage = (ev) => {
-      if (ev.key !== storageKey) return;
-      if (propRoles.length > 0) return;
+    const atualizarPerfil = () => {
+      if (perfilUsuarioProp.length > 0) {
+        return;
+      }
 
-      setStorageRoles(normalizeRoles(ev.newValue));
+      setPerfilStorage(lerPerfilStorage());
     };
 
+    const onStorage = (event) => {
+      if (event.key !== STORAGE_KEY_PERFIL) {
+        return;
+      }
+
+      atualizarPerfil();
+    };
+
+    window.addEventListener(AUTH_EVENT, atualizarPerfil);
     window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, [storageKey, propRoles]);
 
-  // sincroniza na mesma aba
-  useEffect(() => {
-    if (typeof window === "undefined") return undefined;
-
-    const onPerfilChange = (ev) => {
-      const detail = ev?.detail || {};
-      const eventStorageKey = detail.storageKey || "perfil";
-
-      if (eventStorageKey !== storageKey) return;
-      if (propRoles.length > 0) return;
-
-      setStorageRoles(normalizeRoles(detail.value));
+    return () => {
+      window.removeEventListener(AUTH_EVENT, atualizarPerfil);
+      window.removeEventListener("storage", onStorage);
     };
+  }, [perfilUsuarioProp]);
 
-    window.addEventListener(PERFIL_EVENT, onPerfilChange);
-    return () => window.removeEventListener(PERFIL_EVENT, onPerfilChange);
-  }, [storageKey, propRoles]);
-
-  const source = propRoles.length > 0 ? "prop" : "storage";
-
-  const rolesEfetivos = useMemo(() => {
-    return propRoles.length > 0 ? propRoles : storageRoles;
-  }, [propRoles, storageRoles]);
+  const perfilEfetivo = useMemo(() => {
+    return perfilUsuarioProp.length > 0 ? perfilUsuarioProp : perfilStorage;
+  }, [perfilUsuarioProp, perfilStorage]);
 
   const temAcesso = useMemo(() => {
-    try {
-      return hasAny(allowedRoles, rolesEfetivos);
-    } catch (err) {
-      console.error("[usePerfilPermitidos] Falha ao avaliar acesso:", err);
-      return false;
-    }
-  }, [allowedRoles, rolesEfetivos]);
-
-  /**
-   * Aqui não existe carregamento assíncrono real.
-   * Mantemos `carregando` por compatibilidade com o restante do front.
-   */
-  const carregando = false;
+    return possuiIntersecao(perfilPermitidoNormalizado, perfilEfetivo);
+  }, [perfilPermitidoNormalizado, perfilEfetivo]);
 
   return {
     temAcesso,
-    carregando,
-    rolesEfetivos,
-    allowedRoles,
-    source,
+    perfilEfetivo,
+    perfilPermitido: perfilPermitidoNormalizado,
   };
 }
-
-export { PERFIL_EVENT };

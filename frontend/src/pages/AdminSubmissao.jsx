@@ -1,1006 +1,1424 @@
 // 📁 src/pages/AdminSubmissao.jsx
-import { useEffect, useMemo, useState, useCallback } from "react";
+// Atualizado em: 15/05/2026
+//
+// Plataforma Escola da Saúde — v2.0
+//
+// Página administrativa de SUBMISSÕES DE TRABALHOS.
+//
+// Contratos oficiais usados:
+// - GET /api/submissao/admin
+// - GET /api/chamada/ativa
+// - GET /api/submissao/:id/poster
+//
+// Fora desta página:
+// - CRUD de chamada;
+// - criação/edição autoral de trabalho;
+// - endpoints antigos /admin/submissao, /chamadas/ativas, /trabalhos/*.
+//
+// Observação:
+// Os modais importados abaixo ainda devem ser revisados em seguida para garantir
+// que também usem exclusivamente os contratos v2.0.
+
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Loader2,
-  Filter,
-  ClipboardList,
+  AlertCircle,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   Award,
-  Search,
-  Users,
-  Paperclip,
-  Download,
-  Mic,
-  X,
+  BarChart3,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  ArrowUpDown,
-  ArrowUp,
-  ArrowDown,
+  ClipboardList,
+  Download,
+  Eye,
+  FileText,
+  Filter,
+  Layers3,
+  Loader2,
+  Mic,
+  Paperclip,
+  RefreshCw,
   RotateCcw,
+  Search,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sparkles,
+  Users,
+  X,
+  XCircle,
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
+
 import api from "../services/api";
-import Footer from "../components/Footer";
-import { useOnceEffect } from "../hooks/useOnceEffect";
+import Footer from "../components/layout/Footer";
 import RankingModal from "../components/RankingModal";
 import RankingOralModal from "../components/RankingOralModal";
 import ModalAvaliadores from "../components/ModalAvaliadores";
 import ModalDetalhesSubmissao from "../components/ModalDetalhesSubmissao";
 import ModalAtribuirAvaliadores from "../components/ModalAtribuirAvaliadores";
 
-/* ————————————————— Utils ————————————————— */
-const fmt = (v, alt = "—") => (v === 0 || v ? String(v) : alt);
-const fmtNum = (v, d = 2) => Number(v ?? 0).toFixed(d);
-const fmtNota = (v) => (v === 0 || v ? fmtNum(v, 2) : "—");
+/* =========================================================================
+   Helpers
+=========================================================================== */
 
-function fmtDateTimeBR(v) {
-  if (!v) return "—";
-  try {
-    const d = new Date(v);
-    if (Number.isNaN(d.getTime())) return "—";
-    const dd = String(d.getDate()).padStart(2, "0");
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const yyyy = d.getFullYear();
-    const hh = String(d.getHours()).padStart(2, "0");
-    const min = String(d.getMinutes()).padStart(2, "0");
-    return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
-  } catch {
-    return "—";
-  }
+function cx(...classes) {
+  return classes.filter(Boolean).join(" ");
 }
 
-const linhaKeyFromSub = (s) =>
-  String(
-    s?.linha_tematica_id ??
-      s?.linhaTematicaId ??
-      s?.linha_tematica_nome ??
-      s?.linha_tematica_codigo ??
+function unwrap(response) {
+  if (Array.isArray(response)) return response;
+  if (Array.isArray(response?.data)) return response.data;
+  if (Array.isArray(response?.data?.data)) return response.data.data;
+  if (Array.isArray(response?.data?.data?.submissoes)) return response.data.data.submissoes;
+  if (Array.isArray(response?.submissoes)) return response.submissoes;
+  return [];
+}
+
+function fmt(value, fallback = "—") {
+  return value === 0 || value ? String(value) : fallback;
+}
+
+function fmtNum(value, digits = 2) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  return n.toFixed(digits);
+}
+
+function fmtNota(value) {
+  return value === 0 || value ? fmtNum(value, 2) : "—";
+}
+
+function fmtDateTimeBR(value) {
+  if (!value) return "—";
+
+  const text = String(value);
+
+  const wall = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(text);
+  if (wall) {
+    return `${wall[3]}/${wall[2]}/${wall[1]} ${wall[4]}:${wall[5]}`;
+  }
+
+  const d = new Date(text);
+  if (Number.isNaN(d.getTime())) return "—";
+
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(d);
+}
+
+function normalizarStatusPrincipal(raw) {
+  const status = String(raw || "").toLowerCase();
+
+  if (status === "rascunho") return "rascunho";
+  if (status === "submetida") return "submetida";
+  if (status === "em_avaliacao") return "em_avaliacao";
+  if (status === "aprovada_exposicao") return "aprovada_exposicao";
+  if (status === "aprovada_oral") return "aprovada_oral";
+  if (status === "aprovada") return "aprovada";
+  if (status === "reprovada") return "reprovada";
+  if (status === "cancelada") return "cancelada";
+
+  return status || "indefinido";
+}
+
+function statusLabel(status) {
+  const value = normalizarStatusPrincipal(status);
+
+  const labels = {
+    rascunho: "Rascunho",
+    submetida: "Submetida",
+    em_avaliacao: "Em avaliação",
+    aprovada_exposicao: "Aprovada para exposição",
+    aprovada_oral: "Aprovada para oral",
+    aprovada: "Aprovada",
+    reprovada: "Reprovada",
+    cancelada: "Cancelada",
+    indefinido: "Indefinido",
+  };
+
+  return labels[value] || value;
+}
+
+function linhaKeyFromSubmissao(item) {
+  return String(
+    item?.linha_tematica_id ??
+      item?.linha_tematica_nome ??
+      item?.linha_tematica_codigo ??
       ""
   );
-
-// Aprovações parciais
-const hasAprovExposicao = (s) => {
-  const escritaLower = String(s?.status_escrita || "").toLowerCase();
-  const stLower = String(s?.status || "").toLowerCase();
-  return (
-    escritaLower === "aprovado" ||
-    stLower === "aprovado_exposicao" ||
-    stLower === "aprovado_escrita" ||
-    Boolean(s?._exposicao_aprovada)
-  );
-};
-const hasAprovOral = (s) => {
-  const oralLower = String(s?.status_oral || "").toLowerCase();
-  const stLower = String(s?.status || "").toLowerCase();
-  return (
-    oralLower === "aprovado" ||
-    stLower === "aprovado_oral" ||
-    Boolean(s?._oral_aprovada)
-  );
-};
-
-// Anexos
-const truthy = (v) => {
-  if (v == null) return false;
-  if (typeof v === "string") {
-    const t = v.trim().toLowerCase();
-    return t.length > 0 && t !== "0" && t !== "false" && t !== "none" && t !== "null";
-  }
-  if (typeof v === "number") return v > 0;
-  if (Array.isArray(v)) return v.length > 0;
-  return !!v;
-};
-const hasAnexoRaw = (s) => {
-  const c = [
-    s?.poster_nome, s?.posterNome, s?.poster_arquivo_nome, s?.nome_poster, s?.poster,
-    s?.banner_nome, s?.bannerNome, s?.banner_arquivo_nome, s?.nome_banner, s?.banner,
-    s?.has_poster, s?.tem_poster, s?.poster_enviado, s?.possui_poster,
-    s?.has_banner, s?.tem_banner, s?.banner_enviado, s?.possui_banner,
-    s?.has_anexo, s?.tem_anexo, s?.possui_anexo, s?.anexos, s?.arquivos,
-  ];
-  return c.some(truthy);
-};
-const hasAnexo = (s) => truthy(s?._hasAnexo) || hasAnexoRaw(s);
-
-// Status
-function normalizarStatusPrincipal(raw) {
-  const st = String(raw || "").toLowerCase();
-  if (st === "rascunho") return "rascunho";
-  if (st === "submetido") return "submetido";
-  if (st === "em_avaliacao") return "em avaliação";
-  if (["aprovado", "aprovado_exposicao", "aprovado_oral", "aprovado_escrita"].includes(st)) return "aprovado";
-  if (st === "reprovado") return "reprovado";
-  return st || "—";
 }
 
-function StatusBadge({ status }) {
-  const label = normalizarStatusPrincipal(status);
-  const base =
-    "px-2 py-1 rounded-full text-[11px] font-medium inline-flex items-center gap-1 justify-center whitespace-nowrap";
-  switch (label) {
-    case "rascunho":
-      return <span className={`${base} bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200`}>Rascunho</span>;
-    case "submetido":
-      return <span className={`${base} bg-blue-100 text-blue-700`}>Submetido</span>;
-    case "em avaliação":
-      return <span className={`${base} bg-amber-100 text-amber-700`}>Em avaliação</span>;
-    case "aprovado":
-      return <span className={`${base} bg-emerald-100 text-emerald-700`}>Aprovado</span>;
-    case "reprovado":
-      return <span className={`${base} bg-rose-100 text-rose-700`}>Reprovado</span>;
-    default:
-      return <span className={`${base} bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200`}>{label}</span>;
-  }
-}
-
-function StatusAndApprovals({ s }) {
-  const principal = normalizarStatusPrincipal(s?.status);
-  const expoOk =
-    String(s?.status_escrita || "").toLowerCase() === "aprovado" ||
-    Boolean(s?._exposicao_aprovada);
-  const oralOk =
-    String(s?.status_oral || "").toLowerCase() === "aprovado" ||
-    Boolean(s?._oral_aprovada);
-  const mostrarModalidades = principal === "aprovado" && (expoOk || oralOk);
+function hasAprovacaoExposicao(item) {
+  const status = normalizarStatusPrincipal(item?.status);
+  const escrita = String(item?.status_escrita || "").toLowerCase();
 
   return (
-    <div className="flex flex-col items-center gap-1 text-center">
-      <StatusBadge status={s.status} />
-      {mostrarModalidades && (
-        <div className="inline-flex flex-wrap justify-center gap-1.5">
-          {expoOk && <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">Exposição</span>}
-          {oralOk && <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">Apresentação oral</span>}
-        </div>
-      )}
+    escrita === "aprovado" ||
+    status === "aprovada_exposicao" ||
+    status === "aprovada" ||
+    Boolean(item?._exposicao_aprovada)
+  );
+}
+
+function hasAprovacaoOral(item) {
+  const status = normalizarStatusPrincipal(item?.status);
+  const oral = String(item?.status_oral || "").toLowerCase();
+
+  return (
+    oral === "aprovado" ||
+    status === "aprovada_oral" ||
+    status === "aprovada" ||
+    Boolean(item?._oral_aprovada)
+  );
+}
+
+function hasAnexo(item) {
+  return Boolean(
+    item?._hasAnexo ||
+      item?.poster_arquivo_id ||
+      item?.poster_nome ||
+      item?.has_anexo ||
+      item?.tem_anexo ||
+      item?.possui_anexo
+  );
+}
+
+function getErrorMessage(error, fallback) {
+  return (
+    error?.response?.data?.message ||
+    error?.data?.message ||
+    error?.message ||
+    fallback
+  );
+}
+
+/* =========================================================================
+   CSV
+=========================================================================== */
+
+function exportarCSV(items = []) {
+  const sep = ";";
+  const bom = "\uFEFF";
+
+  function safe(value) {
+    const text = String(value ?? "").replace(/\r?\n/g, " ").trim();
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+
+  const header = [
+    "Título",
+    "Autor",
+    "E-mail",
+    "Chamada",
+    "Linha temática",
+    "Submetido em",
+    "Status",
+    "Exposição",
+    "Apresentação oral",
+    "Nota escrita",
+    "Nota oral",
+    "Nota final",
+    "Anexo",
+  ].join(sep);
+
+  const rows = items.map((item) =>
+    [
+      safe(item.titulo),
+      safe(item.autor_nome),
+      safe(item.autor_email),
+      safe(item.chamada_titulo),
+      safe(item.linha_tematica_nome || item.linha_tematica_codigo || ""),
+      safe(
+        normalizarStatusPrincipal(item.status) === "rascunho"
+          ? "—"
+          : fmtDateTimeBR(item.submetido_em || item.criado_em)
+      ),
+      safe(statusLabel(item.status)),
+      safe(hasAprovacaoExposicao(item) ? "Sim" : "Não"),
+      safe(hasAprovacaoOral(item) ? "Sim" : "Não"),
+      safe(fmtNota(item.nota_escrita)),
+      safe(fmtNota(item.nota_oral)),
+      safe(fmtNota(item.nota_final)),
+      safe(hasAnexo(item) ? "Sim" : "Não"),
+    ].join(sep)
+  );
+
+  const csv = [header, ...rows].join("\n");
+  const blob = new Blob([bom + csv], { type: "text/csv;charset=utf-8" });
+
+  const d = new Date();
+  const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(
+    d.getDate()
+  ).padStart(2, "0")}-${String(d.getHours()).padStart(2, "0")}${String(
+    d.getMinutes()
+  ).padStart(2, "0")}`;
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+
+  a.href = url;
+  a.download = `submissoes_trabalhos_${stamp}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+/* =========================================================================
+   URL state
+=========================================================================== */
+
+function useUrlState() {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const get = useCallback(() => {
+    const params = new URLSearchParams(location.search);
+
+    return {
+      chamada: params.get("chamada") || "",
+      status: params.get("status") || "",
+      linha: params.get("linha") || "",
+      q: params.get("q") || "",
+      sort: params.get("sort") || "",
+      page: Number(params.get("page") || 1),
+      per: Number(params.get("per") || 20),
+    };
+  }, [location.search]);
+
+  const set = useCallback(
+    (patch) => {
+      const current = get();
+      const next = { ...current, ...patch };
+      const params = new URLSearchParams();
+
+      if (next.chamada) params.set("chamada", next.chamada);
+      if (next.status) params.set("status", next.status);
+      if (next.linha) params.set("linha", next.linha);
+      if (next.q) params.set("q", next.q);
+      if (next.sort) params.set("sort", next.sort);
+      if (next.page && next.page > 1) params.set("page", String(next.page));
+      if (next.per && next.per !== 20) params.set("per", String(next.per));
+
+      navigate({ search: params.toString() ? `?${params.toString()}` : "" }, { replace: true });
+    },
+    [get, navigate]
+  );
+
+  return { get, set };
+}
+
+/* =========================================================================
+   UI
+=========================================================================== */
+
+function PageShell({ children }) {
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-950 dark:bg-slate-950">
+      <div className="fixed inset-0 -z-10 overflow-hidden">
+        <div className="absolute left-[-10%] top-[-10%] h-96 w-96 rounded-full bg-amber-500/20 blur-3xl" />
+        <div className="absolute right-[-12%] top-24 h-96 w-96 rounded-full bg-violet-500/20 blur-3xl" />
+        <div className="absolute bottom-[-15%] left-[25%] h-96 w-96 rounded-full bg-emerald-500/20 blur-3xl" />
+      </div>
+
+      <div className="min-h-screen bg-slate-50/95 dark:bg-slate-950/85 dark:text-slate-50">
+        {children}
+      </div>
     </div>
   );
 }
 
-/* ————————————————— CSV export ————————————————— */
-const handleExportCSV = (items = []) => {
-  const SEP = ";";
-  const BOM = "\uFEFF";
-  const safe = (v) => {
-    const s = (v ?? "").toString().replace(/\r?\n/g, " ").trim();
-    return `"${s.replace(/"/g, '""')}"`;
+function GlassCard({ children, className = "" }) {
+  return (
+    <div
+      className={cx(
+        "rounded-[1.75rem] border border-white/70 bg-white/90 shadow-xl shadow-slate-200/60 backdrop-blur-xl",
+        "dark:border-white/10 dark:bg-slate-900/80 dark:shadow-black/20",
+        className
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+function Button({
+  children,
+  icon: Icon,
+  tone = "slate",
+  size = "md",
+  loading = false,
+  className = "",
+  ...props
+}) {
+  const tones = {
+    primary:
+      "bg-gradient-to-r from-amber-600 via-orange-600 to-violet-600 text-white shadow-lg shadow-amber-900/20 hover:brightness-110",
+    slate:
+      "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800",
+    success:
+      "bg-emerald-600 text-white shadow-lg shadow-emerald-900/20 hover:bg-emerald-700",
+    warning:
+      "bg-amber-600 text-white shadow-lg shadow-amber-900/20 hover:bg-amber-700",
+    danger:
+      "bg-rose-600 text-white shadow-lg shadow-rose-900/20 hover:bg-rose-700",
+    ghost:
+      "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800",
   };
 
-  const header = [
-    "Título","Autor","E-mail","Chamada","Linha temática","Submetido em",
-    "Status (principal)","Exposição","Apresentação oral",
-    "Nota (escrita)","Nota (oral)","Nota (final)","Anexo",
-  ].join(SEP);
+  const sizes = {
+    sm: "px-3 py-2 text-xs",
+    md: "px-4 py-2.5 text-sm",
+    lg: "px-5 py-3 text-sm",
+  };
 
-  const rows = items.map((s) => {
-    const dt =
-      String(s.status || "").toLowerCase() === "rascunho"
-        ? "—"
-        : fmtDateTimeBR(s.submetido_em || s.criado_em);
+  return (
+    <button
+      type="button"
+      className={cx(
+        "inline-flex items-center justify-center gap-2 rounded-2xl font-semibold transition",
+        "focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 disabled:pointer-events-none disabled:opacity-60",
+        tones[tone],
+        sizes[size],
+        className
+      )}
+      disabled={loading || props.disabled}
+      {...props}
+    >
+      {loading ? (
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+      ) : Icon ? (
+        <Icon className="h-4 w-4" aria-hidden="true" />
+      ) : null}
+      {children}
+    </button>
+  );
+}
 
-    const st = String(s.status || "").toLowerCase();
-    const statusPrincipal =
-      st.startsWith("aprovado_") ? "Aprovado" :
-      st === "submetido" ? "Submetido" :
-      st === "em_avaliacao" ? "Em avaliação" :
-      st === "reprovado" ? "Reprovado" :
-      st === "rascunho" ? "Rascunho" : s.status || "—";
+function Badge({ children, tone = "slate", icon: Icon }) {
+  const tones = {
+    slate:
+      "border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200",
+    amber:
+      "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200",
+    emerald:
+      "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200",
+    rose:
+      "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200",
+    violet:
+      "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200",
+    cyan:
+      "border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-200",
+  };
 
-    const escritaTxt = hasAprovExposicao(s) ? "Aprovada" : "Pendente";
-    const oralTxt = hasAprovOral(s) ? "Aprovada" : "Pendente";
-    const anexoTxt = hasAnexo(s) ? "Sim" : "Não";
+  return (
+    <span
+      className={cx(
+        "inline-flex items-center justify-center gap-1 rounded-full border px-2.5 py-1 text-xs font-bold",
+        tones[tone] || tones.slate
+      )}
+    >
+      {Icon ? <Icon className="h-3.5 w-3.5" aria-hidden="true" /> : null}
+      {children}
+    </span>
+  );
+}
 
-    return [
-      safe(s.titulo),
-      safe(s.autor_nome),
-      safe(s.autor_email),
-      safe(s.chamada_titulo),
-      safe(s.linha_tematica_nome || s.linhaTematicaNome || ""),
-      safe(dt),
-      safe(statusPrincipal),
-      safe(escritaTxt),
-      safe(oralTxt),
-      safe(fmtNota(s.nota_escrita)),
-      safe(fmtNota(s.nota_oral)),
-      safe(fmtNota(s.nota_final)),
-      safe(anexoTxt),
-    ].join(SEP);
-  });
+function StatusBadge({ status }) {
+  const value = normalizarStatusPrincipal(status);
 
-  const csv = [header, ...rows].join("\n");
-  const blob = new Blob([BOM + csv], { type: "text/csv;charset=utf-8" });
-  const ts = new Date();
-  const stamp =
-    `${ts.getFullYear()}${String(ts.getMonth() + 1).padStart(2, "0")}${String(ts.getDate()).padStart(2, "0")}-` +
-    `${String(ts.getHours()).padStart(2, "0")}${String(ts.getMinutes()).padStart(2, "0")}`;
-  const filename = `submissao_admin_${stamp}.csv`;
+  const config = {
+    rascunho: { tone: "slate", icon: FileText },
+    submetida: { tone: "cyan", icon: ClipboardList },
+    em_avaliacao: { tone: "amber", icon: Loader2 },
+    aprovada_exposicao: { tone: "emerald", icon: CheckCircle2 },
+    aprovada_oral: { tone: "emerald", icon: Mic },
+    aprovada: { tone: "emerald", icon: CheckCircle2 },
+    reprovada: { tone: "rose", icon: XCircle },
+    cancelada: { tone: "rose", icon: XCircle },
+    indefinido: { tone: "slate", icon: AlertCircle },
+  };
 
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1500);
-};
+  const item = config[value] || config.indefinido;
 
-/* ————————————————— Helpers URL state ————————————————— */
-const useUrlState = () => {
-  const loc = useLocation();
-  const nav = useNavigate();
+  return (
+    <Badge tone={item.tone} icon={item.icon}>
+      {statusLabel(value)}
+    </Badge>
+  );
+}
 
-  const get = useCallback(() => {
-    const sp = new URLSearchParams(loc.search);
-    return {
-      chamada: sp.get("chamada") || "",
-      status: sp.get("status") || "",
-      linha: sp.get("linha") || "",
-      q: sp.get("q") || "",
-      sort: sp.get("sort") || "",  // ex.: "titulo:asc"
-      page: Number(sp.get("page") || 1),
-      per: Number(sp.get("per") || 20),
-    };
-  }, [loc.search]);
+function Aprovacoes({ item }) {
+  const exposicao = hasAprovacaoExposicao(item);
+  const oral = hasAprovacaoOral(item);
 
-  const set = useCallback((patch) => {
-    const cur = get();
-    const next = { ...cur, ...patch };
-    const sp = new URLSearchParams();
-    if (next.chamada) sp.set("chamada", next.chamada);
-    if (next.status) sp.set("status", next.status);
-    if (next.linha) sp.set("linha", next.linha);
-    if (next.q) sp.set("q", next.q);
-    if (next.sort) sp.set("sort", next.sort);
-    if (next.page && next.page > 1) sp.set("page", String(next.page));
-    if (next.per && next.per !== 20) sp.set("per", String(next.per));
-    nav({ search: `?${sp.toString()}` }, { replace: true });
-  }, [get, nav]);
+  if (!exposicao && !oral) {
+    return <span className="text-xs text-slate-400">Sem aprovação parcial</span>;
+  }
 
-  return { get, set };
-};
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {exposicao ? <Badge tone="emerald" icon={CheckCircle2}>Exposição</Badge> : null}
+      {oral ? <Badge tone="emerald" icon={Mic}>Oral</Badge> : null}
+    </div>
+  );
+}
 
-/* ————————————————— Página principal ————————————————— */
+/* =========================================================================
+   Header
+=========================================================================== */
+
+function HeaderHero({ stats }) {
+  return (
+    <header className="relative overflow-hidden bg-slate-950 text-white">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_10%_20%,rgba(245,158,11,.28),transparent_30%),radial-gradient(circle_at_80%_10%,rgba(139,92,246,.28),transparent_30%),radial-gradient(circle_at_55%_90%,rgba(16,185,129,.22),transparent_30%)]" />
+
+      <div className="relative mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+        <div className="grid gap-6 lg:grid-cols-[1.2fr_.8fr] lg:items-end">
+          <div>
+            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold text-white/85 backdrop-blur">
+              <ShieldCheck className="h-3.5 w-3.5 text-emerald-200" />
+              Submissões de trabalhos — painel administrativo v2.0
+            </div>
+
+            <h1 className="max-w-4xl text-3xl font-black tracking-tight sm:text-4xl lg:text-5xl">
+              Auditoria, acompanhamento e decisão sobre trabalhos submetidos.
+            </h1>
+
+            <p className="mt-4 max-w-3xl text-sm leading-relaxed text-white/72 sm:text-base">
+              Visualize submissões, acompanhe status, notas, anexos, avaliadores,
+              rankings e classificações com rastreabilidade institucional.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Metric label="Total" value={stats.total} icon={ClipboardList} tone="amber" />
+            <Metric label="Em avaliação" value={stats.emAvaliacao} icon={Loader2} tone="cyan" />
+            <Metric label="Aprovadas" value={stats.aprovadas} icon={CheckCircle2} tone="emerald" />
+            <Metric label="Reprovadas" value={stats.reprovadas} icon={XCircle} tone="rose" />
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function Metric({ label, value, icon: Icon, tone = "amber" }) {
+  const tones = {
+    amber: "from-amber-400/25 to-white/5",
+    cyan: "from-cyan-400/25 to-white/5",
+    emerald: "from-emerald-400/25 to-white/5",
+    rose: "from-rose-400/25 to-white/5",
+  };
+
+  return (
+    <div className={cx("rounded-3xl border border-white/15 bg-gradient-to-br p-4 backdrop-blur", tones[tone])}>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs font-semibold uppercase tracking-wide text-white/65">
+          {label}
+        </span>
+        <Icon className="h-4 w-4 text-white/70" aria-hidden="true" />
+      </div>
+      <div className="mt-2 text-3xl font-black">{fmt(value)}</div>
+    </div>
+  );
+}
+
+/* =========================================================================
+   Página
+=========================================================================== */
+
 export default function AdminSubmissao() {
   const { get, set } = useUrlState();
   const url = get();
 
-  const [submissao, setsubmissao] = useState([]);
-  const [oralOpen, setOralOpen] = useState(false);
+  const [submissoes, setSubmissoes] = useState([]);
+  const [chamadas, setChamadas] = useState([]);
+
   const [filtroChamada, setFiltroChamada] = useState(url.chamada);
   const [filtroStatus, setFiltroStatus] = useState(url.status);
   const [filtroLinha, setFiltroLinha] = useState(url.linha);
   const [busca, setBusca] = useState(url.q);
-  const [debouncedBusca, setDebouncedBusca] = useState(url.q);
-  const [loading, setLoading] = useState(true);
-  const [chamadas, setChamadas] = useState([]);
-  const [detalheOpen, setDetalheOpen] = useState(false);
-  const [selecionada, setSelecionada] = useState(null);
-  const [rankingOpen, setRankingOpen] = useState(false);
-  const [avaliadoresOpen, setAvaliadoresOpen] = useState(false);
+  const [buscaDebounced, setBuscaDebounced] = useState(url.q);
 
-  // atribuição
-  const [atribOpen, setAtribOpen] = useState(false);
-  const [subIdAtrib, setSubIdAtrib] = useState(null);
-
-  // sort + paginação
   const [sortKey, setSortKey] = useState(url.sort.split(":")[0] || "");
   const [sortDir, setSortDir] = useState(url.sort.split(":")[1] || "asc");
   const [page, setPage] = useState(url.page || 1);
   const [perPage, setPerPage] = useState(url.per || 20);
 
-  const unwrap = (r) => (Array.isArray(r) ? r : r?.data ?? []);
+  const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState("");
 
-  useOnceEffect(() => {
-    const ac = new AbortController();
-    (async () => {
-      try {
-        setLoading(true);
-        const [subs, ch] = await Promise.all([
-          api.get("/admin/submissao", { signal: ac.signal }),
-          api.get("/chamadas/ativas", { signal: ac.signal }),
-        ]);
-        const base = unwrap(subs).map((it) => ({ ...it, _hasAnexo: hasAnexoRaw(it) }));
-        setsubmissao(base);
-        setChamadas(unwrap(ch));
+  const [detalheOpen, setDetalheOpen] = useState(false);
+  const [selecionada, setSelecionada] = useState(null);
 
-        // checagem preguiçosa de anexos
-        const idsParaChecar = base.filter((s) => !s._hasAnexo).map((s) => s.id);
-        const conc = 6;
-        let idx = 0;
-        const axiosOk = (s) => (s >= 200 && s < 300) || s === 404;
-        const run = async (id) => {
-          const tryPublic = await api.get(`/submissao/${id}`, { signal: ac.signal, validateStatus: axiosOk });
-          if (tryPublic?.status !== 404) {
-            const sub = Array.isArray(tryPublic?.data) ? tryPublic.data[0] : tryPublic?.data ?? tryPublic;
-            return { id, ok: hasAnexoRaw(sub) };
-          }
-          const tryAdmin = await api.get(`/admin/submissao/${id}`, { signal: ac.signal, validateStatus: axiosOk });
-          if (tryAdmin?.status !== 404) {
-            const sub = Array.isArray(tryAdmin?.data) ? tryAdmin.data[0] : tryAdmin?.data ?? tryAdmin;
-            return { id, ok: hasAnexoRaw(sub) };
-          }
-          return { id, ok: false };
-        };
-        const workers = Array.from({ length: conc }, async () => {
-          while (idx < idsParaChecar.length) {
-            const id = idsParaChecar[idx++];
-            const res = await run(id);
-            if (res.ok) {
-              setsubmissao((prev) => prev.map((it) => (it.id === id ? { ...it, _hasAnexo: true } : it)));
-            }
-          }
-        });
-        Promise.allSettled(workers);
-      } catch (err) {
-        if (err?.name !== "AbortError") console.error("Erro ao carregar:", err);
-      } finally {
-        setLoading(false);
+  const [rankingOpen, setRankingOpen] = useState(false);
+  const [oralOpen, setOralOpen] = useState(false);
+  const [avaliadoresOpen, setAvaliadoresOpen] = useState(false);
+
+  const [atribOpen, setAtribOpen] = useState(false);
+  const [submissaoIdAtrib, setSubmissaoIdAtrib] = useState(null);
+
+  const carregar = useCallback(async () => {
+    const controller = new AbortController();
+
+    setLoading(true);
+    setErro("");
+
+    try {
+      const [subsResponse, chamadasResponse] = await Promise.all([
+        api.get("/submissao/admin", { signal: controller.signal }),
+        api.get("/chamada/ativa", { signal: controller.signal }),
+      ]);
+
+      const subs = unwrap(subsResponse).map((item) => ({
+        ...item,
+        _hasAnexo: hasAnexo(item),
+      }));
+
+      setSubmissoes(subs);
+      setChamadas(unwrap(chamadasResponse));
+    } catch (error) {
+      if (error?.name !== "AbortError" && error?.code !== "ERR_CANCELED") {
+        setErro(
+          getErrorMessage(
+            error,
+            "Não foi possível carregar as submissões. Verifique sua conexão ou tente novamente."
+          )
+        );
       }
-    })();
-    return () => ac.abort();
+    } finally {
+      setLoading(false);
+    }
+
+    return () => controller.abort();
   }, []);
 
-  // debounce busca
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedBusca(busca), 250);
-    return () => clearTimeout(t);
+    const abortPromise = carregar();
+    return () => {
+      Promise.resolve(abortPromise).then((cleanup) => {
+        if (typeof cleanup === "function") cleanup();
+      });
+    };
+  }, [carregar]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setBuscaDebounced(busca);
+    }, 250);
+
+    return () => window.clearTimeout(timer);
   }, [busca]);
 
-  // persistir no URL quando filtros/orden/paginação mudarem
   useEffect(() => {
-    const sortVal = sortKey ? `${sortKey}:${sortDir}` : "";
-    set({ chamada: filtroChamada, status: filtroStatus, linha: filtroLinha, q: debouncedBusca, sort: sortVal, page, per: perPage });
+    const sort = sortKey ? `${sortKey}:${sortDir}` : "";
+
+    set({
+      chamada: filtroChamada,
+      status: filtroStatus,
+      linha: filtroLinha,
+      q: buscaDebounced,
+      sort,
+      page,
+      per: perPage,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtroChamada, filtroStatus, filtroLinha, debouncedBusca, sortKey, sortDir, page, perPage]);
+  }, [filtroChamada, filtroStatus, filtroLinha, buscaDebounced, sortKey, sortDir, page, perPage]);
 
   const linhasTematicas = useMemo(() => {
     const map = new Map();
-    for (const s of submissao) {
-      const key = linhaKeyFromSub(s);
-      const nome = s?.linha_tematica_nome ?? s?.linhaTematicaNome ?? null;
-      const codigo = s?.linha_tematica_codigo ?? s?.linha_tematicaCodigo ?? null;
+
+    for (const item of submissoes) {
+      const key = linhaKeyFromSubmissao(item);
+      const nome = item?.linha_tematica_nome || item?.linha_tematica_codigo || null;
+
       if (!key || !nome) continue;
-      if (!map.has(key)) map.set(key, { id: key, nome: String(nome), codigo: codigo ? String(codigo) : null });
+
+      if (!map.has(key)) {
+        map.set(key, {
+          id: key,
+          nome: String(nome),
+          codigo: item?.linha_tematica_codigo || null,
+        });
+      }
     }
+
     return Array.from(map.values()).sort((a, b) =>
       a.nome.localeCompare(b.nome, "pt-BR", { sensitivity: "base" })
     );
-  }, [submissao]);
+  }, [submissoes]);
 
-  // filtro
   const filtradas = useMemo(() => {
-    const termo = (debouncedBusca || "").trim().toLowerCase();
-    return submissao.filter((s) => {
-      const matchChamada = !filtroChamada || Number(s.chamada_id) === Number(filtroChamada);
-      const matchStatus = !filtroStatus
-        ? true
-        : (filtroStatus === "aprovado_escrita" && hasAprovExposicao(s)) ||
-          (filtroStatus === "aprovado_oral" && hasAprovOral(s)) ||
-          ((filtroStatus !== "aprovado_escrita" && filtroStatus !== "aprovado_oral") && s.status === filtroStatus);
-      const matchLinha = !filtroLinha || linhaKeyFromSub(s) === String(filtroLinha);
+    const termo = String(buscaDebounced || "").trim().toLowerCase();
+
+    return submissoes.filter((item) => {
+      const matchChamada =
+        !filtroChamada || Number(item.chamada_id) === Number(filtroChamada);
+
+      const statusAtual = normalizarStatusPrincipal(item.status);
+
+      const matchStatus =
+        !filtroStatus ||
+        (filtroStatus === "aprovada_exposicao" && hasAprovacaoExposicao(item)) ||
+        (filtroStatus === "aprovada_oral" && hasAprovacaoOral(item)) ||
+        statusAtual === filtroStatus;
+
+      const matchLinha =
+        !filtroLinha || linhaKeyFromSubmissao(item) === String(filtroLinha);
+
       const pool = [
-        s.titulo, s.autor_nome, s.autor_email, s.chamada_titulo,
-        s.area_tematica, s.eixo, s.linha_tematica_nome, s.linha_tematica_codigo
-      ].map((v) => (v ? String(v).toLowerCase() : ""));
-      const matchBusca = !termo || pool.some((t) => t.includes(termo));
+        item.titulo,
+        item.autor_nome,
+        item.autor_email,
+        item.chamada_titulo,
+        item.linha_tematica_nome,
+        item.linha_tematica_codigo,
+      ]
+        .filter(Boolean)
+        .map((value) => String(value).toLowerCase());
+
+      const matchBusca = !termo || pool.some((value) => value.includes(termo));
+
       return matchChamada && matchStatus && matchLinha && matchBusca;
     });
-  }, [submissao, filtroChamada, filtroStatus, filtroLinha, debouncedBusca]);
+  }, [submissoes, filtroChamada, filtroStatus, filtroLinha, buscaDebounced]);
 
-  // ordenação
   const sorted = useMemo(() => {
     if (!sortKey) return filtradas;
+
     const dir = sortDir === "desc" ? -1 : 1;
-    const getVal = (s) => {
+
+    function getValue(item) {
       switch (sortKey) {
-        case "titulo": return (s.titulo || "").toLowerCase();
-        case "autor": return (s.autor_nome || "").toLowerCase();
-        case "chamada": return (s.chamada_titulo || "").toLowerCase();
-        case "linha": return ((s.linha_tematica_nome || s.linhaTematicaNome || "")).toLowerCase();
+        case "titulo":
+          return String(item.titulo || "").toLowerCase();
+        case "autor":
+          return String(item.autor_nome || "").toLowerCase();
+        case "chamada":
+          return String(item.chamada_titulo || "").toLowerCase();
+        case "linha":
+          return String(item.linha_tematica_nome || item.linha_tematica_codigo || "").toLowerCase();
         case "submetido":
-          return new Date(s.submetido_em || s.criado_em || 0).getTime() || 0;
-        case "nota_escrita": return Number(s.nota_escrita ?? -Infinity);
-        case "nota_oral": return Number(s.nota_oral ?? -Infinity);
-        case "nota_final": return Number(s.nota_final ?? -Infinity);
-        default: return "";
+          return new Date(item.submetido_em || item.criado_em || 0).getTime() || 0;
+        case "nota_escrita":
+          return Number(item.nota_escrita ?? -Infinity);
+        case "nota_oral":
+          return Number(item.nota_oral ?? -Infinity);
+        case "nota_final":
+          return Number(item.nota_final ?? -Infinity);
+        default:
+          return "";
       }
-    };
+    }
+
     return [...filtradas].sort((a, b) => {
-      const va = getVal(a);
-      const vb = getVal(b);
+      const va = getValue(a);
+      const vb = getValue(b);
+
       if (va < vb) return -1 * dir;
       if (va > vb) return 1 * dir;
       return 0;
     });
   }, [filtradas, sortKey, sortDir]);
 
-  // paginação
   const total = sorted.length;
   const totalPages = Math.max(1, Math.ceil(total / perPage));
   const pageClamped = Math.min(Math.max(1, page), totalPages);
+
   const pageItems = useMemo(() => {
     const start = (pageClamped - 1) * perPage;
     return sorted.slice(start, start + perPage);
   }, [sorted, pageClamped, perPage]);
 
-  // stats (sempre do conjunto total carregado)
   const stats = useMemo(() => {
-    const sAll = submissao;
-    const totalAll = sAll.length;
-    const aprovadas = sAll.filter((s) =>
-      ["aprovado_oral", "aprovado_exposicao", "aprovado_escrita"].includes(String(s.status || "").toLowerCase())
+    const totalAll = submissoes.length;
+    const aprovadas = submissoes.filter((item) =>
+      ["aprovada", "aprovada_exposicao", "aprovada_oral"].includes(
+        normalizarStatusPrincipal(item.status)
+      )
     ).length;
-    const reprovadas = sAll.filter((s) => String(s.status || "").toLowerCase() === "reprovado").length;
-    const emAvaliacao = sAll.filter((s) => String(s.status || "").toLowerCase() === "em_avaliacao").length;
-    return { total: totalAll, aprovadas, reprovadas, emAvaliacao };
-  }, [submissao]);
+    const reprovadas = submissoes.filter(
+      (item) => normalizarStatusPrincipal(item.status) === "reprovada"
+    ).length;
+    const emAvaliacao = submissoes.filter(
+      (item) => normalizarStatusPrincipal(item.status) === "em_avaliacao"
+    ).length;
 
-  const setSort = (key) => {
+    return { total: totalAll, aprovadas, reprovadas, emAvaliacao };
+  }, [submissoes]);
+
+  function setSort(key) {
     if (sortKey === key) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      setSortDir((current) => (current === "asc" ? "desc" : "asc"));
     } else {
       setSortKey(key);
       setSortDir("asc");
     }
+
     setPage(1);
-  };
+  }
 
-  const SortBtn = ({ label, active, dir, onClick }) => (
-    <button
-      type="button"
-      onClick={onClick}
-      className="inline-flex items-center gap-1 font-semibold"
-      title={`Ordenar por ${label}`}
-    >
-      <span>{label}</span>
-      {!active && <ArrowUpDown className="w-4 h-4 opacity-70" />}
-      {active && (dir === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />)}
-    </button>
-  );
-
-  const clearFilters = () => {
+  function limparFiltros() {
     setFiltroChamada("");
     setFiltroStatus("");
     setFiltroLinha("");
     setBusca("");
-    setDebouncedBusca("");
+    setBuscaDebounced("");
     setSortKey("");
     setSortDir("asc");
     setPage(1);
     setPerPage(20);
-  };
+  }
+
+  function atualizarStatusLocal(id, patch) {
+    setSubmissoes((current) =>
+      current.map((item) => {
+        if (item.id !== id) return item;
+
+        const payload = typeof patch === "string" ? { status: patch } : patch || {};
+        const next = { ...item, ...payload };
+
+        if (hasAprovacaoExposicao(next)) next._exposicao_aprovada = true;
+        if (hasAprovacaoOral(next)) next._oral_aprovada = true;
+
+        return next;
+      })
+    );
+  }
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-gradient-to-br from-amber-50 to-yellow-100 dark:from-zinc-950 dark:to-zinc-900">
-        <Loader2 className="w-8 h-8 text-amber-600 animate-spin" />
-      </div>
+      <PageShell>
+        <div className="flex min-h-screen items-center justify-center">
+          <div className="rounded-[2rem] border border-white/70 bg-white/90 p-8 text-center shadow-xl dark:border-white/10 dark:bg-slate-900/90">
+            <Loader2 className="mx-auto h-8 w-8 animate-spin text-amber-600" />
+            <p className="mt-4 text-sm font-semibold text-slate-600 dark:text-slate-300">
+              Carregando submissões...
+            </p>
+          </div>
+        </div>
+      </PageShell>
     );
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-gelo dark:bg-zinc-950">
+    <PageShell>
       <HeaderHero stats={stats} />
 
-      <main className="flex-1 px-4 sm:px-6 lg:px-8 2xl:px-10 py-10 mx-auto w-full space-y-8 xl:max-w-[1680px] 2xl:max-w-[1920px]">
+      <main className="mx-auto w-full max-w-screen-2xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+        <Toolbar
+          chamadas={chamadas}
+          linhasTematicas={linhasTematicas}
+          filtroChamada={filtroChamada}
+          setFiltroChamada={setFiltroChamada}
+          filtroStatus={filtroStatus}
+          setFiltroStatus={setFiltroStatus}
+          filtroLinha={filtroLinha}
+          setFiltroLinha={setFiltroLinha}
+          busca={busca}
+          setBusca={setBusca}
+          perPage={perPage}
+          setPerPage={setPerPage}
+          total={total}
+          pageItems={pageItems}
+          hasFilters={Boolean(filtroChamada || filtroStatus || filtroLinha || buscaDebounced)}
+          onReload={carregar}
+          onClear={limparFiltros}
+          onRanking={() => setRankingOpen(true)}
+          onRankingOral={() => setOralOpen(true)}
+          onAvaliadores={() => setAvaliadoresOpen(true)}
+          onExport={() => exportarCSV(sorted)}
+          erro={erro}
+        />
 
-        {/* Toolbar de ações + filtros */}
-        <section className="bg-white dark:bg-zinc-900 rounded-2xl shadow p-5 border dark:border-zinc-800 space-y-4" aria-label="Ações e filtros">
-          {/* Ações */}
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="flex items-center gap-2">
-              <Filter className="w-5 h-5 text-amber-600" aria-hidden="true" />
-              <h2 className="font-semibold text-zinc-800 dark:text-zinc-100">Painel</h2>
-            </div>
+        <SubmissaoTable
+          items={pageItems}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          setSort={setSort}
+          onDetalhe={(item) => {
+            setSelecionada(item);
+            setDetalheOpen(true);
+          }}
+          onAtribuir={(id) => {
+            setSubmissaoIdAtrib(id);
+            setAtribOpen(true);
+          }}
+        />
 
-            <div className="flex flex-1 flex-wrap gap-2 sm:justify-end">
-              <button
-                type="button"
-                onClick={() => setRankingOpen(true)}
-                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-amber-700 text-white hover:bg-amber-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700"
-                title="Abrir ranking (escrita)"
-              >
-                <Award className="w-4 h-4" />
-                Ranking Escrita
-              </button>
+        <SubmissaoCards
+          items={pageItems}
+          onDetalhe={(item) => {
+            setSelecionada(item);
+            setDetalheOpen(true);
+          }}
+          onAtribuir={(id) => {
+            setSubmissaoIdAtrib(id);
+            setAtribOpen(true);
+          }}
+        />
 
-              <button
-                onClick={() => setOralOpen(true)}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-indigo-600"
-                title="Abrir ranking (oral)"
-              >
-                <Mic className="w-4 h-4" />
-                Ranking Oral
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setAvaliadoresOpen(true)}
-                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-600"
-                title="Ver avaliadores com encaminhamentos"
-              >
-                <Users className="w-4 h-4" />
-                Avaliadores
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleExportCSV(sorted)}
-                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-slate-700 text-white hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-slate-700"
-                title="Exportar (CSV) filtrado/ordenado"
-              >
-                <Download className="w-4 h-4" />
-                Exportar CSV
-              </button>
-
-              <button
-                type="button"
-                onClick={clearFilters}
-                className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-zinc-100 text-zinc-800 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
-                title="Limpar filtros e ordenação"
-              >
-                <RotateCcw className="w-4 h-4" />
-                Limpar
-              </button>
-            </div>
-          </div>
-
-          {/* Filtros */}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-            <select
-              value={filtroChamada}
-              onChange={(e) => { setFiltroChamada(e.target.value); setPage(1); }}
-              className="border rounded-md px-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
-              aria-label="Filtrar por chamada"
-            >
-              <option value="">Todas as chamadas</option>
-              {chamadas.map((c) => (
-                <option key={c.id} value={c.id}>{c.titulo}</option>
-              ))}
-            </select>
-
-            <select
-              value={filtroStatus}
-              onChange={(e) => { setFiltroStatus(e.target.value); setPage(1); }}
-              className="border rounded-md px-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
-              aria-label="Filtrar por status"
-            >
-              <option value="">Todos os status</option>
-              <option value="submetido">Submetido</option>
-              <option value="em_avaliacao">Em avaliação</option>
-              <option value="aprovado_exposicao">Aprovado (Exposição)</option>
-              <option value="aprovado_oral">Aprovado (Oral)</option>
-              <option value="aprovado_escrita">Aprovado (Escrita)</option>
-              <option value="reprovado">Reprovado</option>
-            </select>
-
-            <select
-              value={filtroLinha}
-              onChange={(e) => { setFiltroLinha(e.target.value); setPage(1); }}
-              className="border rounded-md px-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
-              aria-label="Filtrar por linha temática"
-            >
-              <option value="">Todas as linhas</option>
-              {linhasTematicas.map((l) => (
-                <option key={l.id} value={l.id}>{l.nome}</option>
-              ))}
-            </select>
-
-            <div className="relative sm:col-span-2 lg:col-span-1">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" aria-hidden="true" />
-              <input
-                value={busca}
-                onChange={(e) => { setBusca(e.target.value); setPage(1); }}
-                className="border rounded-md pl-9 pr-9 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
-                placeholder="Buscar título, autor, linha…"
-                aria-label="Buscar"
-              />
-              {busca && (
-                <button
-                  type="button"
-                  onClick={() => { setBusca(""); setDebouncedBusca(""); setPage(1); }}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-700"
-                  aria-label="Limpar busca"
-                >
-                  <X className="w-4 h-4 text-zinc-500" />
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Estado do filtro/ordem e paginação compacta */}
-          <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-zinc-600 dark:text-zinc-300">
-            <span>
-              Exibindo <strong>{pageItems.length}</strong> de <strong>{total}</strong> resultados
-              { (filtroChamada || filtroStatus || filtroLinha || debouncedBusca) && " (após filtros)" }.
-            </span>
-            <div className="flex items-center gap-2">
-              <label className="flex items-center gap-1">
-                Itens por página
-                <select
-                  value={perPage}
-                  onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1); }}
-                  className="ml-1 border rounded px-1 py-0.5 text-xs dark:border-zinc-700 dark:bg-zinc-800"
-                >
-                  {[10, 20, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
-                </select>
-              </label>
-              <div className="inline-flex items-center gap-1">
-                <button
-                  className="p-1 rounded border dark:border-zinc-700 disabled:opacity-50"
-                  disabled={pageClamped <= 1}
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  aria-label="Página anterior"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                <span className="px-1">
-                  Página <strong>{pageClamped}</strong> / {totalPages}
-                </span>
-                <button
-                  className="p-1 rounded border dark:border-zinc-700 disabled:opacity-50"
-                  disabled={pageClamped >= totalPages}
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  aria-label="Próxima página"
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Tabela (desktop) */}
-        <section className="hidden md:block overflow-x-auto 2xl:overflow-x-visible bg-white dark:bg-zinc-900 rounded-2xl shadow border dark:border-zinc-800" aria-label="Tabela de submissões">
-          <table className="w-full table-auto text-sm">
-            <caption className="sr-only">Lista de submissões filtradas</caption>
-            <thead className="bg-amber-600 text-white sticky top-0 z-10">
-              <tr>
-                <th scope="col" className="p-3 text-left w-[28%] min-w-[360px]">
-                  <SortBtn label="Título" active={sortKey==="titulo"} dir={sortDir} onClick={() => setSort("titulo")} />
-                </th>
-                <th scope="col" className="p-3 text-left w-[16%] min-w-[220px]">
-                  <SortBtn label="Autor" active={sortKey==="autor"} dir={sortDir} onClick={() => setSort("autor")} />
-                </th>
-                <th scope="col" className="p-3 text-left w-[16%] min-w-[220px]">
-                  <SortBtn label="Chamada" active={sortKey==="chamada"} dir={sortDir} onClick={() => setSort("chamada")} />
-                </th>
-                <th scope="col" className="p-3 text-left w-[16%] min-w-[220px]">
-                  <SortBtn label="Linha temática" active={sortKey==="linha"} dir={sortDir} onClick={() => setSort("linha")} />
-                </th>
-                <th scope="col" className="p-3 text-center w-[10%] min-w-[140px]">
-                  <SortBtn label="Submetido em" active={sortKey==="submetido"} dir={sortDir} onClick={() => setSort("submetido")} />
-                </th>
-                <th scope="col" className="p-3 text-center w-[10%] min-w-[140px]">Status</th>
-                <th scope="col" className="p-3 text-center w-[6%]  min-w-[90px]">
-                  <SortBtn label="Nota (escrita)" active={sortKey==="nota_escrita"} dir={sortDir} onClick={() => setSort("nota_escrita")} />
-                </th>
-                <th scope="col" className="p-3 text-center w-[6%]  min-w-[90px]">
-                  <SortBtn label="Nota (oral)" active={sortKey==="nota_oral"} dir={sortDir} onClick={() => setSort("nota_oral")} />
-                </th>
-                <th scope="col" className="p-3 text-center w-[6%]  min-w-[90px]">
-                  <SortBtn label="Nota (final)" active={sortKey==="nota_final"} dir={sortDir} onClick={() => setSort("nota_final")} />
-                </th>
-                <th scope="col" className="p-3 text-center w-[12%] min-w-[180px]">Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageItems.length === 0 && (
-                <tr>
-                  <td colSpan={10} className="text-center py-6 text-zinc-600">Nenhuma submissão encontrada.</td>
-                </tr>
-              )}
-
-              {pageItems.map((s) => (
-                <tr
-                  key={s.id}
-                  className={
-                    "border-b dark:border-zinc-800 hover:bg-amber-50/60 dark:hover:bg-zinc-800/40 transition " +
-                    (hasAnexo(s) ? "border-l-4 border-l-emerald-500" : "border-l-4 border-l-zinc-300 dark:border-l-zinc-700")
-                  }
-                >
-                  <td className="p-3 align-top" title={s.titulo}>
-                    <div className="flex items-start gap-2">
-                      <span className="font-medium text-zinc-800 dark:text-zinc-100 whitespace-normal break-words">{s.titulo}</span>
-                      <span
-                        className={
-                          "shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium " +
-                          (hasAnexo(s) ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200" : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300")
-                        }
-                        title={hasAnexo(s) ? "Este trabalho possui anexo (pôster ou banner)" : "Nenhum anexo enviado"}
-                      >
-                        <Paperclip className="h-3 w-3" />
-                        {hasAnexo(s) ? "Anexo" : "Sem anexo"}
-                      </span>
-                    </div>
-                  </td>
-
-                  <td className="p-3">
-                    <div className="flex flex-col">
-                      <span className="font-medium text-zinc-800 dark:text-zinc-100 whitespace-normal break-words">{s.autor_nome}</span>
-                      <span className="text-xs text-zinc-500 whitespace-normal break-words">{s.autor_email}</span>
-                    </div>
-                  </td>
-
-                  <td className="p-3 text-zinc-700 dark:text-zinc-300 whitespace-normal break-words">
-                    {s.chamada_titulo}
-                  </td>
-
-                  <td className="p-3 text-zinc-700 dark:text-zinc-300 whitespace-normal break-words">
-                    {s.linha_tematica_nome || s.linhaTematicaNome || "—"}
-                  </td>
-
-                  <td className="p-3 text-center">
-                    {String(s.status || "").toLowerCase() === "rascunho" ? "—" : fmtDateTimeBR(s.submetido_em || s.criado_em)}
-                  </td>
-
-                  <td className="p-3 text-center">
-                    <StatusAndApprovals s={s} />
-                  </td>
-
-                  <td className="p-3 text-center font-semibold text-zinc-800 dark:text-zinc-100">
-                    {fmtNota(s.nota_escrita)}
-                  </td>
-                  <td className="p-3 text-center font-semibold text-zinc-800 dark:text-zinc-100">
-                    {fmtNota(s.nota_oral)}
-                  </td>
-                  <td className="p-3 text-center font-semibold text-zinc-800 dark:text-zinc-100">
-                    {fmtNota(s.nota_final)}
-                  </td>
-
-                  <td className="p-3">
-                    <div className="flex items-center justify-center gap-2">
-                      <button
-                        onClick={() => { setSelecionada(s); setDetalheOpen(true); }}
-                        className="px-3 py-1.5 rounded-full bg-amber-700 text-white hover:bg-amber-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700"
-                        aria-label={`Abrir detalhes de ${s.titulo}`}
-                      >
-                        Ver
-                      </button>
-                      <button
-                        onClick={() => { setSubIdAtrib(s.id); setAtribOpen(true); }}
-                        className="px-3 py-1.5 rounded-full bg-emerald-600 text-white hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-600"
-                        aria-label={`Incluir avaliadores para ${s.titulo}`}
-                      >
-                        Incluir avaliadores
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-
-        {/* Cards (mobile) */}
-        <section className="md:hidden grid grid-cols-1 gap-3" aria-label="Cards de submissões">
-          {pageItems.length === 0 && (
-            <div className="text-center py-6 text-zinc-600 bg-white dark:bg-zinc-900 rounded-2xl shadow border dark:border-zinc-800">
-              Nenhuma submissão encontrada.
-            </div>
-          )}
-
-          {pageItems.map((s) => (
-            <div key={s.id} className="bg-white dark:bg-zinc-900 rounded-2xl shadow border dark:border-zinc-800 p-4 space-y-2">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="flex items-start gap-2">
-                    <p className="font-semibold text-zinc-800 dark:text-zinc-100 whitespace-normal break-words">{s.titulo}</p>
-                    <span
-                      className={
-                        "shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium " +
-                        (hasAnexo(s) ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200" : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300")
-                      }
-                    >
-                      <Paperclip className="h-3 w-3" />
-                      {hasAnexo(s) ? "Anexo" : "Sem anexo"}
-                    </span>
-                  </div>
-                  <p className="text-xs text-zinc-500 whitespace-normal break-words">{s.chamada_titulo}</p>
-                  <p className="text-xs text-zinc-500 whitespace-normal break-words">
-                    {s.linha_tematica_nome || s.linhaTematicaNome || "—"}
-                  </p>
-                </div>
-                <StatusAndApprovals s={s} />
-              </div>
-
-              <p className="text-sm text-zinc-700 dark:text-zinc-300 whitespace-normal break-words">
-                <span className="font-medium">{s.autor_nome}</span>
-                <span className="text-zinc-500"> · {s.autor_email}</span>
-              </p>
-
-              {String(s.status || "").toLowerCase() !== "rascunho" && (
-                <p className="text-xs text-zinc-500">
-                  Submetido em: {fmtDateTimeBR(s.submetido_em || s.criado_em)}
-                </p>
-              )}
-
-              <div className="grid grid-cols-3 gap-2 text-center pt-1">
-                <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800 p-2">
-                  <p className="text-[10px] text-zinc-500">Escrita</p>
-                  <p className="text-sm font-semibold">{fmtNota(s.nota_escrita)}</p>
-                </div>
-                <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800 p-2">
-                  <p className="text-[10px] text-zinc-500">Oral</p>
-                  <p className="text-sm font-semibold">{fmtNota(s.nota_oral)}</p>
-                </div>
-                <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800 p-2">
-                  <p className="text-[10px] text-zinc-500">Final</p>
-                  <p className="text-sm font-semibold">{fmtNota(s.nota_final)}</p>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end pt-2 gap-2">
-                <button
-                  onClick={() => { setSelecionada(s); setDetalheOpen(true); }}
-                  className="px-3 py-1.5 rounded-full bg-amber-700 text-white"
-                  aria-label={`Abrir detalhes de ${s.titulo}`}
-                >
-                  Ver
-                </button>
-                <button
-                  onClick={() => { setSubIdAtrib(s.id); setAtribOpen(true); }}
-                  className="px-3 py-1.5 rounded-full bg-emerald-600 text-white"
-                  aria-label={`Incluir avaliadores para ${s.titulo}`}
-                >
-                  Avaliadores
-                </button>
-              </div>
-            </div>
-          ))}
-
-          {/* paginação mobile */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-center gap-3 pt-2">
-              <button
-                className="px-3 py-1.5 rounded border dark:border-zinc-700 disabled:opacity-50"
-                disabled={pageClamped <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <span className="text-sm">Página {pageClamped} / {totalPages}</span>
-              <button
-                className="px-3 py-1.5 rounded border dark:border-zinc-700 disabled:opacity-50"
-                disabled={pageClamped >= totalPages}
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-          )}
-        </section>
+        <Paginacao
+          page={pageClamped}
+          totalPages={totalPages}
+          setPage={setPage}
+          perPage={perPage}
+          setPerPage={setPerPage}
+          total={total}
+        />
       </main>
 
       <Footer />
 
-      {/* Modais */}
       <AnimatePresence>
-        {detalheOpen && (
+        {detalheOpen ? (
           <ModalDetalhesSubmissao
             open={detalheOpen}
             onClose={() => setDetalheOpen(false)}
             submissao={selecionada}
             onDetectAnexo={(id, has) => {
               if (!has) return;
-              setsubmissao((prev) => prev.map((it) => (it.id === id ? { ...it, _hasAnexo: true } : it)));
+              setSubmissoes((current) =>
+                current.map((item) => (item.id === id ? { ...item, _hasAnexo: true } : item))
+              );
             }}
           />
-        )}
+        ) : null}
 
-        {atribOpen && (
+        {atribOpen ? (
           <ModalAtribuirAvaliadores
             isOpen={atribOpen}
-            submissaoId={subIdAtrib}
+            submissaoId={submissaoIdAtrib}
             onClose={() => setAtribOpen(false)}
-            onChanged={() => {}}
+            onChanged={carregar}
           />
-        )}
+        ) : null}
 
-        {rankingOpen && (
+        {rankingOpen ? (
           <RankingModal
             key="ranking-modal"
             open={rankingOpen}
             onClose={() => setRankingOpen(false)}
             itens={sorted}
-            onStatusChange={(id, patch) => {
-              setsubmissao((prev) =>
-                prev.map((it) => {
-                  if (it.id !== id) return it;
-                  const p = typeof patch === "string" ? { status: patch } : patch || {};
-                  const stLower = String(p.status || it.status || "").toLowerCase();
-                  const escritaLower = String(p.status_escrita || it.status_escrita || "").toLowerCase();
-                  const oralLower = String(p.status_oral || it.status_oral || "").toLowerCase();
-
-                  const aprovExpoAgora =
-                    p._exposicao_aprovada === true ||
-                    stLower === "aprovado_exposicao" ||
-                    stLower === "aprovado_escrita" ||
-                    escritaLower === "aprovado";
-
-                  const aprovOralAgora =
-                    p._oral_aprovada === true ||
-                    stLower === "aprovado_oral" ||
-                    oralLower === "aprovado";
-
-                  const aprovExpoAntes = it._exposicao_aprovada === true;
-                  const aprovOralAntes = it._oral_aprovada === true;
-
-                  const novaExpo = aprovExpoAntes || aprovExpoAgora;
-                  const novaOral = aprovOralAntes || aprovOralAgora;
-
-                  let statusFinal = it.status;
-                  if (stLower === "reprovado") statusFinal = "reprovado";
-                  else if (novaExpo || novaOral) statusFinal = "aprovado";
-                  else if (p.status) statusFinal = p.status;
-
-                  return {
-                    ...it,
-                    status: statusFinal,
-                    _exposicao_aprovada: novaExpo,
-                    _oral_aprovada: novaOral,
-                    status_escrita: p.status_escrita || it.status_escrita,
-                    status_oral: p.status_oral || it.status_oral,
-                  };
-                })
-              );
-            }}
+            onStatusChange={atualizarStatusLocal}
           />
-        )}
+        ) : null}
 
-        <RankingOralModal open={oralOpen} onClose={() => setOralOpen(false)} itens={sorted} />
+        {oralOpen ? (
+          <RankingOralModal
+            open={oralOpen}
+            onClose={() => setOralOpen(false)}
+            itens={sorted}
+          />
+        ) : null}
 
-        {avaliadoresOpen && (
+        {avaliadoresOpen ? (
           <ModalAvaliadores
             key="avaliadores-modal"
             isOpen={avaliadoresOpen}
             onClose={() => setAvaliadoresOpen(false)}
           />
-        )}
+        ) : null}
       </AnimatePresence>
-    </div>
+    </PageShell>
   );
 }
 
-/* ————————————————— HeaderHero (mantém degradê 3 cores) ————————————————— */
-function StatPill({ label, value, tone = "amber" }) {
-  const tones =
-    {
-      amber: { text: "text-amber-50", bg: "bg-amber-500/20", border: "border-amber-300/40" },
-      green: { text: "text-emerald-50", bg: "bg-emerald-500/20", border: "border-emerald-300/40" },
-      blue: { text: "text-blue-50", bg: "bg-blue-500/20", border: "border-blue-300/40" },
-      red: { text: "text-rose-50", bg: "bg-rose-500/20", border: "border-rose-300/40" },
-      slate: { text: "text-slate-50", bg: "bg-slate-500/20", border: "border-slate-300/40" },
-    }[tone] || { text: "text-slate-50", bg: "bg-slate-500/20", border: "border-slate-300/40" };
+/* =========================================================================
+   Toolbar
+=========================================================================== */
 
+function Toolbar({
+  chamadas,
+  linhasTematicas,
+  filtroChamada,
+  setFiltroChamada,
+  filtroStatus,
+  setFiltroStatus,
+  filtroLinha,
+  setFiltroLinha,
+  busca,
+  setBusca,
+  total,
+  pageItems,
+  hasFilters,
+  onReload,
+  onClear,
+  onRanking,
+  onRankingOral,
+  onAvaliadores,
+  onExport,
+  erro,
+}) {
   return (
-    <div className={`rounded-2xl border ${tones.border} ${tones.bg} backdrop-blur px-3 py-3 text-left`}>
-      <p className="text-xs uppercase tracking-wide text-white/85">{label}</p>
-      <p className={`mt-1 font-bold text-lg sm:text-2xl ${tones.text}`}>{value}</p>
-    </div>
-  );
-}
+    <GlassCard className="p-4 sm:p-5">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+        <div>
+          <h2 className="flex items-center gap-2 text-xl font-black text-slate-900 dark:text-white">
+            <SlidersHorizontal className="h-5 w-5 text-amber-600" />
+            Painel de controle
+          </h2>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            Filtre, audite, exporte e encaminhe submissões para avaliação.
+          </p>
+        </div>
 
-function HeaderHero({ stats }) {
-  const { total, aprovadas, emAvaliacao, reprovadas } = stats || {};
-  return (
-    <motion.header initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} className="w-full text-white">
-      <div className="bg-gradient-to-br from-amber-700 via-orange-600 to-yellow-600">
-        <div className="mx-auto px-4 sm:px-6 lg:px-8 2xl:px-10 xl:max-w-[1680px] 2xl:max-w-[1920px] py-10 sm:py-12 text-center">
-          <div className="flex items-center justify-center gap-3">
-            <ClipboardList className="h-9 w-9" aria-hidden="true" />
-            <h1 className="text-2xl sm:text-3xl font-extrabold leading-tight text-center">Submissão de Trabalhos — Administração</h1>
-          </div>
-          <p className="mt-2 text-center text-sm sm:text-base opacity-90">Acompanhe, filtre e audite todos os trabalhos submetidos às chamadas.</p>
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <StatPill label="Total" value={fmt(total, "—")} tone="amber" />
-            <StatPill label="Aprovadas" value={fmt(aprovadas, "—")} tone="green" />
-            <StatPill label="Em avaliação" value={fmt(emAvaliacao, "—")} tone="blue" />
-            <StatPill label="Reprovadas" value={fmt(reprovadas, "—")} tone="red" />
-          </div>
+        <div className="flex flex-wrap gap-2">
+          <Button tone="warning" icon={Award} onClick={onRanking}>
+            Ranking escrita
+          </Button>
+          <Button tone="slate" icon={Mic} onClick={onRankingOral}>
+            Ranking oral
+          </Button>
+          <Button tone="success" icon={Users} onClick={onAvaliadores}>
+            Avaliadores
+          </Button>
+          <Button tone="slate" icon={Download} onClick={onExport}>
+            Exportar CSV
+          </Button>
+          <Button tone="ghost" icon={RefreshCw} onClick={onReload}>
+            Recarregar
+          </Button>
         </div>
       </div>
-    </motion.header>
+
+      <div className="mt-5 grid gap-3 lg:grid-cols-[1fr_1fr_1fr_1.2fr_auto]">
+        <select
+          value={filtroChamada}
+          onChange={(event) => setFiltroChamada(event.target.value)}
+          className="h-12 rounded-2xl border border-slate-200 bg-white px-3 text-sm outline-none transition focus:ring-2 focus:ring-amber-500 dark:border-slate-700 dark:bg-slate-950"
+          aria-label="Filtrar por chamada"
+        >
+          <option value="">Todas as chamadas</option>
+          {chamadas.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.titulo}
+            </option>
+          ))}
+        </select>
+
+        <select
+          value={filtroStatus}
+          onChange={(event) => setFiltroStatus(event.target.value)}
+          className="h-12 rounded-2xl border border-slate-200 bg-white px-3 text-sm outline-none transition focus:ring-2 focus:ring-amber-500 dark:border-slate-700 dark:bg-slate-950"
+          aria-label="Filtrar por status"
+        >
+          <option value="">Todos os status</option>
+          <option value="rascunho">Rascunho</option>
+          <option value="submetida">Submetida</option>
+          <option value="em_avaliacao">Em avaliação</option>
+          <option value="aprovada_exposicao">Aprovada para exposição</option>
+          <option value="aprovada_oral">Aprovada para oral</option>
+          <option value="aprovada">Aprovada</option>
+          <option value="reprovada">Reprovada</option>
+          <option value="cancelada">Cancelada</option>
+        </select>
+
+        <select
+          value={filtroLinha}
+          onChange={(event) => setFiltroLinha(event.target.value)}
+          className="h-12 rounded-2xl border border-slate-200 bg-white px-3 text-sm outline-none transition focus:ring-2 focus:ring-amber-500 dark:border-slate-700 dark:bg-slate-950"
+          aria-label="Filtrar por linha temática"
+        >
+          <option value="">Todas as linhas</option>
+          {linhasTematicas.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.nome}
+            </option>
+          ))}
+        </select>
+
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input
+            value={busca}
+            onChange={(event) => setBusca(event.target.value)}
+            className="h-12 w-full rounded-2xl border border-slate-200 bg-white pl-11 pr-10 text-sm outline-none transition focus:ring-2 focus:ring-amber-500 dark:border-slate-700 dark:bg-slate-950"
+            placeholder="Buscar título, autor, e-mail, chamada..."
+            aria-label="Buscar"
+          />
+          {busca ? (
+            <button
+              type="button"
+              onClick={() => setBusca("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 rounded-xl p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
+              aria-label="Limpar busca"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          ) : null}
+        </div>
+
+        <Button tone="ghost" icon={RotateCcw} onClick={onClear}>
+          Limpar
+        </Button>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500 dark:text-slate-400">
+        <span>
+          Exibindo <strong>{pageItems.length}</strong> de <strong>{total}</strong> resultados
+          {hasFilters ? " após filtros." : "."}
+        </span>
+      </div>
+
+      {erro ? (
+        <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+          <div className="flex gap-2">
+            <AlertCircle className="mt-0.5 h-4 w-4 flex-none" />
+            <span>{erro}</span>
+          </div>
+        </div>
+      ) : null}
+    </GlassCard>
+  );
+}
+
+/* =========================================================================
+   Tabela desktop
+=========================================================================== */
+
+function SortButton({ label, active, dir, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1 font-black"
+      title={`Ordenar por ${label}`}
+    >
+      <span>{label}</span>
+      {!active ? <ArrowUpDown className="h-4 w-4 opacity-70" /> : null}
+      {active && dir === "asc" ? <ArrowUp className="h-4 w-4" /> : null}
+      {active && dir === "desc" ? <ArrowDown className="h-4 w-4" /> : null}
+    </button>
+  );
+}
+
+function SubmissaoTable({ items, sortKey, sortDir, setSort, onDetalhe, onAtribuir }) {
+  return (
+    <GlassCard className="hidden overflow-hidden lg:block">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[1280px] text-sm">
+          <caption className="sr-only">Lista administrativa de submissões de trabalhos</caption>
+
+          <thead className="bg-slate-950 text-white">
+            <tr>
+              <th className="p-4 text-left">
+                <SortButton
+                  label="Título"
+                  active={sortKey === "titulo"}
+                  dir={sortDir}
+                  onClick={() => setSort("titulo")}
+                />
+              </th>
+              <th className="p-4 text-left">
+                <SortButton
+                  label="Autor"
+                  active={sortKey === "autor"}
+                  dir={sortDir}
+                  onClick={() => setSort("autor")}
+                />
+              </th>
+              <th className="p-4 text-left">
+                <SortButton
+                  label="Chamada"
+                  active={sortKey === "chamada"}
+                  dir={sortDir}
+                  onClick={() => setSort("chamada")}
+                />
+              </th>
+              <th className="p-4 text-left">
+                <SortButton
+                  label="Linha"
+                  active={sortKey === "linha"}
+                  dir={sortDir}
+                  onClick={() => setSort("linha")}
+                />
+              </th>
+              <th className="p-4 text-center">
+                <SortButton
+                  label="Submetido"
+                  active={sortKey === "submetido"}
+                  dir={sortDir}
+                  onClick={() => setSort("submetido")}
+                />
+              </th>
+              <th className="p-4 text-center">Status</th>
+              <th className="p-4 text-center">
+                <SortButton
+                  label="Escrita"
+                  active={sortKey === "nota_escrita"}
+                  dir={sortDir}
+                  onClick={() => setSort("nota_escrita")}
+                />
+              </th>
+              <th className="p-4 text-center">
+                <SortButton
+                  label="Oral"
+                  active={sortKey === "nota_oral"}
+                  dir={sortDir}
+                  onClick={() => setSort("nota_oral")}
+                />
+              </th>
+              <th className="p-4 text-center">
+                <SortButton
+                  label="Final"
+                  active={sortKey === "nota_final"}
+                  dir={sortDir}
+                  onClick={() => setSort("nota_final")}
+                />
+              </th>
+              <th className="p-4 text-center">Ações</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {items.length === 0 ? (
+              <tr>
+                <td colSpan={10} className="p-10 text-center text-slate-500">
+                  Nenhuma submissão encontrada.
+                </td>
+              </tr>
+            ) : null}
+
+            {items.map((item) => (
+              <tr
+                key={item.id}
+                className={cx(
+                  "border-b border-slate-100 transition hover:bg-amber-50/60 dark:border-slate-800 dark:hover:bg-slate-800/40",
+                  hasAnexo(item) ? "border-l-4 border-l-emerald-500" : "border-l-4 border-l-slate-300"
+                )}
+              >
+                <td className="p-4 align-top">
+                  <div className="flex min-w-0 items-start gap-2">
+                    <div className="min-w-0">
+                      <p className="line-clamp-2 font-black text-slate-900 dark:text-white">
+                        {item.titulo || "—"}
+                      </p>
+                      <div className="mt-2">
+                        <AnexoBadge item={item} />
+                      </div>
+                    </div>
+                  </div>
+                </td>
+
+                <td className="p-4 align-top">
+                  <p className="font-semibold text-slate-800 dark:text-slate-100">
+                    {item.autor_nome || "—"}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">{item.autor_email || "—"}</p>
+                </td>
+
+                <td className="p-4 align-top text-slate-700 dark:text-slate-300">
+                  {item.chamada_titulo || "—"}
+                </td>
+
+                <td className="p-4 align-top text-slate-700 dark:text-slate-300">
+                  {item.linha_tematica_nome || item.linha_tematica_codigo || "—"}
+                </td>
+
+                <td className="p-4 text-center align-top">
+                  {normalizarStatusPrincipal(item.status) === "rascunho"
+                    ? "—"
+                    : fmtDateTimeBR(item.submetido_em || item.criado_em)}
+                </td>
+
+                <td className="p-4 text-center align-top">
+                  <div className="flex flex-col items-center gap-2">
+                    <StatusBadge status={item.status} />
+                    <Aprovacoes item={item} />
+                  </div>
+                </td>
+
+                <td className="p-4 text-center align-top font-black">{fmtNota(item.nota_escrita)}</td>
+                <td className="p-4 text-center align-top font-black">{fmtNota(item.nota_oral)}</td>
+                <td className="p-4 text-center align-top font-black">{fmtNota(item.nota_final)}</td>
+
+                <td className="p-4 align-top">
+                  <div className="flex justify-center gap-2">
+                    <Button tone="warning" size="sm" icon={Eye} onClick={() => onDetalhe(item)}>
+                      Ver
+                    </Button>
+                    <Button tone="success" size="sm" icon={Users} onClick={() => onAtribuir(item.id)}>
+                      Avaliadores
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </GlassCard>
+  );
+}
+
+function AnexoBadge({ item }) {
+  return hasAnexo(item) ? (
+    <Badge tone="emerald" icon={Paperclip}>Anexo</Badge>
+  ) : (
+    <Badge tone="slate" icon={Paperclip}>Sem anexo</Badge>
+  );
+}
+
+/* =========================================================================
+   Cards mobile/tablet
+=========================================================================== */
+
+function SubmissaoCards({ items, onDetalhe, onAtribuir }) {
+  return (
+    <section className="grid gap-3 lg:hidden" aria-label="Cards de submissões">
+      {items.length === 0 ? (
+        <GlassCard className="p-8 text-center">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-slate-100 dark:bg-slate-800">
+            <Filter className="h-7 w-7 text-slate-400" />
+          </div>
+          <h3 className="mt-4 text-lg font-black text-slate-900 dark:text-white">
+            Nenhuma submissão encontrada
+          </h3>
+          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+            Ajuste os filtros ou atualize a listagem.
+          </p>
+        </GlassCard>
+      ) : null}
+
+      {items.map((item) => (
+        <motion.article
+          key={item.id}
+          layout
+          className="overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900"
+        >
+          <div
+            className={cx(
+              "h-1.5 bg-gradient-to-r",
+              hasAnexo(item)
+                ? "from-emerald-500 via-cyan-400 to-sky-500"
+                : "from-slate-300 via-slate-400 to-slate-500"
+            )}
+          />
+
+          <div className="space-y-4 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="line-clamp-3 font-black text-slate-900 dark:text-white">
+                  {item.titulo || "—"}
+                </h3>
+                <p className="mt-1 text-xs text-slate-500">{item.chamada_titulo || "—"}</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {item.linha_tematica_nome || item.linha_tematica_codigo || "—"}
+                </p>
+              </div>
+
+              <div className="flex flex-col items-end gap-1">
+                <StatusBadge status={item.status} />
+                <AnexoBadge item={item} />
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3 text-sm dark:border-slate-800 dark:bg-slate-950/50">
+              <p className="font-semibold text-slate-800 dark:text-slate-100">
+                {item.autor_nome || "—"}
+              </p>
+              <p className="text-xs text-slate-500">{item.autor_email || "—"}</p>
+              {normalizarStatusPrincipal(item.status) !== "rascunho" ? (
+                <p className="mt-2 text-xs text-slate-500">
+                  Submetido em: {fmtDateTimeBR(item.submetido_em || item.criado_em)}
+                </p>
+              ) : null}
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <NotaBox label="Escrita" value={fmtNota(item.nota_escrita)} />
+              <NotaBox label="Oral" value={fmtNota(item.nota_oral)} />
+              <NotaBox label="Final" value={fmtNota(item.nota_final)} />
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button tone="warning" size="sm" icon={Eye} onClick={() => onDetalhe(item)}>
+                Ver
+              </Button>
+              <Button tone="success" size="sm" icon={Users} onClick={() => onAtribuir(item.id)}>
+                Avaliadores
+              </Button>
+            </div>
+          </div>
+        </motion.article>
+      ))}
+    </section>
+  );
+}
+
+function NotaBox({ label, value }) {
+  return (
+    <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/50">
+      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+        {label}
+      </p>
+      <p className="mt-1 text-lg font-black text-slate-900 dark:text-white">{value}</p>
+    </div>
+  );
+}
+
+/* =========================================================================
+   Paginação
+=========================================================================== */
+
+function Paginacao({ page, totalPages, setPage, perPage, setPerPage, total }) {
+  return (
+    <GlassCard className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="text-sm text-slate-500 dark:text-slate-400">
+        Total de <strong>{total}</strong> registros encontrados.
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+          Itens por página
+          <select
+            value={perPage}
+            onChange={(event) => {
+              setPerPage(Number(event.target.value));
+              setPage(1);
+            }}
+            className="rounded-xl border border-slate-200 bg-white px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+          >
+            {[10, 20, 50, 100].map((n) => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+        </label>
+
+        <div className="flex items-center gap-2">
+          <Button
+            tone="slate"
+            size="sm"
+            icon={ChevronLeft}
+            disabled={page <= 1}
+            onClick={() => setPage((current) => Math.max(1, current - 1))}
+          >
+            Anterior
+          </Button>
+
+          <span className="text-sm font-semibold text-slate-600 dark:text-slate-300">
+            Página {page} / {totalPages}
+          </span>
+
+          <Button
+            tone="slate"
+            size="sm"
+            icon={ChevronRight}
+            disabled={page >= totalPages}
+            onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+          >
+            Próxima
+          </Button>
+        </div>
+      </div>
+    </GlassCard>
   );
 }

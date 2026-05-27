@@ -1,12 +1,26 @@
+// 📁 src/utils/gerarLinkGoogleAgenda.js — v2.0
+
+import {
+  addDaysYMD,
+  datetimeLocalToWall,
+  extractYmd,
+  isDateOnly,
+  isIsoWithTimezone,
+  isWallDateTime,
+} from "./dateTime";
+
 /**
- * 📌 utils/gerarLinkGoogleAgenda.js — PREMIUM++
+ * Gera link do Google Calendar com proteção anti-fuso.
  *
- * Gera link do Google Calendar a partir de datas LOCAIS, sem “pulo de data”.
- * - Aceita: Date | "YYYY-MM-DD" | "YYYY-MM-DD HH:mm" | "YYYY-MM-DDTHH:mm(:ss?)"
- *           | ISO com Z/offset ("2025-09-03T14:00:00Z" | "2025-09-03T14:00:00-03:00")
- * - Detecta automaticamente eventos ALL-DAY quando ambas as entradas são apenas data.
- * - Sanitiza texto (remove chars de controle, normaliza quebras) e limita tamanho.
- * - Parâmetros opcionais: attendees[], rrule.
+ * Regras:
+ * - "YYYY-MM-DD" + "YYYY-MM-DD" => evento all-day.
+ * - "YYYY-MM-DD HH:mm[:ss]" => horário de parede com ctz.
+ * - "YYYY-MM-DDTHH:mm[:ss]" => tratado como horário de parede.
+ * - ISO com Z/offset ou Date => instante absoluto convertido para UTC.
+ *
+ * Não usar:
+ * - Date local para interpretar horário de parede da plataforma.
+ * - helpers duplicados de data.
  */
 
 const DEFAULT_TZ = "America/Sao_Paulo";
@@ -14,160 +28,247 @@ const DEFAULT_TZ = "America/Sao_Paulo";
 const MAX_TITLE = 300;
 const MAX_DETAILS = 4000;
 const MAX_LOCATION = 1000;
+const MAX_ATTENDEES = 50;
 
-/* ──────────────────────────────────────────────────────────────
-   Helpers de texto
-   ────────────────────────────────────────────────────────────── */
 function sanitizeText(input = "") {
-  const s = String(input ?? "");
-  const cleaned = s.replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, "");
-  return cleaned.replace(/\r\n?/g, "\n").trim();
+  return String(input ?? "")
+    .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, "")
+    .replace(/\r\n?/g, "\n")
+    .trim();
 }
 
-function clampText(input, maxLen) {
-  const s = sanitizeText(input);
-  if (!Number.isFinite(maxLen) || maxLen <= 0) return s;
-  return s.length > maxLen ? s.slice(0, maxLen) : s;
-}
+function clampText(input, maxLength) {
+  const text = sanitizeText(input);
 
-/* ──────────────────────────────────────────────────────────────
-   Helpers de data/hora
-   ────────────────────────────────────────────────────────────── */
-function isValidYmdParts(y, m, d) {
-  const yy = Number(y);
-  const mm = Number(m);
-  const dd = Number(d);
-
-  if (!Number.isInteger(yy) || yy < 1900 || yy > 2200) return false;
-  if (!Number.isInteger(mm) || mm < 1 || mm > 12) return false;
-  if (!Number.isInteger(dd) || dd < 1 || dd > 31) return false;
-
-  const dt = new Date(Date.UTC(yy, mm - 1, dd));
-  return (
-    dt.getUTCFullYear() === yy &&
-    dt.getUTCMonth() === mm - 1 &&
-    dt.getUTCDate() === dd
-  );
-}
-
-function isAllDayLike(s) {
-  if (typeof s !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
-  const [y, m, d] = s.split("-");
-  return isValidYmdParts(y, m, d);
-}
-
-function hasExplicitOffsetOrZ(s) {
-  return /[zZ]$/.test(s) || /[+-]\d{2}:?\d{2}$/.test(s);
-}
-
-function pad2(n) {
-  return String(n).padStart(2, "0");
-}
-
-function dateToYMDLocal(d) {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
-
-/**
- * Constrói Date no fuso LOCAL sem shift indesejado.
- * - ISO com Z/offset → respeita a zona embutida.
- * - "YYYY-MM-DD" → local 00:00.
- * - "YYYY-MM-DD[ T]HH:mm[:ss]" → local no horário informado.
- * - Date → retorna a própria instância (se válida).
- */
-function toLocalDate(dateLike) {
-  if (dateLike instanceof Date) {
-    return isNaN(dateLike) ? new Date(NaN) : dateLike;
+  if (!Number.isFinite(maxLength) || maxLength <= 0) {
+    return text;
   }
 
-  const s = String(dateLike || "").trim();
-  if (!s) return new Date(NaN);
-
-  if (hasExplicitOffsetOrZ(s)) {
-    const d = new Date(s);
-    return isNaN(d) ? new Date(NaN) : d;
-  }
-
-  if (isAllDayLike(s)) {
-    const [y, m, d] = s.split("-").map(Number);
-    return new Date(y, m - 1, d, 0, 0, 0, 0);
-  }
-
-  const norm = s.replace(" ", "T");
-  const m = norm.match(
-    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/
-  );
-
-  if (!m) return new Date(NaN);
-
-  const [, y, mo, d, HH, MM, SS = "00"] = m;
-  if (!isValidYmdParts(y, mo, d)) return new Date(NaN);
-
-  const hh = Number(HH);
-  const mm = Number(MM);
-  const ss = Number(SS);
-
-  if (
-    !Number.isInteger(hh) || hh < 0 || hh > 23 ||
-    !Number.isInteger(mm) || mm < 0 || mm > 59 ||
-    !Number.isInteger(ss) || ss < 0 || ss > 59
-  ) {
-    return new Date(NaN);
-  }
-
-  return new Date(Number(y), Number(mo) - 1, Number(d), hh, mm, ss, 0);
-}
-
-/** Date → YYYYMMDDTHHMMSSZ (UTC) para Google */
-function toGoogleUtcStamp(d) {
-  return d.toISOString().replace(/[-:]|\.\d{3}/g, "");
-}
-
-/** YYYY-MM-DD → YYYYMMDD */
-function ymdToGoogleDate(ymd) {
-  return ymd.replace(/-/g, "");
-}
-
-/** Converte entrada diversa para YYYY-MM-DD local */
-function toYMD(input) {
-  if (!input) return "";
-  if (typeof input === "string" && isAllDayLike(input)) return input;
-
-  const d = toLocalDate(input);
-  if (isNaN(d)) return "";
-  return dateToYMDLocal(d);
-}
-
-/* ──────────────────────────────────────────────────────────────
-   Helpers de query
-   ────────────────────────────────────────────────────────────── */
-function setIf(url, key, value) {
-  if (value === null || value === undefined) return;
-  const v = String(value).trim();
-  if (!v) return;
-  url.searchParams.set(key, v);
+  return text.length > maxLength ? text.slice(0, maxLength).trim() : text;
 }
 
 function normalizeTz(tz) {
-  const s = String(tz || DEFAULT_TZ).trim();
+  const value = String(tz || DEFAULT_TZ).trim();
+
   try {
-    new Intl.DateTimeFormat("pt-BR", { timeZone: s });
-    return s;
+    new Intl.DateTimeFormat("pt-BR", {
+      timeZone: value,
+    });
+
+    return value;
   } catch {
     return DEFAULT_TZ;
   }
 }
 
 function normalizeRRule(rrule) {
-  const s = String(rrule || "").trim();
-  if (!s) return "";
-  if (!/^[A-Z0-9=;,_-]+$/i.test(s)) return "";
-  return s.toUpperCase();
+  const value = String(rrule || "").trim();
+
+  if (!value) {
+    return "";
+  }
+
+  if (!/^[A-Z0-9=;,_-]+$/i.test(value)) {
+    return "";
+  }
+
+  return value.toUpperCase();
 }
 
-/* ──────────────────────────────────────────────────────────────
-   API pública
-   ────────────────────────────────────────────────────────────── */
+function setIf(url, key, value) {
+  if (value === null || value === undefined) {
+    return;
+  }
+
+  const normalized = String(value).trim();
+
+  if (!normalized) {
+    return;
+  }
+
+  url.searchParams.set(key, normalized);
+}
+
+function ymdToGoogleDate(ymd) {
+  return String(ymd || "").replace(/-/g, "");
+}
+
+function wallToGoogleLocalStamp(wall) {
+  if (!isWallDateTime(wall)) {
+    return "";
+  }
+
+  const [ymd, time] = wall.trim().split(/\s+/);
+  const [hour = "00", minute = "00", second = "00"] = time.split(":");
+
+  return `${ymd.replace(/-/g, "")}T${hour}${minute}${second}`;
+}
+
+function normalizeToWallDateTime(value) {
+  if (!value) {
+    return "";
+  }
+
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  const normalized = datetimeLocalToWall(value);
+
+  if (isWallDateTime(normalized)) {
+    return normalized;
+  }
+
+  const text = String(value).trim().replace("T", " ");
+
+  if (text.length === 16 && isWallDateTime(`${text}:00`)) {
+    return `${text}:00`;
+  }
+
+  if (isWallDateTime(text)) {
+    return text.length === 16 ? `${text}:00` : text;
+  }
+
+  return "";
+}
+
+function isInstantInput(value) {
+  if (value instanceof Date) {
+    return !Number.isNaN(value.getTime());
+  }
+
+  return typeof value === "string" && isIsoWithTimezone(value);
+}
+
+function toGoogleUtcStamp(value) {
+  const date = value instanceof Date ? value : new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return date.toISOString().replace(/[-:]|\.\d{3}/g, "");
+}
+
+function addMinutesToWall(wall, minutes) {
+  if (!isWallDateTime(wall)) {
+    return "";
+  }
+
+  const [ymd, time] = wall.trim().split(/\s+/);
+  const [year, month, day] = ymd.split("-").map(Number);
+  const [hourRaw = "00", minuteRaw = "00", secondRaw = "00"] = time.split(":");
+
+  const hour = Number(hourRaw);
+  const minute = Number(minuteRaw);
+  const second = Number(secondRaw);
+  const increment = Number(minutes);
+
+  if (
+    !Number.isInteger(hour) ||
+    !Number.isInteger(minute) ||
+    !Number.isInteger(second) ||
+    !Number.isFinite(increment)
+  ) {
+    return "";
+  }
+
+  const date = new Date(
+    Date.UTC(year, month - 1, day, hour, minute + Math.trunc(increment), second)
+  );
+
+  const yy = date.getUTCFullYear();
+  const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(date.getUTCDate()).padStart(2, "0");
+  const hh = String(date.getUTCHours()).padStart(2, "0");
+  const min = String(date.getUTCMinutes()).padStart(2, "0");
+  const ss = String(date.getUTCSeconds()).padStart(2, "0");
+
+  return `${yy}-${mm}-${dd} ${hh}:${min}:${ss}`;
+}
+
+function normalizeAttendees(attendees) {
+  if (!Array.isArray(attendees)) {
+    return [];
+  }
+
+  const seen = new Set();
+  const emails = [];
+
+  for (const item of attendees) {
+    const email = String(item || "").trim().toLowerCase();
+
+    if (!email || seen.has(email)) {
+      continue;
+    }
+
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      continue;
+    }
+
+    seen.add(email);
+    emails.push(email);
+
+    if (emails.length >= MAX_ATTENDEES) {
+      break;
+    }
+  }
+
+  return emails;
+}
+
+function resolveDatesParam({ dataInicio, dataFim }) {
+  const inicioTexto = String(dataInicio || "").trim();
+  const fimTexto = String(dataFim || "").trim();
+
+  const isAllDay = isDateOnly(inicioTexto) && isDateOnly(fimTexto);
+
+  if (isAllDay) {
+    const inicio = inicioTexto;
+    const fimInclusivo = fimTexto >= inicioTexto ? fimTexto : inicioTexto;
+    const fimExclusivo = addDaysYMD(fimInclusivo, 1);
+
+    return `${ymdToGoogleDate(inicio)}/${ymdToGoogleDate(fimExclusivo)}`;
+  }
+
+  const inicioWall = normalizeToWallDateTime(dataInicio);
+  const fimWall = normalizeToWallDateTime(dataFim);
+
+  if (inicioWall) {
+    const fimResolvido =
+      fimWall && fimWall > inicioWall ? fimWall : addMinutesToWall(inicioWall, 90);
+
+    return `${wallToGoogleLocalStamp(inicioWall)}/${wallToGoogleLocalStamp(
+      fimResolvido
+    )}`;
+  }
+
+  if (isInstantInput(dataInicio)) {
+    const inicioUtc = toGoogleUtcStamp(dataInicio);
+
+    if (!inicioUtc) {
+      throw new Error("dataInicio inválida para gerar link do Google Agenda.");
+    }
+
+    let fimUtc = "";
+
+    if (isInstantInput(dataFim)) {
+      fimUtc = toGoogleUtcStamp(dataFim);
+    }
+
+    if (!fimUtc || fimUtc <= inicioUtc) {
+      const inicioDate =
+        dataInicio instanceof Date ? dataInicio : new Date(dataInicio);
+
+      fimUtc = toGoogleUtcStamp(new Date(inicioDate.getTime() + 90 * 60 * 1000));
+    }
+
+    return `${inicioUtc}/${fimUtc}`;
+  }
+
+  throw new Error("dataInicio inválida para gerar link do Google Agenda.");
+}
+
 export function gerarLinkGoogleAgenda({
   titulo,
   dataInicio,
@@ -178,77 +279,37 @@ export function gerarLinkGoogleAgenda({
   attendees,
   rrule,
 }) {
-  const title = clampText(titulo || "", MAX_TITLE);
+  const title = clampText(titulo || "Evento", MAX_TITLE);
   const details = clampText(descricao || "", MAX_DETAILS);
   const place = clampText(local || "", MAX_LOCATION);
   const tz = normalizeTz(ctz);
 
-  const s = String(dataInicio || "").trim();
-  const e = String(dataFim || "").trim();
-  const isAllDay = isAllDayLike(s) && isAllDayLike(e);
-
   const url = new URL("https://www.google.com/calendar/render");
+
   url.searchParams.set("action", "TEMPLATE");
+  url.searchParams.set("sf", "true");
+
   setIf(url, "text", title);
   setIf(url, "details", details);
   setIf(url, "location", place);
   setIf(url, "ctz", tz);
-  url.searchParams.set("sf", "true");
-  url.searchParams.set("output", "xml");
 
-  if (isAllDay) {
-    const [ys, ms, ds] = s.split("-").map(Number);
-    const [ye, me, de] = e.split("-").map(Number);
+  url.searchParams.set(
+    "dates",
+    resolveDatesParam({
+      dataInicio,
+      dataFim,
+    })
+  );
 
-    const start = new Date(ys, ms - 1, ds, 0, 0, 0, 0);
-    let end = new Date(ye, me - 1, de, 0, 0, 0, 0);
+  const emails = normalizeAttendees(attendees);
 
-    if (isNaN(start) || isNaN(end)) {
-      throw new Error("Datas inválidas para evento all-day.");
-    }
-
-    if (end <= start) {
-      end = new Date(start.getTime());
-    }
-    end.setDate(end.getDate() + 1); // fim exclusivo
-
-    url.searchParams.set(
-      "dates",
-      `${ymdToGoogleDate(dateToYMDLocal(start))}/${ymdToGoogleDate(dateToYMDLocal(end))}`
-    );
-  } else {
-    const startLocal = toLocalDate(dataInicio);
-    let endLocal = toLocalDate(dataFim);
-
-    if (!(startLocal instanceof Date) || isNaN(startLocal)) {
-      throw new Error("dataInicio inválida para gerar link do Google Agenda.");
-    }
-
-    if (!(endLocal instanceof Date) || isNaN(endLocal)) {
-      endLocal = new Date(startLocal.getTime() + 90 * 60 * 1000);
-    }
-
-    if (endLocal <= startLocal) {
-      endLocal = new Date(startLocal.getTime() + 60 * 1000);
-    }
-
-    url.searchParams.set(
-      "dates",
-      `${toGoogleUtcStamp(startLocal)}/${toGoogleUtcStamp(endLocal)}`
-    );
-  }
-
-  if (Array.isArray(attendees) && attendees.length) {
-    const emails = attendees
-      .map((x) => String(x || "").trim())
-      .filter((x) => x && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x));
-
-    if (emails.length) {
-      url.searchParams.set("add", emails.join(","));
-    }
+  if (emails.length) {
+    url.searchParams.set("add", emails.join(","));
   }
 
   const recur = normalizeRRule(rrule);
+
   if (recur) {
     url.searchParams.set("recur", `RRULE:${recur}`);
   }
@@ -256,10 +317,6 @@ export function gerarLinkGoogleAgenda({
   return url.toString();
 }
 
-/**
- * Atalho explícito para evento ALL-DAY.
- * Aceita YYYY-MM-DD ou Date.
- */
 export function gerarLinkGoogleAgendaAllDay({
   titulo,
   dataInicio,
@@ -270,13 +327,17 @@ export function gerarLinkGoogleAgendaAllDay({
   attendees,
   rrule,
 }) {
-  const startYMD = toYMD(dataInicio);
-  const endYMD = toYMD(dataFim);
+  const inicio = extractYmd(String(dataInicio ?? ""));
+  const fim = extractYmd(String(dataFim ?? "")) || inicio;
+
+  if (!isDateOnly(inicio)) {
+    throw new Error("dataInicio inválida para evento all-day.");
+  }
 
   return gerarLinkGoogleAgenda({
     titulo,
-    dataInicio: startYMD,
-    dataFim: endYMD,
+    dataInicio: inicio,
+    dataFim: isDateOnly(fim) ? fim : inicio,
     descricao,
     local,
     ctz,

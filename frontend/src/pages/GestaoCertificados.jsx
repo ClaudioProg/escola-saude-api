@@ -1,618 +1,1229 @@
-// 📁 frontend/src/pages/GestaoCertificados.jsx
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { toast } from "react-toastify";
-import { apiGet, apiPost, makeApiUrl } from "../services/api";
-import { fmtDataHora } from "../utils/dateTime";
-import { useReducedMotion } from "framer-motion";
-import Footer from "../components/Footer";
-import ModalConfirmacao from "../components/ModalConfirmacao";
+// ✅ frontend/src/pages/GestaoCertificados.jsx — v2.0
+// Atualizado em: 15/05/2026
+// Plataforma Escola da Saúde
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
+  AlertTriangle,
+  Award,
+  CalendarDays,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
-  RefreshCcw,
-  Trash2,
   Download,
-  Award,
-  AlertTriangle,
+  FileCheck2,
+  FilePlus2,
+  Filter,
+  Loader2,
+  RefreshCcw,
+  Search,
+  ShieldCheck,
+  Sparkles,
+  Users,
+  X,
 } from "lucide-react";
 
-/* ───────────────────────── Date helpers (date-only safe) ───────────────────────── */
-const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
-const onlyHHmm = (s) =>
-  typeof s === "string" && /^\d{2}:\d{2}/.test(s) ? s.slice(0, 5) : null;
+import Footer from "../components/layout/Footer";
+import Botao from "../components/ui/Botao";
+import CarregandoSkeleton from "../components/ui/CarregandoSkeleton";
+import ErroCarregamento from "../components/ui/ErroCarregamento";
+import ModalConfirmacao from "../components/ui/ModalConfirmacao";
+import NadaEncontrado from "../components/ui/NadaEncontrado";
+import { notifyError, notifySuccess, notifyWarning } from "../components/ui/AppToast";
+import { api } from "../services/api";
+import { downloadBlob } from "../utils/downloadArquivo";
+import { formatDateBr, extractYmd } from "../utils/dateTime";
 
-const hojeYMD = () => {
-  const d = new Date();
-  const p = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-};
+/* ─────────────────────────────────────────────
+ * Contratos oficiais esperados no api.js
+ * ─────────────────────────────────────────────
+ *
+ * api.certificado.adminArvore(params?)
+ * api.certificado.processarPendentesPorTurma(turma_id)
+ * api.certificado.download(certificado_id)
+ */
 
-function toComparableTime(tsOrYmd, fallbackHHmm = "12:00") {
-  // ✅ evita new Date("YYYY-MM-DD") diretamente (pode dar shift)
-  const raw = String(tsOrYmd || "");
-  if (!raw) return null;
+/* ─────────────────────────────────────────────
+ * Helpers
+ * ───────────────────────────────────────────── */
 
-  // Timestamp/ISO com horário -> Date ok
-  if (raw.includes("T")) {
-    const t = new Date(raw).getTime();
-    return Number.isFinite(t) ? t : null;
-  }
-
-  // Date-only -> monta com HH:mm seguro
-  const d = ymd(raw);
-  if (!d) return null;
-  const hhmm = onlyHHmm(fallbackHHmm) || "12:00";
-  const t = new Date(`${d}T${hhmm}:00`).getTime();
-  return Number.isFinite(t) ? t : null;
+function cx(...parts) {
+  return parts.filter(Boolean).join(" ");
 }
 
-/* ───────────────────────── Helpers de status/cores ───────────────────────── */
-/** Preferimos usar t.status vindo do backend; se não houver, inferimos de forma date-safe. */
-function inferTurmaStatus(t) {
-  const s = String(t?.status || "").toLowerCase();
-  if (s === "programado" || s === "andamento" || s === "encerrado") return s;
+function extrairData(response) {
+  return response?.data ?? response ?? null;
+}
 
-  // fallback simples por data/hora (date-only safe)
-  try {
-    const now = Date.now();
+function obterMensagemErro(error, fallback) {
+  return (
+    error?.response?.data?.message ||
+    error?.data?.message ||
+    error?.message ||
+    fallback
+  );
+}
 
-    // data_inicio/data_fim podem ser "YYYY-MM-DD" ou ISO completo
-    const ini = toComparableTime(t?.data_inicio, "00:00");
-    const fim = toComparableTime(t?.data_fim, "23:59");
-
-    if (ini && now < ini) return "programado";
-    if (ini && fim && now >= ini && now <= fim) return "andamento";
-    if (fim && now > fim) return "encerrado";
-
-    // fallback final por ymd se só houver date-only sem parse
-    const di = ymd(t?.data_inicio);
-    const df = ymd(t?.data_fim);
-    const hoje = hojeYMD();
-    if (di && hoje < di) return "programado";
-    if (di && df && hoje >= di && hoje <= df) return "andamento";
-    if (df && hoje > df) return "encerrado";
-  } catch {
-    /* noop */
+function validarFacade(nome, fn) {
+  if (typeof fn !== "function") {
+    throw new Error(`Facade ausente no api.js: ${nome}.`);
   }
+}
+
+function ymd(value) {
+  const iso = formatarParaISO(value);
+  return iso || "";
+}
+
+function dataBR(value) {
+  const iso = extractYmd(value);
+
+  return iso ? formatDateBr(iso) : "—";
+}
+
+function hojeYMD() {
+  const date = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}`;
+}
+
+function normalizarBusca(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function nomeArquivoSeguro(value) {
+  const nome = String(value || "certificado")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "_")
+    .slice(0, 120);
+
+  return nome || "certificado";
+}
+
+function inferirStatusTurma(turma) {
+  const status = String(turma?.status || "").toLowerCase();
+
+  if (["programado", "andamento", "encerrado"].includes(status)) {
+    return status;
+  }
+
+  const inicio = ymd(turma?.data_inicio);
+  const fim = ymd(turma?.data_fim);
+  const hoje = hojeYMD();
+
+  if (inicio && hoje < inicio) return "programado";
+  if (inicio && fim && hoje >= inicio && hoje <= fim) return "andamento";
+  if (fim && hoje > fim) return "encerrado";
+
   return "programado";
 }
 
-/** Agrega status do evento a partir das turmas: prioridade andamento > programado > encerrado */
-function eventoStatus(ev) {
-  const turmas = ev?.turmas || [];
-  const hasAndamento = turmas.some((t) => inferTurmaStatus(t) === "andamento");
-  const hasProgramado = turmas.some((t) => inferTurmaStatus(t) === "programado");
-  if (hasAndamento) return "andamento";
-  if (hasProgramado) return "programado";
+function inferirStatusEvento(evento) {
+  const turmas = Array.isArray(evento?.turmas) ? evento.turmas : [];
+
+  if (turmas.some((turma) => inferirStatusTurma(turma) === "andamento")) {
+    return "andamento";
+  }
+
+  if (turmas.some((turma) => inferirStatusTurma(turma) === "programado")) {
+    return "programado";
+  }
+
   return "encerrado";
 }
 
-/** Barrinha por status (padrão institucional memorizado) */
-function statusBarClass(status) {
-  switch (status) {
-    case "programado":
-      return "bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-400";
-    case "andamento":
-      return "bg-gradient-to-r from-amber-600 via-amber-500 to-amber-400";
-    case "encerrado":
-      return "bg-gradient-to-r from-rose-700 via-rose-600 to-rose-500";
-    default:
-      return "bg-gradient-to-r from-zinc-700 via-zinc-600 to-zinc-500";
-  }
+function statusTone(status) {
+  if (status === "programado") return "emerald";
+  if (status === "andamento") return "amber";
+  if (status === "encerrado") return "rose";
+  return "slate";
 }
 
-/** Badges consistentes */
-function Badge({ tone = "zinc", children, className = "" }) {
+function statusLabel(status) {
+  if (status === "programado") return "Programado";
+  if (status === "andamento") return "Em andamento";
+  if (status === "encerrado") return "Encerrado";
+  return "Indefinido";
+}
+
+function statusBarClass(status) {
+  if (status === "programado") {
+    return "from-emerald-700 via-emerald-500 to-emerald-400";
+  }
+
+  if (status === "andamento") {
+    return "from-amber-700 via-orange-500 to-yellow-400";
+  }
+
+  if (status === "encerrado") {
+    return "from-rose-800 via-rose-600 to-orange-500";
+  }
+
+  return "from-slate-700 via-slate-600 to-slate-500";
+}
+
+function periodoTurma(turma) {
+  const inicio = dataBR(turma?.data_inicio);
+  const fim = dataBR(turma?.data_fim || turma?.data_inicio);
+
+  return `${inicio} até ${fim}`;
+}
+
+function getEventoTitulo(evento) {
+  return evento?.evento_titulo || evento?.titulo || "Evento";
+}
+
+function getTurmaTitulo(turma) {
+  return turma?.turma_nome || turma?.nome || `Turma #${turma?.turma_id || "—"}`;
+}
+
+function getNumeroCertificado(participante) {
+  return participante?.numero_certificado || participante?.numero || "";
+}
+
+function getNumeroCertificadoLabel(participante) {
+  return getNumeroCertificado(participante) || "Número não informado";
+}
+
+function participanteTemCertificado(participante) {
+  return Boolean(
+    participante?.emitido &&
+      participante?.certificado_id &&
+      (!participante?.status || ["emitido", "enviado"].includes(participante.status))
+  );
+}
+
+/* ─────────────────────────────────────────────
+ * Componentes locais
+ * ───────────────────────────────────────────── */
+
+function Badge({ tone = "slate", children }) {
   const tones = {
-    zinc: "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200",
-    emerald: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200",
-    amber: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
-    rose: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200",
+    slate:
+      "bg-slate-100 text-slate-700 ring-slate-200 dark:bg-zinc-800 dark:text-zinc-200 dark:ring-zinc-700",
+    emerald:
+      "bg-emerald-50 text-emerald-800 ring-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-100 dark:ring-emerald-800/60",
+    amber:
+      "bg-amber-50 text-amber-800 ring-amber-100 dark:bg-amber-950/40 dark:text-amber-100 dark:ring-amber-800/60",
+    rose:
+      "bg-rose-50 text-rose-800 ring-rose-100 dark:bg-rose-950/40 dark:text-rose-100 dark:ring-rose-800/60",
+    cyan:
+      "bg-cyan-50 text-cyan-800 ring-cyan-100 dark:bg-cyan-950/40 dark:text-cyan-100 dark:ring-cyan-800/60",
+    violet:
+      "bg-violet-50 text-violet-800 ring-violet-100 dark:bg-violet-950/40 dark:text-violet-100 dark:ring-violet-800/60",
   };
+
   return (
     <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs ${tones[tone] || tones.zinc} ${className}`}
+      className={cx(
+        "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-black ring-1",
+        tones[tone] || tones.slate
+      )}
     >
       {children}
     </span>
   );
 }
 
-/* ───────── HeaderHero (tema único desta página) ───────── */
-function HeaderHero({ onRefresh, loading }) {
+function MiniStat({ icon: Icon, label, value, tone = "slate" }) {
+  const tones = {
+    slate: "bg-white/10 text-white ring-white/15",
+    emerald: "bg-emerald-400/15 text-emerald-50 ring-emerald-300/20",
+    amber: "bg-amber-400/15 text-amber-50 ring-amber-300/20",
+    rose: "bg-rose-400/15 text-rose-50 ring-rose-300/20",
+    cyan: "bg-cyan-400/15 text-cyan-50 ring-cyan-300/20",
+  };
+
   return (
-    <header
-      className="text-white bg-gradient-to-br from-amber-900 via-orange-700 to-rose-600"
-      role="banner"
-    >
+    <div className={cx("rounded-3xl p-4 ring-1 backdrop-blur", tones[tone])}>
+      <div className="flex items-center gap-3">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/15">
+          <Icon className="h-5 w-5" aria-hidden="true" />
+        </div>
+
+        <div className="min-w-0">
+          <p className="text-[11px] font-black uppercase tracking-wide opacity-80">
+            {label}
+          </p>
+          <p className="text-2xl font-black leading-none">{value}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Hero({ kpis, loading, onRefresh }) {
+  return (
+    <header className="relative overflow-hidden bg-gradient-to-br from-slate-950 via-amber-950 to-rose-800 text-white">
+      <div className="absolute inset-0 opacity-30">
+        <div className="absolute -left-24 -top-24 h-72 w-72 rounded-full bg-amber-400 blur-3xl" />
+        <div className="absolute right-0 top-8 h-72 w-72 rounded-full bg-rose-500 blur-3xl" />
+        <div className="absolute bottom-0 left-1/2 h-64 w-64 -translate-x-1/2 rounded-full bg-emerald-500 blur-3xl" />
+      </div>
+
       <a
         href="#conteudo"
-        className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-xl focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:font-bold focus:text-slate-950"
       >
         Ir para o conteúdo
       </a>
 
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-7 sm:py-8 md:py-9 min-h-[140px] sm:min-h-[170px]">
-        <div className="flex flex-col items-center text-center gap-2.5 sm:gap-3">
-          <div className="inline-flex items-center justify-center gap-2">
-            <Award className="w-6 h-6" aria-hidden="true" />
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-              Gestão de Certificados
-            </h1>
-          </div>
-          <p className="text-sm sm:text-base text-white/90 max-w-2xl">
-            Emita, revise e baixe certificados por evento e turma.
-          </p>
+      <div className="relative mx-auto max-w-6xl px-4 py-7 sm:px-6 sm:py-9">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-3xl">
+            <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-black ring-1 ring-white/20 backdrop-blur">
+              <Award className="h-4 w-4" aria-hidden="true" />
+              Gestão administrativa
+            </div>
 
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={loading}
-            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition
-              ${loading ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/15 hover:bg-white/25"}
-              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70`}
-            aria-label="Atualizar árvore de certificados"
-            aria-busy={loading ? "true" : "false"}
-          >
-            <RefreshCcw className="w-4 h-4" aria-hidden="true" />
-            {loading ? "Atualizando…" : "Atualizar"}
-          </button>
+            <h1 className="mt-4 text-2xl font-black tracking-tight sm:text-4xl">
+              Gestão de certificados
+            </h1>
+
+            <p className="mt-3 max-w-2xl text-sm text-white/85 sm:text-base">
+              Acompanhe certificados por evento e turma, baixe documentos
+              emitidos e processe apenas certificados pendentes. Certificados
+              já emitidos são preservados como documentos eletrônicos oficiais.
+            </p>
+          </div>
+
+          <div className="flex shrink-0">
+            <Botao
+              type="button"
+              variant="secondary"
+              onClick={onRefresh}
+              disabled={loading}
+              className="bg-white/10 text-white ring-1 ring-white/20 hover:bg-white/15"
+            >
+              <span className="inline-flex items-center gap-2">
+                <RefreshCcw
+                  className={cx("h-4 w-4", loading && "animate-spin")}
+                  aria-hidden="true"
+                />
+                {loading ? "Atualizando..." : "Atualizar"}
+              </span>
+            </Botao>
+          </div>
+        </div>
+
+        <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <MiniStat
+            icon={Users}
+            label="Presentes"
+            value={kpis.presentes}
+            tone="cyan"
+          />
+          <MiniStat
+            icon={FileCheck2}
+            label="Emitidos"
+            value={kpis.emitidos}
+            tone="emerald"
+          />
+          <MiniStat
+            icon={Sparkles}
+            label="Pendentes"
+            value={kpis.pendentes}
+            tone="amber"
+          />
+        </div>
+
+        <div className="mt-5 rounded-3xl bg-white/10 p-4 text-sm text-white/85 ring-1 ring-white/15 backdrop-blur">
+          <div className="flex items-start gap-3">
+            <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+            <p>
+              Os certificados v2.0 possuem número oficial, código único, QR Code
+              de validação pública, status oficial e histórico de ações
+              administrativas. Não há reset de certificados emitidos.
+            </p>
+          </div>
         </div>
       </div>
-
-      <div className="h-px w-full bg-white/25" aria-hidden="true" />
     </header>
   );
 }
 
-/* ───────── Collapser acessível ───────── */
-function Collapser({ id, open, onToggle, children, className = "" }) {
+function Toolbar({
+  busca,
+  setBusca,
+  filtroStatus,
+  setFiltroStatus,
+  filtroPendencia,
+  setFiltroPendencia,
+  loading,
+  onRefresh,
+}) {
+  return (
+    <section
+      aria-label="Filtros de gestão de certificados"
+      className="rounded-[1.5rem] bg-white/85 p-3 shadow-sm ring-1 ring-slate-200 backdrop-blur dark:bg-zinc-900/85 dark:ring-zinc-800"
+    >
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="relative w-full lg:max-w-md">
+          <Search
+            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+            aria-hidden="true"
+          />
+
+          <input
+            type="search"
+            value={busca}
+            onChange={(event) => setBusca(event.target.value)}
+            placeholder="Buscar por evento, turma, participante, número ou código..."
+            className="w-full rounded-2xl border border-slate-300 bg-white py-2 pl-9 pr-10 text-sm text-slate-950 outline-none transition focus:border-amber-700 focus:ring-4 focus:ring-amber-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white dark:focus:ring-amber-950"
+            aria-label="Buscar certificados"
+          />
+
+          {busca ? (
+            <button
+              type="button"
+              onClick={() => setBusca("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-xl p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-zinc-800"
+              aria-label="Limpar busca"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-1 text-xs font-bold text-slate-500 dark:text-zinc-400">
+            <Filter className="h-4 w-4" aria-hidden="true" />
+            Filtros:
+          </span>
+
+          <select
+            value={filtroStatus}
+            onChange={(event) => setFiltroStatus(event.target.value)}
+            className="rounded-2xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:ring-4 focus:ring-amber-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:focus:ring-amber-950"
+            aria-label="Filtrar por status da turma"
+          >
+            <option value="todos">Todos os status</option>
+            <option value="programado">Programados</option>
+            <option value="andamento">Em andamento</option>
+            <option value="encerrado">Encerrados</option>
+          </select>
+
+          <select
+            value={filtroPendencia}
+            onChange={(event) => setFiltroPendencia(event.target.value)}
+            className="rounded-2xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:ring-4 focus:ring-amber-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:focus:ring-amber-950"
+            aria-label="Filtrar pendências"
+          >
+            <option value="todos">Todos</option>
+            <option value="pendentes">Com pendências</option>
+            <option value="emitidos">Tudo emitido</option>
+          </select>
+
+          <Botao
+            type="button"
+            variant="secondary"
+            onClick={onRefresh}
+            disabled={loading}
+          >
+            <span className="inline-flex items-center gap-2">
+              <RefreshCcw
+                className={cx("h-4 w-4", loading && "animate-spin")}
+                aria-hidden="true"
+              />
+              Recarregar
+            </span>
+          </Botao>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ToggleButton({ open, children, onClick, controls }) {
   return (
     <button
       type="button"
-      onClick={onToggle}
-      className={`inline-flex items-center gap-1 text-left min-w-0 ${className}`}
+      onClick={onClick}
+      className="inline-flex min-w-0 items-center gap-2 text-left font-black text-slate-950 transition hover:text-amber-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:text-white dark:hover:text-amber-200"
       aria-expanded={open}
-      aria-controls={id}
+      aria-controls={controls}
     >
-      {open ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
+      {open ? (
+        <ChevronDown className="h-5 w-5 shrink-0" aria-hidden="true" />
+      ) : (
+        <ChevronRight className="h-5 w-5 shrink-0" aria-hidden="true" />
+      )}
       <span className="min-w-0 break-words">{children}</span>
     </button>
   );
 }
 
-/* ───────── Página ───────── */
+function ParticipanteCard({ participante, onDownload, baixando }) {
+  const hasCertificado = participanteTemCertificado(participante);
+  const numeroCertificado = getNumeroCertificado(participante);
+
+  return (
+    <article className="rounded-2xl bg-white p-3 ring-1 ring-slate-200 dark:bg-zinc-950 dark:ring-zinc-800">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <p className="font-black text-slate-950 dark:text-white">
+            {participante?.nome || "Participante"}
+          </p>
+
+          <p className="mt-0.5 break-words text-xs text-slate-500 dark:text-zinc-400">
+            {participante?.email || "E-mail não informado"}
+          </p>
+
+          {hasCertificado ? (
+            <p className="mt-2 rounded-2xl bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800 ring-1 ring-emerald-100 dark:bg-emerald-950/30 dark:text-emerald-100 dark:ring-emerald-800/60">
+              Certificado nº:{" "}
+              <span className="font-black">
+                {numeroCertificado || getNumeroCertificadoLabel(participante)}
+              </span>
+            </p>
+          ) : null}
+
+          {participante?.codigo_validacao ? (
+            <p className="mt-2 rounded-2xl bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600 ring-1 ring-slate-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-800">
+              Código:{" "}
+              <span className="font-black">{participante.codigo_validacao}</span>
+            </p>
+          ) : null}
+        </div>
+
+        <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+          <Badge tone={hasCertificado ? "emerald" : "amber"}>
+            {hasCertificado ? (
+              <CheckCircle2 className="h-3.5 w-3.5" />
+            ) : (
+              <AlertTriangle className="h-3.5 w-3.5" />
+            )}
+            {hasCertificado ? "Emitido" : "Pendente"}
+          </Badge>
+
+          {hasCertificado ? (
+            <Botao
+              type="button"
+              variant="secondary"
+              onClick={() => onDownload(participante)}
+              disabled={baixando}
+            >
+              <span className="inline-flex items-center gap-2">
+                {baixando ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Download className="h-4 w-4" aria-hidden="true" />
+                )}
+                {baixando ? "Baixando..." : "Baixar"}
+              </span>
+            </Botao>
+          ) : null}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+/* ─────────────────────────────────────────────
+ * Página
+ * ───────────────────────────────────────────── */
+
 export default function GestaoCertificados() {
   const reduceMotion = useReducedMotion();
 
-  const [data, setData] = useState([]); // [{evento_id, evento_titulo, turmas:[...]}]
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
-  const [openEventos, setOpenEventos] = useState({});
-  const [openTurmas, setOpenTurmas] = useState({}); // key `${evento_id}:${turma_id}`
+  const [data, setData] = useState([]);
+  const [erro, setErro] = useState("");
+  const [loading, setLoading] = useState(true);
 
-  // 🔔 modal de confirmação (reset da turma)
-  const [confirmReset, setConfirmReset] = useState(null); // { turmaId, turmaNome? }
-  const [executandoReset, setExecutandoReset] = useState(false);
+  const [busca, setBusca] = useState("");
+  const [filtroStatus, setFiltroStatus] = useState("todos");
+  const [filtroPendencia, setFiltroPendencia] = useState("todos");
+
+  const [openEventos, setOpenEventos] = useState({});
+  const [openTurmas, setOpenTurmas] = useState({});
+
+  const [confirmProcessar, setConfirmProcessar] = useState(null);
+  const [executandoProcessamento, setExecutandoProcessamento] = useState(false);
+  const [baixandoId, setBaixandoId] = useState(null);
 
   const liveRef = useRef(null);
-  const abortRef = useRef(null);
   const mountedRef = useRef(true);
 
-  const setLive = (msg) => {
-    if (liveRef.current) liveRef.current.textContent = msg;
-  };
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      abortRef.current?.abort?.("unmount");
-    };
+  const setLive = useCallback((message) => {
+    if (liveRef.current) liveRef.current.textContent = message;
   }, []);
 
-  const fetchData = useCallback(async () => {
+  const carregarArvore = useCallback(async () => {
     try {
+      validarFacade("api.certificado.adminArvore", api?.certificado?.adminArvore);
+
       setLoading(true);
-      setErr("");
-      setLive("Carregando árvore de certificados…");
+      setErro("");
+      setLive("Carregando árvore de certificados.");
 
-      abortRef.current?.abort?.("new-request");
-      const ctrl = new AbortController();
-      abortRef.current = ctrl;
+      const response = await api.certificado.adminArvore();
+      const payload = extrairData(response);
+      const lista = Array.isArray(payload) ? payload : [];
 
-      const rows = await apiGet(`/certificados-admin/arvore`, { signal: ctrl.signal });
       if (!mountedRef.current) return;
 
-      setData(Array.isArray(rows) ? rows : []);
-      setLive("Dados atualizados.");
-    } catch (e) {
-      if (e?.name === "AbortError") return;
-      const msg = e?.message || "Falha ao carregar.";
+      setData(lista);
+      setLive(
+        lista.length
+          ? `${lista.length} evento(s) carregado(s).`
+          : "Nenhum evento encontrado."
+      );
+    } catch (error) {
+      console.error("[GestaoCertificados] erro ao carregar árvore:", error);
+
       if (!mountedRef.current) return;
-      setErr(msg);
-      toast.error(`❌ ${msg}`);
-      setLive("Falha ao carregar.");
+
+      const message = obterMensagemErro(
+        error,
+        "Não foi possível carregar a gestão de certificados."
+      );
+
+      setErro(message);
+      setData([]);
+      notifyError(message);
+      setLive("Erro ao carregar árvore de certificados.");
     } finally {
       if (mountedRef.current) setLoading(false);
     }
-  }, []);
+  }, [setLive]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    mountedRef.current = true;
+    document.title = "Gestão de Certificados | Escola da Saúde";
+    carregarArvore();
 
-  const totaisGeral = useMemo(() => {
-    let presentes = 0,
-      emitidos = 0,
-      pendentes = 0;
-    for (const ev of data) {
-      for (const t of ev.turmas || []) {
-        presentes += t?.totais?.presentes || 0;
-        emitidos += t?.totais?.emitidos || 0;
-        pendentes += t?.totais?.pendentes || 0;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [carregarArvore]);
+
+  const kpis = useMemo(() => {
+    let presentes = 0;
+    let emitidos = 0;
+    let pendentes = 0;
+
+    for (const evento of data) {
+      for (const turma of evento?.turmas || []) {
+        presentes += Number(turma?.totais?.presentes || 0);
+        emitidos += Number(turma?.totais?.emitidos || 0);
+        pendentes += Number(turma?.totais?.pendentes || 0);
       }
     }
+
     return { presentes, emitidos, pendentes };
   }, [data]);
 
-  // ── fluxo com ModalConfirmacao (reset da turma)
-  const pedirResetTurma = (turmaId, turmaNome) => {
-    if (!turmaId) return;
-    setConfirmReset({ turmaId, turmaNome: turmaNome || null });
-  };
+  const dataFiltrada = useMemo(() => {
+    const termo = normalizarBusca(busca);
 
-  const confirmarResetTurma = async () => {
-    const alvo = confirmReset;
-    setConfirmReset(null);
-    if (!alvo?.turmaId) return;
+    const eventos = [];
+
+    for (const evento of data) {
+      const eventoTitulo = getEventoTitulo(evento);
+      const statusEvento = inferirStatusEvento(evento);
+
+      if (filtroStatus !== "todos" && statusEvento !== filtroStatus) {
+        continue;
+      }
+
+      const turmas = [];
+
+      for (const turma of evento?.turmas || []) {
+        const statusTurma = inferirStatusTurma(turma);
+        const pendentes = Number(turma?.totais?.pendentes || 0);
+        const emitidos = Number(turma?.totais?.emitidos || 0);
+        const presentes = Number(turma?.totais?.presentes || 0);
+
+        if (filtroPendencia === "pendentes" && pendentes <= 0) {
+          continue;
+        }
+
+        if (
+          filtroPendencia === "emitidos" &&
+          !(presentes > 0 && emitidos >= presentes)
+        ) {
+          continue;
+        }
+
+        const participantes = Array.isArray(turma?.participantes)
+          ? turma.participantes
+          : [];
+
+        const textoTurma = normalizarBusca(
+          `${eventoTitulo} ${getTurmaTitulo(turma)} ${turma?.turma_id || ""}`
+        );
+
+        const participantesFiltrados = termo
+          ? participantes.filter((participante) => {
+              const textoParticipante = normalizarBusca(
+                [
+                  participante?.nome,
+                  participante?.email,
+                  participante?.numero_certificado,
+                  participante?.codigo_validacao,
+                ].join(" ")
+              );
+
+              return textoParticipante.includes(termo);
+            })
+          : participantes;
+
+        const turmaCombina = !termo || textoTurma.includes(termo);
+
+        if (!turmaCombina && participantesFiltrados.length === 0) {
+          continue;
+        }
+
+        turmas.push({
+          ...turma,
+          status_calculado: statusTurma,
+          participantes: turmaCombina ? participantes : participantesFiltrados,
+        });
+      }
+
+      if (turmas.length > 0) {
+        eventos.push({
+          ...evento,
+          status_calculado: statusEvento,
+          turmas,
+        });
+      }
+    }
+
+    return eventos;
+  }, [data, busca, filtroStatus, filtroPendencia]);
+
+  const toggleEvento = useCallback((eventoId) => {
+    setOpenEventos((prev) => ({
+      ...prev,
+      [eventoId]: !prev[eventoId],
+    }));
+  }, []);
+
+  const toggleTurma = useCallback((eventoId, turmaId) => {
+    const key = `${eventoId}:${turmaId}`;
+
+    setOpenTurmas((prev) => ({
+      ...prev,
+      [key]: !prev[key],
+    }));
+  }, []);
+
+  const pedirProcessamentoPendentes = useCallback((turma) => {
+    const turmaId = Number(turma?.turma_id);
+
+    if (!Number.isInteger(turmaId) || turmaId <= 0) {
+      notifyWarning("Turma inválida para processamento.");
+      return;
+    }
+
+    const pendentes = Number(turma?.totais?.pendentes || 0);
+
+    if (pendentes <= 0) {
+      notifyWarning("Esta turma não possui certificados pendentes para processar.");
+      return;
+    }
+
+    setConfirmProcessar({
+      turma_id: turmaId,
+      turma_nome: getTurmaTitulo(turma),
+      totais: turma?.totais || null,
+    });
+  }, []);
+
+  const confirmarProcessamentoPendentes = useCallback(async () => {
+    if (!confirmProcessar?.turma_id) return;
 
     try {
-      setExecutandoReset(true);
-      setLive(`Resetando certificados da turma ${alvo.turmaId}…`);
-      await apiPost(`/certificados-admin/turmas/${alvo.turmaId}/reset`, {});
-      toast.success("✅ Reset concluído.");
-      await fetchData();
-      setLive("Reset concluído.");
-    } catch (e) {
-      const msg = e?.message || "Falha ao resetar.";
-      toast.error(`❌ ${msg}`);
-      setLive("Falha ao resetar.");
-    } finally {
-      setExecutandoReset(false);
-    }
-  };
+      validarFacade(
+        "api.certificado.processarPendentesPorTurma",
+        api?.certificado?.processarPendentesPorTurma
+      );
 
-  const abrirDownload = (certificadoId) => {
-    if (!certificadoId) return;
-    const href = makeApiUrl(`certificados/${certificadoId}/download`);
-    // evita navegação SPA acidental e mantém UX consistente
-    window.open(href, "_blank", "noopener,noreferrer");
-  };
+      const turmaId = Number(confirmProcessar.turma_id);
+
+      setExecutandoProcessamento(true);
+      setLive(`Processando certificados pendentes da turma ${turmaId}.`);
+
+      await api.certificado.processarPendentesPorTurma(turmaId);
+
+      notifySuccess("Certificados pendentes processados com sucesso.");
+      setConfirmProcessar(null);
+      await carregarArvore();
+      setLive("Processamento de pendentes concluído.");
+    } catch (error) {
+      console.error("[GestaoCertificados] erro ao processar pendentes:", error);
+
+      notifyError(
+        obterMensagemErro(
+          error,
+          "Não foi possível processar os certificados pendentes da turma."
+        )
+      );
+      setLive("Erro ao processar certificados pendentes.");
+    } finally {
+      setExecutandoProcessamento(false);
+    }
+  }, [confirmProcessar, carregarArvore, setLive]);
+
+  const baixarCertificado = useCallback(
+    async (participante) => {
+      const certificadoId = Number(participante?.certificado_id);
+
+      if (!Number.isInteger(certificadoId) || certificadoId <= 0) {
+        notifyWarning("Certificado sem ID para download.");
+        return;
+      }
+
+      try {
+        validarFacade("api.certificado.download", api?.certificado?.download);
+
+        setBaixandoId(certificadoId);
+        setLive("Baixando certificado.");
+
+        const result = await api.certificado.download(certificadoId);
+        const blob = result?.blob || result?.data || result;
+        const filename =
+          result?.filename ||
+          `${nomeArquivoSeguro(
+            getNumeroCertificado(participante) ||
+              `certificado_${participante?.nome || certificadoId}_${certificadoId}`
+          )}.pdf`;
+
+        downloadBlob(filename, blob);
+        notifySuccess("Download iniciado.");
+      } catch (error) {
+        console.error("[GestaoCertificados] erro ao baixar:", error);
+
+        notifyError(
+          obterMensagemErro(error, "Não foi possível baixar o certificado.")
+        );
+        setLive("Erro ao baixar certificado.");
+      } finally {
+        setBaixandoId(null);
+      }
+    },
+    [setLive]
+  );
 
   return (
-    <div className="min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white flex flex-col">
-      {/* a11y live region */}
-      <p ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" />
+    <div className="flex min-h-dvh flex-col bg-slate-50 text-slate-950 dark:bg-zinc-950 dark:text-white">
+      <Hero kpis={kpis} loading={loading} onRefresh={carregarArvore} />
 
-      {/* ── ModalConfirmacao: Reset da Turma ── */}
+      <p ref={liveRef} className="sr-only" aria-live="polite" />
+
       <ModalConfirmacao
-        open={!!confirmReset}
-        onClose={() => setConfirmReset(null)}
-        onConfirm={confirmarResetTurma}
-        titulo="Resetar certificados da turma"
-        confirmarTexto="Resetar"
+        open={Boolean(confirmProcessar)}
+        onClose={() => {
+          if (!executandoProcessamento) setConfirmProcessar(null);
+        }}
+        onConfirm={confirmarProcessamentoPendentes}
+        titulo="Processar certificados pendentes"
+        confirmarTexto={
+          executandoProcessamento ? "Processando..." : "Processar pendentes"
+        }
         cancelarTexto="Cancelar"
-        danger
       >
-        <p className="text-sm text-zinc-700 dark:text-zinc-300">
-          Tem certeza que deseja resetar os certificados dos participantes da{" "}
-          {confirmReset?.turmaNome ? (
-            <>
-              turma <span className="font-semibold">{confirmReset.turmaNome}</span> (#{confirmReset.turmaId})?
-            </>
-          ) : (
-            <>turma #{confirmReset?.turmaId}?</>
-          )}{" "}
-          Esta ação não pode ser desfeita.
-        </p>
-        {executandoReset && (
-          <p className="mt-2 text-xs text-zinc-500" aria-live="polite">
-            Executando reset…
+        <div className="space-y-3">
+          <p className="text-sm text-slate-700 dark:text-zinc-300">
+            Esta ação emitirá apenas certificados ainda pendentes desta turma.
+            Certificados já emitidos/enviados serão preservados e não serão
+            resetados, sobrescritos ou apagados.
           </p>
-        )}
+
+          <div className="rounded-2xl bg-amber-50 p-3 text-sm text-amber-900 ring-1 ring-amber-100 dark:bg-amber-950/30 dark:text-amber-100 dark:ring-amber-800/60">
+            <p className="font-black">
+              {confirmProcessar?.turma_nome ||
+                `Turma #${confirmProcessar?.turma_id || "—"}`}
+            </p>
+
+            {confirmProcessar?.totais ? (
+              <p className="mt-1 text-xs">
+                Emitidos: {confirmProcessar.totais.emitidos || 0} • Pendentes:{" "}
+                {confirmProcessar.totais.pendentes || 0}
+              </p>
+            ) : null}
+          </div>
+
+          {executandoProcessamento ? (
+            <p className="inline-flex items-center gap-2 text-xs font-semibold text-slate-500 dark:text-zinc-400">
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              Processando pendentes...
+            </p>
+          ) : null}
+        </div>
       </ModalConfirmacao>
 
-      {/* Header */}
-      <HeaderHero onRefresh={fetchData} loading={loading} />
-
-      {/* barra fina (scroll) */}
-      {loading && (
+      {loading ? (
         <div
-          className="sticky top-0 left-0 w-full h-1 bg-amber-100 dark:bg-amber-950/30 z-40"
+          className="sticky top-0 z-50 h-1 w-full bg-amber-100 dark:bg-amber-950"
           role="progressbar"
-          aria-label="Carregando árvore de certificados"
+          aria-label="Carregando gestão de certificados"
         >
-          <div className={`h-full bg-amber-600 ${reduceMotion ? "" : "animate-pulse"} w-1/3`} />
-        </div>
-      )}
-
-      <main id="conteudo" className="flex-1 mx-auto max-w-6xl p-4 sm:px-6 lg:px-8">
-        {/* Ministats */}
-        <section aria-label="Totais de certificação" className="mb-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow p-4">
-            <p className="text-xs text-zinc-600 dark:text-zinc-300 mb-1">Presentes</p>
-            <p className="text-3xl font-extrabold text-lousa dark:text-white">{totaisGeral.presentes}</p>
-          </div>
-          <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow p-4">
-            <p className="text-xs text-zinc-600 dark:text-zinc-300 mb-1">Emitidos</p>
-            <p className="text-3xl font-extrabold text-emerald-700 dark:text-emerald-300">{totaisGeral.emitidos}</p>
-          </div>
-          <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow p-4">
-            <p className="text-xs text-zinc-600 dark:text-zinc-300 mb-1">Pendentes</p>
-            <p className="text-3xl font-extrabold text-amber-700 dark:text-amber-300">{totaisGeral.pendentes}</p>
-          </div>
-        </section>
-
-        {/* Barra de ações (útil no scroll) */}
-        <div className="mb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <h2 className="text-base sm:text-lg font-semibold">Certificados — visão por Evento/Turma</h2>
-
-          <button
-            type="button"
-            onClick={fetchData}
-            disabled={loading}
-            className={`rounded-xl px-3 py-2 text-sm font-semibold transition
-              ${loading ? "opacity-60 cursor-not-allowed bg-zinc-100 dark:bg-zinc-800" : "bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700"}
-              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500`}
-            aria-label="Atualizar árvore de certificados"
-          >
-            <span className="inline-flex items-center gap-2">
-              <RefreshCcw className="h-4 w-4" aria-hidden="true" />
-              {loading ? "Atualizando…" : "Atualizar"}
-            </span>
-          </button>
-        </div>
-
-        {!!err && !loading && (
           <div
-            className="mb-4 rounded-2xl border border-rose-200 dark:border-rose-900/40 bg-rose-50 dark:bg-rose-950/25 p-4"
-            role="alert"
-          >
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 mt-0.5 text-rose-600 dark:text-rose-300" aria-hidden="true" />
-              <div className="min-w-0">
-                <p className="font-semibold text-rose-800 dark:text-rose-200">Não foi possível carregar.</p>
-                <p className="text-sm text-rose-800/90 dark:text-rose-200/90 break-words">{err}</p>
-                <button
-                  type="button"
-                  onClick={fetchData}
-                  className="mt-3 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold bg-rose-100 hover:bg-rose-200 dark:bg-rose-900/40 dark:hover:bg-rose-900/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
-                >
-                  <RefreshCcw className="w-4 h-4" aria-hidden="true" />
-                  Tentar novamente
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+            className={cx(
+              "h-full w-1/3 bg-amber-600",
+              reduceMotion ? "" : "animate-pulse"
+            )}
+          />
+        </div>
+      ) : null}
+
+      <main
+        id="conteudo"
+        className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-5 px-4 py-6 sm:px-6"
+      >
+        <Toolbar
+          busca={busca}
+          setBusca={setBusca}
+          filtroStatus={filtroStatus}
+          setFiltroStatus={setFiltroStatus}
+          filtroPendencia={filtroPendencia}
+          setFiltroPendencia={setFiltroPendencia}
+          loading={loading}
+          onRefresh={carregarArvore}
+        />
 
         {loading ? (
-          <div className="text-sm text-zinc-500">Carregando…</div>
+          <section className="grid gap-4" aria-label="Carregando árvore">
+            <CarregandoSkeleton height={160} />
+            <CarregandoSkeleton height={160} />
+            <CarregandoSkeleton height={160} />
+          </section>
+        ) : erro ? (
+          <ErroCarregamento mensagem={erro} onRetry={carregarArvore} />
         ) : data.length === 0 ? (
-          <div className="text-sm text-zinc-500">Nenhum evento encontrado.</div>
+          <NadaEncontrado
+            titulo="Nenhum evento encontrado"
+            descricao="Quando houver eventos com certificados disponíveis para gestão, eles aparecerão aqui."
+          />
+        ) : dataFiltrada.length === 0 ? (
+          <NadaEncontrado
+            titulo="Nenhum resultado encontrado"
+            descricao="Altere os filtros ou limpe a busca para visualizar mais certificados."
+          />
         ) : (
-          <div className="grid gap-4">
-            {data.map((ev) => {
-              const evOpen = !!openEventos[ev.evento_id];
-              const evId = `evento-${ev.evento_id}`;
-              const evStatus = eventoStatus(ev);
-
-              return (
-                <section
-                  key={ev.evento_id}
-                  className="rounded-2xl border bg-white dark:border-zinc-800 dark:bg-zinc-900 shadow-sm overflow-hidden"
-                  aria-labelledby={`${evId}-title`}
+          <section aria-labelledby="titulo-arvore-certificados">
+            <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h2
+                  id="titulo-arvore-certificados"
+                  className="text-lg font-black text-slate-950 dark:text-white"
                 >
-                  {/* Barrinha superior por status */}
-                  <div className={`h-2 w-full ${statusBarClass(evStatus)}`} aria-hidden="true" />
+                  Certificados por evento e turma
+                </h2>
 
-                  {/* Cabeçalho do Evento */}
-                  <div className="flex items-start sm:items-center justify-between gap-3 p-3">
-                    <h3 id={`${evId}-title`} className="sr-only">
-                      Evento
-                    </h3>
+                <p className="text-sm text-slate-500 dark:text-zinc-400">
+                  Exibindo {dataFiltrada.length} evento(s) conforme os filtros.
+                </p>
+              </div>
 
-                    <Collapser
-                      id={evId}
-                      open={evOpen}
-                      onToggle={() => setOpenEventos((s) => ({ ...s, [ev.evento_id]: !evOpen }))}
-                      className="text-base font-semibold"
+              <Badge tone="amber">
+                <Sparkles className="h-3.5 w-3.5" />
+                Gestão documental v2.0
+              </Badge>
+            </div>
+
+            <div className="grid gap-4">
+              <AnimatePresence initial={false}>
+                {dataFiltrada.map((evento) => {
+                  const eventoId = evento.evento_id;
+                  const eventoOpen = Boolean(openEventos[eventoId]);
+                  const eventoPanelId = `evento-certificados-${eventoId}`;
+                  const statusEvento =
+                    evento.status_calculado || inferirStatusEvento(evento);
+
+                  return (
+                    <motion.article
+                      key={eventoId}
+                      initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+                      animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+                      exit={reduceMotion ? undefined : { opacity: 0, y: 8 }}
+                      transition={{ duration: 0.18 }}
+                      className="overflow-hidden rounded-[1.5rem] bg-white shadow-sm ring-1 ring-slate-200 dark:bg-zinc-900 dark:ring-zinc-800"
                     >
-                      {ev.evento_titulo}
-                    </Collapser>
+                      <div
+                        className={cx(
+                          "h-2 bg-gradient-to-r",
+                          statusBarClass(statusEvento)
+                        )}
+                        aria-hidden="true"
+                      />
 
-                    <div className="flex flex-col items-end gap-1 shrink-0">
-                      <Badge tone={evStatus === "andamento" ? "amber" : "zinc"}>
-                        {evStatus === "programado" && "Programado"}
-                        {evStatus === "andamento" && "Em andamento"}
-                        {evStatus === "encerrado" && "Encerrado"}
-                      </Badge>
-                      <span className="text-[11px] text-zinc-500">{(ev.turmas || []).length} turma(s)</span>
-                    </div>
-                  </div>
-
-                  {/* Conteúdo do Evento */}
-                  {evOpen && (
-                    <div id={evId} className="border-t dark:border-zinc-800">
-                      {(ev.turmas || []).map((t) => {
-                        const key = `${ev.evento_id}:${t.turma_id}`;
-                        const tOpen = !!openTurmas[key];
-                        const tId = `turma-${ev.evento_id}-${t.turma_id}`;
-                        const tStatus = inferTurmaStatus(t);
-
-                        return (
-                          <article
-                            key={t.turma_id}
-                            className="border-b last:border-b-0 dark:border-zinc-800"
-                            aria-labelledby={`${tId}-title`}
+                      <header className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <ToggleButton
+                            open={eventoOpen}
+                            controls={eventoPanelId}
+                            onClick={() => toggleEvento(eventoId)}
                           >
-                            {/* Cabeçalho da Turma com barrinha */}
-                            <div className="overflow-hidden">
-                              <div className={`h-1.5 w-full ${statusBarClass(tStatus)}`} aria-hidden="true" />
+                            {getEventoTitulo(evento)}
+                          </ToggleButton>
 
-                              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 p-3">
-                                <div className="min-w-0">
-                                  <h4 id={`${tId}-title`} className="sr-only">
-                                    Turma
-                                  </h4>
+                          <p className="mt-1 text-sm text-slate-500 dark:text-zinc-400">
+                            {(evento?.turmas || []).length} turma(s)
+                          </p>
+                        </div>
 
-                                  <Collapser
-                                    id={tId}
-                                    open={tOpen}
-                                    onToggle={() => setOpenTurmas((s) => ({ ...s, [key]: !tOpen }))}
-                                    className="font-semibold"
-                                  >
-                                    Turma #{t.turma_id} — {t.turma_nome || "Sem título"}
-                                  </Collapser>
+                        <Badge tone={statusTone(statusEvento)}>
+                          {statusLabel(statusEvento)}
+                        </Badge>
+                      </header>
 
-                                  <div className="mt-1 text-xs text-zinc-500 break-words">
-                                    {t.data_inicio ? fmtDataHora(t.data_inicio) : "—"} →{" "}
-                                    {t.data_fim ? fmtDataHora(t.data_fim) : "—"}
-                                  </div>
+                      {eventoOpen ? (
+                        <div
+                          id={eventoPanelId}
+                          className="border-t border-slate-200 bg-slate-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-950/40"
+                        >
+                          <div className="grid gap-3">
+                            {(evento.turmas || []).map((turma) => {
+                              const turmaKey = `${eventoId}:${turma.turma_id}`;
+                              const turmaOpen = Boolean(openTurmas[turmaKey]);
+                              const turmaPanelId = `turma-certificados-${eventoId}-${turma.turma_id}`;
+                              const statusTurma =
+                                turma.status_calculado || inferirStatusTurma(turma);
+                              const participantes = Array.isArray(turma?.participantes)
+                                ? turma.participantes
+                                : [];
+                              const pendentes = Number(turma?.totais?.pendentes || 0);
 
-                                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-                                    <Badge tone="zinc">
-                                      Presentes: <strong className="ml-1">{t?.totais?.presentes ?? 0}</strong>
-                                    </Badge>
-                                    <Badge tone="emerald">
-                                      Emitidos: <strong className="ml-1">{t?.totais?.emitidos ?? 0}</strong>
-                                    </Badge>
-                                    <Badge tone="amber">
-                                      Pendentes: <strong className="ml-1">{t?.totais?.pendentes ?? 0}</strong>
-                                    </Badge>
-                                  </div>
-                                </div>
+                              return (
+                                <article
+                                  key={turmaKey}
+                                  className="overflow-hidden rounded-[1.25rem] bg-white ring-1 ring-slate-200 dark:bg-zinc-900 dark:ring-zinc-800"
+                                >
+                                  <div
+                                    className={cx(
+                                      "h-1.5 bg-gradient-to-r",
+                                      statusBarClass(statusTurma)
+                                    )}
+                                    aria-hidden="true"
+                                  />
 
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => pedirResetTurma(t.turma_id, t.turma_nome)}
-                                    className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-white hover:bg-rose-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300 text-sm font-semibold"
-                                    title="Resetar certificados desta turma"
-                                  >
-                                    <Trash2 className="h-4 w-4" aria-hidden="true" />
-                                    Resetar turma
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Participantes */}
-                            {tOpen && (
-                              <div id={tId} className="p-3">
-                                {/* Tabela (≥ sm) */}
-                                <div className="hidden sm:block overflow-x-auto">
-                                  <table className="min-w-full text-sm">
-                                    <thead>
-                                      <tr className="text-left text-zinc-600 dark:text-zinc-300">
-                                        <th className="py-2 pl-3 pr-4">Usuário</th>
-                                        <th className="py-2 pr-4">Email</th>
-                                        <th className="py-2 pr-4">Status</th>
-                                        <th className="py-2 pr-4">Ações</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {(t.participantes || []).map((p) => {
-                                        const has = Boolean(p?.emitido && p?.certificado_id);
-                                        return (
-                                          <tr key={p.usuario_id} className="border-t dark:border-zinc-800">
-                                            <td className="py-2 pl-3 pr-4">{p?.nome || "—"}</td>
-                                            <td className="py-2 pr-4">{p?.email || "—"}</td>
-                                            <td className="py-2 pr-4">
-                                              {has ? <Badge tone="emerald">Emitido</Badge> : <Badge tone="amber">Pendente</Badge>}
-                                            </td>
-                                            <td className="py-2 pr-4">
-                                              {has ? (
-                                                <button
-                                                  type="button"
-                                                  onClick={() => abrirDownload(p.certificado_id)}
-                                                  className="inline-flex items-center gap-1 rounded-xl bg-emerald-600 px-2.5 py-1.5 text-white hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300"
-                                                >
-                                                  <Download className="h-4 w-4" aria-hidden="true" />
-                                                  Baixar
-                                                </button>
-                                              ) : (
-                                                <span className="text-zinc-400">—</span>
-                                              )}
-                                            </td>
-                                          </tr>
-                                        );
-                                      })}
-
-                                      {(t.participantes || []).length === 0 && (
-                                        <tr>
-                                          <td className="py-3 pl-3 text-zinc-500" colSpan={4}>
-                                            Sem participantes presentes.
-                                          </td>
-                                        </tr>
-                                      )}
-                                    </tbody>
-                                  </table>
-                                </div>
-
-                                {/* Cards (mobile < sm) */}
-                                <ul className="sm:hidden space-y-2">
-                                  {(t.participantes || []).map((p) => {
-                                    const has = Boolean(p?.emitido && p?.certificado_id);
-                                    return (
-                                      <li
-                                        key={p.usuario_id}
-                                        className="rounded-xl border bg-white/60 dark:bg-zinc-900/60 dark:border-zinc-800 p-3"
+                                  <header className="flex flex-col gap-3 p-4 lg:flex-row lg:items-start lg:justify-between">
+                                    <div className="min-w-0">
+                                      <ToggleButton
+                                        open={turmaOpen}
+                                        controls={turmaPanelId}
+                                        onClick={() =>
+                                          toggleTurma(eventoId, turma.turma_id)
+                                        }
                                       >
-                                        <div className="flex items-start justify-between gap-3">
-                                          <div className="min-w-0">
-                                            <p className="font-semibold break-words">{p?.nome || "—"}</p>
-                                            <p className="text-xs text-zinc-500 break-words">{p?.email || "—"}</p>
-                                          </div>
-                                          <div className="shrink-0">
-                                            {has ? <Badge tone="emerald">Emitido</Badge> : <Badge tone="amber">Pendente</Badge>}
-                                          </div>
-                                        </div>
+                                        {getTurmaTitulo(turma)}
+                                      </ToggleButton>
 
-                                        <div className="mt-2">
-                                          {has ? (
-                                            <button
-                                              type="button"
-                                              onClick={() => abrirDownload(p.certificado_id)}
-                                              className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-white hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 text-sm font-semibold"
-                                            >
-                                              <Download className="h-4 w-4" aria-hidden="true" />
-                                              Baixar
-                                            </button>
-                                          ) : (
-                                            <span className="text-sm text-zinc-400">—</span>
-                                          )}
-                                        </div>
-                                      </li>
-                                    );
-                                  })}
+                                      <p className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-slate-500 dark:text-zinc-400">
+                                        <CalendarDays
+                                          className="h-4 w-4"
+                                          aria-hidden="true"
+                                        />
+                                        {periodoTurma(turma)}
+                                      </p>
 
-                                  {(t.participantes || []).length === 0 && (
-                                    <li className="text-sm text-zinc-500">Sem participantes presentes.</li>
-                                  )}
-                                </ul>
-                              </div>
-                            )}
-                          </article>
-                        );
-                      })}
-                    </div>
-                  )}
-                </section>
-              );
-            })}
-          </div>
+                                      <div className="mt-3 flex flex-wrap gap-2">
+                                        <Badge tone="cyan">
+                                          Presentes:{" "}
+                                          <strong>{turma?.totais?.presentes || 0}</strong>
+                                        </Badge>
+                                        <Badge tone="emerald">
+                                          Emitidos:{" "}
+                                          <strong>{turma?.totais?.emitidos || 0}</strong>
+                                        </Badge>
+                                        <Badge tone="amber">
+                                          Pendentes:{" "}
+                                          <strong>{turma?.totais?.pendentes || 0}</strong>
+                                        </Badge>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <Badge tone={statusTone(statusTurma)}>
+                                        {statusLabel(statusTurma)}
+                                      </Badge>
+
+                                      <Botao
+                                        type="button"
+                                        variant="primary"
+                                        onClick={() =>
+                                          pedirProcessamentoPendentes(turma)
+                                        }
+                                        disabled={pendentes <= 0}
+                                      >
+                                        <span className="inline-flex items-center gap-2">
+                                          <FilePlus2
+                                            className="h-4 w-4"
+                                            aria-hidden="true"
+                                          />
+                                          Processar pendentes
+                                        </span>
+                                      </Botao>
+                                    </div>
+                                  </header>
+
+                                  {turmaOpen ? (
+                                    <div
+                                      id={turmaPanelId}
+                                      className="border-t border-slate-200 bg-slate-50 p-3 dark:border-zinc-800 dark:bg-zinc-950"
+                                    >
+                                      {participantes.length === 0 ? (
+                                        <NadaEncontrado
+                                          titulo="Sem participantes presentes"
+                                          descricao="Não há participantes presentes para emissão nesta turma."
+                                        />
+                                      ) : (
+                                        <>
+                                          <div className="hidden overflow-x-auto sm:block">
+                                            <table className="min-w-full text-sm">
+                                              <thead>
+                                                <tr className="text-left text-slate-500 dark:text-zinc-400">
+                                                  <th className="px-3 py-2 font-black">
+                                                    Participante
+                                                  </th>
+                                                  <th className="px-3 py-2 font-black">
+                                                    E-mail
+                                                  </th>
+                                                  <th className="px-3 py-2 font-black">
+                                                    Status
+                                                  </th>
+                                                  <th className="px-3 py-2 font-black">
+                                                    Número
+                                                  </th>
+                                                  <th className="px-3 py-2 font-black">
+                                                    Código
+                                                  </th>
+                                                  <th className="px-3 py-2 text-right font-black">
+                                                    Ações
+                                                  </th>
+                                                </tr>
+                                              </thead>
+
+                                              <tbody>
+                                                {participantes.map((participante) => {
+                                                  const hasCertificado =
+                                                    participanteTemCertificado(participante);
+                                                  const baixando =
+                                                    baixandoId ===
+                                                    Number(participante.certificado_id);
+
+                                                  return (
+                                                    <tr
+                                                      key={`${turmaKey}-${participante.usuario_id}`}
+                                                      className="border-t border-slate-200 dark:border-zinc-800"
+                                                    >
+                                                      <td className="px-3 py-3 font-semibold text-slate-950 dark:text-white">
+                                                        {participante?.nome || "—"}
+                                                      </td>
+
+                                                      <td className="px-3 py-3 text-slate-600 dark:text-zinc-300">
+                                                        {participante?.email || "—"}
+                                                      </td>
+
+                                                      <td className="px-3 py-3">
+                                                        <Badge
+                                                          tone={
+                                                            hasCertificado
+                                                              ? "emerald"
+                                                              : "amber"
+                                                          }
+                                                        >
+                                                          {hasCertificado ? (
+                                                            <CheckCircle2 className="h-3.5 w-3.5" />
+                                                          ) : (
+                                                            <AlertTriangle className="h-3.5 w-3.5" />
+                                                          )}
+                                                          {hasCertificado
+                                                            ? "Emitido"
+                                                            : "Pendente"}
+                                                        </Badge>
+                                                      </td>
+
+                                                      <td className="px-3 py-3 text-xs font-bold text-slate-600 dark:text-zinc-300">
+                                                        {hasCertificado
+                                                          ? getNumeroCertificadoLabel(participante)
+                                                          : "—"}
+                                                      </td>
+
+                                                      <td className="px-3 py-3 text-xs font-bold text-slate-500 dark:text-zinc-400">
+                                                        {participante?.codigo_validacao || "—"}
+                                                      </td>
+
+                                                      <td className="px-3 py-3 text-right">
+                                                        {hasCertificado ? (
+                                                          <Botao
+                                                            type="button"
+                                                            variant="secondary"
+                                                            onClick={() =>
+                                                              baixarCertificado(participante)
+                                                            }
+                                                            disabled={baixando}
+                                                          >
+                                                            <span className="inline-flex items-center gap-2">
+                                                              {baixando ? (
+                                                                <Loader2
+                                                                  className="h-4 w-4 animate-spin"
+                                                                  aria-hidden="true"
+                                                                />
+                                                              ) : (
+                                                                <Download
+                                                                  className="h-4 w-4"
+                                                                  aria-hidden="true"
+                                                                />
+                                                              )}
+                                                              {baixando
+                                                                ? "Baixando..."
+                                                                : "Baixar"}
+                                                            </span>
+                                                          </Botao>
+                                                        ) : (
+                                                          <span className="text-slate-400">
+                                                            —
+                                                          </span>
+                                                        )}
+                                                      </td>
+                                                    </tr>
+                                                  );
+                                                })}
+                                              </tbody>
+                                            </table>
+                                          </div>
+
+                                          <div className="grid gap-3 sm:hidden">
+                                            {participantes.map((participante) => (
+                                              <ParticipanteCard
+                                                key={`${turmaKey}-mobile-${participante.usuario_id}`}
+                                                participante={participante}
+                                                onDownload={baixarCertificado}
+                                                baixando={
+                                                  baixandoId ===
+                                                  Number(participante.certificado_id)
+                                                }
+                                              />
+                                            ))}
+                                          </div>
+                                        </>
+                                      )}
+                                    </div>
+                                  ) : null}
+                                </article>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : null}
+                    </motion.article>
+                  );
+                })}
+              </AnimatePresence>
+            </div>
+          </section>
         )}
       </main>
 

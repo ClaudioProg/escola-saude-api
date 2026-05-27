@@ -1,14 +1,18 @@
 <!doctype html>
 <html lang="pt-BR" dir="ltr">
   <head>
-    <meta charset="utf-8" />
+    <meta charset="UTF-8" />
 
-    <!-- CSP vem por header via Vercel/Helmet (não duplicar via <meta>). -->
+    <!-- CSP deve vir por header via Vercel/Helmet. Não duplicar via meta. -->
 
     <!-- Mobile / viewport -->
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
 
     <title>Plataforma - Escola da Saúde</title>
+
     <meta
       name="description"
       content="Plataforma oficial da Escola da Saúde de Santos para inscrições, presença e certificados de eventos."
@@ -17,22 +21,33 @@
 
     <!-- Aparência clara/escura -->
     <meta name="color-scheme" content="light dark" />
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#14532d" />
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b1220" />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: light)"
+      content="#14532d"
+    />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: dark)"
+      content="#0b1220"
+    />
 
     <!-- PWA -->
     <meta name="application-name" content="Escola da Saúde" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Escola da Saúde" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
     <link rel="manifest" href="/manifest.webmanifest" />
 
     <!-- Segurança / UX -->
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <meta name="format-detection" content="telephone=no" />
 
-    <!-- Social (OG/Twitter) -->
+    <!-- Social -->
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Plataforma - Escola da Saúde" />
     <meta
@@ -41,17 +56,9 @@
     />
     <meta property="og:image" content="/icons/og-image.png" />
     <meta property="og:locale" content="pt_BR" />
-    <meta property="og:url" content="https://escoladasaude.vercel.app" />
-
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Plataforma - Escola da Saúde" />
-    <meta
-      name="twitter:description"
-      content="Inscrições, presença e certificados de eventos da Escola da Saúde de Santos."
-    />
-    <meta name="twitter:image" content="/icons/og-image.png" />
 
-    <!-- Performance: pré-conexões -->
+    <!-- Performance -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="preconnect" href="https://accounts.google.com" />
@@ -59,7 +66,7 @@
 
     <!-- Fontes -->
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
     />
 
@@ -68,58 +75,43 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-32.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
-    <link rel="icon" type="image/png" sizes="512x512" href="/icons/maskable-512.png" />
+    <link rel="icon" sizes="512x512" href="/icons/maskable-512.png" />
     <link rel="mask-icon" href="/icons/maskable-512.svg" color="#14532d" />
 
-    <!-- ✅ Boot do tema inlined (com CSP nonce) -->
-    <script nonce="{{CSP_NONCE}}">
-      (function () {
-        try {
-          var KEY = "escola_theme";
-          var saved = localStorage.getItem(KEY) || "system";
-          var prefersDark =
-            window.matchMedia &&
-            window.matchMedia("(prefers-color-scheme: dark)").matches
-              ? "dark"
-              : "light";
+    <!-- Tema inicial antes do React -->
+    <script src="/boot-theme.js"></script>
 
-          var mode = saved === "system" ? prefersDark : saved;
-          var html = document.documentElement;
-
-          html.dataset.theme = mode;
-
-          if (mode === "dark") {
-            html.classList.add("dark");
-          } else {
-            html.classList.remove("dark");
-          }
-        } catch (e) {
-          /* silencia para não travar boot em ambientes restritos */
-        }
-      })();
-    </script>
-
-    <!-- Hint de fonte base (mantém UI estável) -->
-    <style nonce="{{CSP_NONCE}}">
+    <!-- Hint de fonte base -->
+    <style>
       :root {
-        --font-sans: "Inter", system-ui, -apple-system, Segoe UI, Roboto, Ubuntu,
-          "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji",
-          "Segoe UI Symbol", sans-serif;
+        --font-sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", Arial, "Noto Sans",
+          "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
       }
 
       html {
         font-family: var(--font-sans);
       }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+      }
     </style>
   </head>
 
-  <body class="bg-white text-gray-900 dark:bg-zinc-950 dark:text-white font-sans min-h-screen">
-    <noscript>É necessário habilitar JavaScript para usar esta aplicação.</noscript>
+  <body
+    class="bg-white text-gray-900 dark:bg-zinc-950 dark:text-white font-sans min-h-screen"
+  >
+    <noscript>
+      É necessário habilitar JavaScript para usar esta aplicação.
+    </noscript>
 
     <div id="root"></div>
     <div id="modal-root"></div>
 
-    <!-- ✅ Entry do Vite; o build reescreve este módulo para os assets finais -->
-    <script type="module" nonce="{{CSP_NONCE}}" src="/src/main.jsx"></script>
+    <!-- Entrada oficial do Vite em desenvolvimento.
+         Em produção, o Vite substitui por assets com hash automaticamente. -->
+    <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

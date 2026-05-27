@@ -1,384 +1,354 @@
-// ✅ src/pages/RepositorioTrabalhos.jsx — premium (hero + ministats + filtros com chips + a11y + debounce + querystring + motion-safe + cache)
-// Mantém sua ideia e estrutura, mas melhora: debounce, normalização sem acento, foco/skip, contador “filtrados”, botão limpar, cache leve,
-// carregamento/erro premium, detalhes com AnimatePresence e melhor acessibilidade.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+// 📁 src/pages/RepositorioTrabalhos.jsx
+// Atualizado em: 15/05/2026
+//
+// Plataforma Escola da Saúde — v2.0
+//
+// Repositório institucional de trabalhos.
+//
+// Contratos oficiais usados:
+// - GET /api/trabalho/repositorio
+// - GET /api/submissao/:id/poster
+//
+// Diretrizes v2.0:
+// - sem /trabalhos/repositorio;
+// - sem utilitário legado de download de banner;
+// - sem Footer antigo;
+// - sem status legado aprovado_exposicao/aprovado_oral/reprovado;
+// - repositório focado em conteúdo, não em notas;
+// - UX/UI premium real;
+// - acessível;
+// - mobile-first;
+// - busca com normalização sem acento;
+// - filtros persistidos em querystring;
+// - cache leve em sessionStorage.
+
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { apiGet } from "../services/api";
-import { baixarBannerTrabalho } from "../utils/downloadBannerTrabalho";
-import Footer from "../components/Footer";
 import {
-  FileText,
-  Image as ImageIcon,
-  Loader2,
   AlertCircle,
-  Search,
-  Filter,
   BookOpen,
   ChevronDown,
   ChevronUp,
   ExternalLink,
-  X,
-  Sparkles,
-  RefreshCcw,
+  FileText,
+  Filter,
+  Image as ImageIcon,
   Layers,
+  Loader2,
+  RefreshCcw,
+  Search,
+  Sparkles,
   Tags,
+  X,
 } from "lucide-react";
 
-/* ---------------- Utils ---------------- */
-const cx = (...c) => c.filter(Boolean).join(" ");
-const norm = (s) =>
-  String(s || "")
+import api from "../services/api";
+import Footer from "../components/layout/Footer";
+import HeaderHero from "../components/layout/HeaderHero";
+
+/* =========================================================================
+   Utils
+=========================================================================== */
+
+function cx(...classes) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function norm(value) {
+  return String(value || "")
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "")
     .toLowerCase()
     .trim();
+}
 
-/* ---------------- Cache (sessionStorage) ---------------- */
-const CACHE_KEY = "repo:trabalhos:v1";
-const CACHE_TTL = 3 * 60 * 1000; // 3 min
+function unwrapArray(response) {
+  if (Array.isArray(response)) return response;
+  if (Array.isArray(response?.data)) return response.data;
+  if (Array.isArray(response?.data?.data)) return response.data.data;
+  return [];
+}
+
+function getErrorMessage(error, fallback) {
+  return (
+    error?.response?.data?.message ||
+    error?.data?.message ||
+    error?.message ||
+    fallback
+  );
+}
+
+function normalizarStatus(status) {
+  const value = String(status || "").toLowerCase();
+
+  if (value === "aprovada_exposicao") return "aprovada_exposicao";
+  if (value === "aprovada_oral") return "aprovada_oral";
+  if (value === "aprovada") return "aprovada";
+  if (value === "reprovada") return "reprovada";
+  if (value === "em_avaliacao") return "em_avaliacao";
+  if (value === "submetida") return "submetida";
+  if (value === "rascunho") return "rascunho";
+  if (value === "cancelada") return "cancelada";
+
+  return value || "indefinido";
+}
+
+function inicioExperienciaFormatado(value) {
+  if (!value) return "—";
+
+  const [year, month] = String(value).split("-");
+  if (!year || !month) return value;
+
+  return `${month}/${year}`;
+}
+
+function abrirPosterSubmissao(id) {
+  if (!id) return;
+
+  const baseUrl = String(import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
+  const token = localStorage.getItem("token") || "";
+
+  const url = `${baseUrl}/submissao/${id}/poster`;
+
+  fetch(url, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error("Não foi possível abrir o arquivo do trabalho.");
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+
+      window.open(objectUrl, "_blank", "noopener,noreferrer");
+
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    })
+    .catch((error) => {
+  console.error("[RepositorioTrabalhos] erro ao abrir arquivo", error);
+  alert("Não foi possível abrir o arquivo do trabalho.");
+});
+}
+
+/* =========================================================================
+   Cache
+=========================================================================== */
+
+const CACHE_KEY = "escola:v2:repositorio-trabalho";
+const CACHE_TTL = 3 * 60 * 1000;
 
 function readCache() {
   try {
     const raw = sessionStorage.getItem(CACHE_KEY);
     if (!raw) return null;
+
     const parsed = JSON.parse(raw);
+
     if (!parsed?.ts || Date.now() - parsed.ts > CACHE_TTL) return null;
+
     return Array.isArray(parsed.data) ? parsed.data : null;
   } catch {
     return null;
   }
 }
+
 function writeCache(data) {
   try {
     sessionStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data }));
-  } catch {}
+  } catch {
+    // cache indisponível não deve quebrar a página
+  }
 }
 
-/* ---------------- HeaderHero (paleta exclusiva desta página) ---------------- */
-function HeaderHero({ onRefresh, carregando }) {
-  // azul escuro → roxo → pink
-  const gradient = "from-sky-900 via-indigo-800 to-fuchsia-700";
+/* =========================================================================
+   UI primitives
+=========================================================================== */
 
+function PageShell({ children }) {
   return (
-    <header className={cx("relative isolate overflow-hidden bg-gradient-to-br", gradient, "text-white")} role="banner">
-      {/* skip link */}
-      <a
-        href="#conteudo"
-        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 rounded-xl bg-white/20 px-4 py-2 text-sm font-semibold text-white shadow"
-      >
-        Pular para o conteúdo
-      </a>
-
-      {/* Glow decorativo centralizado */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute -top-28 left-1/2 h-[320px] w-[900px] -translate-x-1/2 rounded-full blur-3xl opacity-30 bg-fuchsia-400"
-      />
-
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-10 flex flex-col items-center text-center gap-4">
-        {/* Chip título */}
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur shadow-sm shadow-black/10">
-          <BookOpen className="w-4 h-4" aria-hidden="true" />
-          <span className="text-xs sm:text-sm font-medium">Repositório de Trabalhos Científicos</span>
-        </div>
-
-        {/* Título */}
-        <div className="mt-1 flex items-center justify-center gap-2">
-          <FileText className="w-7 h-7 sm:w-8 sm:h-8" aria-hidden="true" />
-          <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight">
-            Trabalhos submetidos e avaliados
-          </h1>
-        </div>
-
-        <p className="mt-1 text-sm sm:text-base text-white/90 max-w-3xl mx-auto">
-          Consulte títulos, métodos, resultados e considerações finais dos trabalhos já avaliados nas chamadas científicas.
-          As notas ficam ocultas — aqui o foco é o conteúdo.
-        </p>
-
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/15 text-xs font-semibold">
-            <Sparkles className="w-4 h-4" aria-hidden="true" />
-            Conteúdo público
-          </span>
-
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={carregando}
-            className={cx(
-              "inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/15 hover:bg-white/25 text-xs font-semibold",
-              "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 transition",
-              carregando ? "opacity-70 cursor-not-allowed" : ""
-            )}
-            aria-label="Atualizar repositório"
-            title="Atualizar"
-          >
-            {carregando ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <RefreshCcw className="w-4 h-4" aria-hidden="true" />}
-            {carregando ? "Atualizando…" : "Atualizar"}
-          </button>
-        </div>
+    <div className="min-h-screen bg-slate-950 text-slate-950 dark:bg-slate-950">
+      <div className="fixed inset-0 -z-10 overflow-hidden">
+        <div className="absolute left-[-10%] top-[-10%] h-96 w-96 rounded-full bg-sky-500/20 blur-3xl" />
+        <div className="absolute right-[-12%] top-24 h-96 w-96 rounded-full bg-fuchsia-500/20 blur-3xl" />
+        <div className="absolute bottom-[-15%] left-[25%] h-96 w-96 rounded-full bg-indigo-500/20 blur-3xl" />
       </div>
 
-      <div className="absolute bottom-0 left-0 right-0 h-px bg-white/25" aria-hidden="true" />
-    </header>
+      <div className="min-h-screen bg-slate-50/95 dark:bg-slate-950/85 dark:text-slate-50">
+        {children}
+      </div>
+    </div>
   );
 }
 
-/* ---------------- Mini stats ---------------- */
-function MiniStats({ total, totalChamadas, totalLinhas, totalComBanner, filtrados }) {
-  const items = [
-    { icon: Layers, label: "Trabalhos no repositório", value: total, helper: "Somente trabalhos já avaliados", tone: "neutral" },
-    { icon: Tags, label: "Chamadas científicas", value: totalChamadas, helper: "Eventos / editais distintos", tone: "info" },
-    { icon: Filter, label: "Linhas temáticas", value: totalLinhas, helper: "Áreas / eixos de pesquisa", tone: "info" },
-    { icon: ImageIcon, label: "Com banner disponível", value: totalComBanner, helper: "Arquivos para download", tone: "ok" },
-  ];
+function GlassCard({ children, className = "" }) {
+  return (
+    <div
+      className={cx(
+        "rounded-[1.75rem] border border-white/70 bg-white/90 shadow-xl shadow-slate-200/60 backdrop-blur-xl",
+        "dark:border-white/10 dark:bg-slate-900/80 dark:shadow-black/20",
+        className
+      )}
+    >
+      {children}
+    </div>
+  );
+}
 
-  const toneCls = {
-    neutral: "bg-white dark:bg-zinc-900 ring-zinc-200/70 dark:ring-zinc-800/70",
-    info: "bg-indigo-50 dark:bg-indigo-950/25 ring-indigo-200/70 dark:ring-indigo-900/40",
-    ok: "bg-emerald-50 dark:bg-emerald-950/25 ring-emerald-200/70 dark:ring-emerald-900/40",
+function Badge({ children, tone = "slate", icon: Icon }) {
+  const tones = {
+    slate:
+      "border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200",
+    sky:
+      "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200",
+    indigo:
+      "border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200",
+    fuchsia:
+      "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700 dark:border-fuchsia-800 dark:bg-fuchsia-950/40 dark:text-fuchsia-200",
+    emerald:
+      "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200",
+    amber:
+      "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200",
+    rose:
+      "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200",
   };
 
   return (
-    <section aria-label="Resumo do repositório" className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-      {items.map((item) => (
-        <article
-          key={item.label}
-          className={cx("rounded-2xl shadow-sm ring-1 px-4 py-3 flex flex-col justify-between", toneCls[item.tone])}
-        >
-          <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400 inline-flex items-center gap-2">
-            <item.icon className="w-4 h-4" aria-hidden="true" />
-            {item.label}
-          </p>
-          <p className="mt-1 text-2xl font-semibold text-zinc-900 dark:text-zinc-50 tabular-nums">
-            {item.value ?? "—"}
-          </p>
-          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">{item.helper}</p>
+    <span
+      className={cx(
+        "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-bold",
+        tones[tone] || tones.slate
+      )}
+    >
+      {Icon ? <Icon className="h-3.5 w-3.5" aria-hidden="true" /> : null}
+      {children}
+    </span>
+  );
+}
 
-          {typeof filtrados === "number" && (
-            <p className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">
-              Filtrados agora: <span className="font-semibold tabular-nums">{filtrados}</span>
-            </p>
-          )}
-        </article>
+function StatusBadge({ status, statusEscrita, statusOral }) {
+  const value = normalizarStatus(status);
+
+  const config = {
+    aprovada_exposicao: {
+      label: "Aprovada para exposição",
+      tone: "emerald",
+    },
+    aprovada_oral: {
+      label: "Aprovada para oral",
+      tone: "amber",
+    },
+    aprovada: {
+      label: "Aprovada",
+      tone: "emerald",
+    },
+    reprovada: {
+      label: "Não selecionada",
+      tone: "rose",
+    },
+    em_avaliacao: {
+      label: "Em avaliação",
+      tone: "indigo",
+    },
+    submetida: {
+      label: "Submetida",
+      tone: "sky",
+    },
+    rascunho: {
+      label: "Rascunho",
+      tone: "slate",
+    },
+    cancelada: {
+      label: "Cancelada",
+      tone: "rose",
+    },
+    indefinido: {
+      label: "Indefinido",
+      tone: "slate",
+    },
+  };
+
+  const item = config[value] || config.indefinido;
+
+  const tags = [];
+  if (String(statusEscrita || "").toLowerCase() === "aprovado") tags.push("Escrita");
+  if (String(statusOral || "").toLowerCase() === "aprovado") tags.push("Oral");
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <Badge tone={item.tone}>{item.label}</Badge>
+      {tags.length > 0 ? <Badge tone="slate">{tags.join(" · ")}</Badge> : null}
+    </div>
+  );
+}
+
+/* =========================================================================
+   Estatísticas
+=========================================================================== */
+
+function MiniStats({ total, totalChamadas, totalLinhas, totalComBanner, filtrados }) {
+  const items = [
+    {
+      icon: Layers,
+      label: "Trabalhos",
+      value: total,
+      helper: "Somente avaliados",
+      tone: "sky",
+    },
+    {
+      icon: Tags,
+      label: "Chamadas",
+      value: totalChamadas,
+      helper: "Editais distintos",
+      tone: "indigo",
+    },
+    {
+      icon: Filter,
+      label: "Linhas temáticas",
+      value: totalLinhas,
+      helper: "Áreas/eixos",
+      tone: "fuchsia",
+    },
+    {
+      icon: ImageIcon,
+      label: "Com arquivo",
+      value: totalComBanner,
+      helper: "Pôster disponível",
+      tone: "emerald",
+    },
+  ];
+
+  return (
+    <section aria-label="Resumo do repositório" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {items.map((item) => (
+        <GlassCard key={item.label} className="p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                <item.icon className="h-4 w-4" />
+                {item.label}
+              </p>
+              <p className="mt-2 text-3xl font-black text-slate-900 dark:text-white">
+                {item.value ?? "—"}
+              </p>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                {item.helper}
+              </p>
+            </div>
+
+            <Badge tone={item.tone}>{filtrados}</Badge>
+          </div>
+        </GlassCard>
       ))}
     </section>
   );
 }
 
-/* ---------------- Badge helpers ---------------- */
-function StatusBadge({ status, statusEscrita, statusOral }) {
-  const s = String(status || "").toLowerCase();
+/* =========================================================================
+   Filtros
+=========================================================================== */
 
-  let label = "Em avaliação";
-  let classes = "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/60 dark:text-indigo-200";
-
-  if (s === "aprovado_exposicao") {
-    label = "Aprovado para exposição";
-    classes = "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200";
-  } else if (s === "aprovado_oral") {
-    label = "Aprovado para apresentação oral";
-    classes = "bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200";
-  } else if (s === "reprovado") {
-    label = "Não selecionado";
-    classes = "bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-200";
-  }
-
-  const tags = [];
-  if (statusEscrita === "aprovado") tags.push("Escrita");
-  if (statusOral === "aprovado") tags.push("Oral");
-
-  return (
-    <div className="flex flex-wrap items-center gap-1">
-      <span className={cx("inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium", classes)}>
-        {label}
-      </span>
-      {tags.length > 0 && (
-        <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
-          {tags.join(" · ")}
-        </span>
-      )}
-    </div>
-  );
-}
-
-/* Linha temática: mostrar apenas o NOME (sem código) */
-function LinhaBadge({ codigo, nome }) {
-  const texto = nome || codigo;
-  if (!texto) return null;
-  return (
-    <span className="inline-flex items-center rounded-full bg-sky-50 text-sky-800 dark:bg-sky-900/50 dark:text-sky-100 px-2.5 py-0.5 text-[11px] font-medium">
-      {texto}
-    </span>
-  );
-}
-
-/* ---------------- Card de Trabalho ---------------- */
-function CardTrabalho({ trabalho, reduceMotion }) {
-  const [aberto, setAberto] = useState(false);
-
-  const {
-    id,
-    titulo,
-    chamada_titulo,
-    linha_tematica_codigo,
-    linha_tematica_nome,
-    inicio_experiencia,
-    introducao,
-    objetivos,
-    metodo,
-    resultados,
-    consideracao,
-    bibliografia,
-    status,
-    status_escrita,
-    status_oral,
-    banner_url,
-    banner_nome,
-  } = trabalho;
-
-  const inicioFmt = useMemo(() => {
-    if (!inicio_experiencia) return "—";
-    const [y, m] = String(inicio_experiencia).split("-");
-    if (!y || !m) return inicio_experiencia;
-    return `${m}/${y}`;
-  }, [inicio_experiencia]);
-
-  const toggle = () => setAberto((v) => !v);
-
-  const handleVerBanner = () => {
-    const nomeDownload = banner_nome || `banner-trabalho-${id}`;
-    baixarBannerTrabalho(id, nomeDownload);
-  };
-
-  const secao = (tituloSecao, texto) => {
-    if (!texto) return null;
-    return (
-      <div className="mt-3">
-        <h4 className="text-xs font-semibold text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">
-          {tituloSecao}
-        </h4>
-        <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-200 whitespace-pre-wrap text-justify">
-          {texto}
-        </p>
-      </div>
-    );
-  };
-
-  // Preview: sem introdução (prioriza resultados, depois considerações/objetivos)
-  const previewTexto = resultados || consideracao || objetivos || "";
-
-  return (
-    <article
-      className="rounded-2xl bg-white dark:bg-zinc-900 shadow-sm ring-1 ring-zinc-200/70 dark:ring-zinc-800/70 p-4 flex flex-col gap-3 relative overflow-hidden"
-      aria-label={`Trabalho ${titulo || `#${id}`}`}
-    >
-      {/* faixinha superior suave */}
-      <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-sky-500 via-fuchsia-500 to-rose-500" aria-hidden="true" />
-
-      {/* Cabeçalho do card */}
-      <div className="flex flex-col gap-2 pt-1">
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div className="min-w-0">
-            <h3 className="text-base sm:text-lg font-semibold text-zinc-900 dark:text-zinc-50 break-words">
-              {titulo || "Trabalho sem título"}
-            </h3>
-            {chamada_titulo && (
-              <p className="mt-0.5 text-xs sm:text-sm text-zinc-500 dark:text-zinc-400 break-words">
-                {chamada_titulo}
-              </p>
-            )}
-          </div>
-          <StatusBadge status={status} statusEscrita={status_escrita} statusOral={status_oral} />
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
-          <LinhaBadge codigo={linha_tematica_codigo} nome={linha_tematica_nome} />
-          <span className="inline-flex items-center gap-1">
-            <span className="w-1 h-1 rounded-full bg-zinc-400" aria-hidden="true" />
-            Início da experiência: <span className="font-medium ml-1 tabular-nums">{inicioFmt}</span>
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="w-1 h-1 rounded-full bg-zinc-400" aria-hidden="true" />
-            ID <span className="font-medium tabular-nums">#{id}</span>
-          </span>
-        </div>
-      </div>
-
-      {/* Resumo rápido */}
-      {previewTexto && (
-        <p className="text-sm text-zinc-700 dark:text-zinc-200 line-clamp-3 sm:line-clamp-2">
-          {previewTexto}
-        </p>
-      )}
-
-      {/* Ações principais */}
-      <div className="mt-1 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={toggle}
-          className="inline-flex items-center gap-1.5 rounded-full border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-800 dark:text-zinc-100 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-500"
-          aria-expanded={aberto}
-          aria-controls={`trabalho-${id}-detalhes`}
-        >
-          {aberto ? (
-            <>
-              <ChevronUp className="w-3 h-3" aria-hidden="true" />
-              Ocultar detalhes
-            </>
-          ) : (
-            <>
-              <ChevronDown className="w-3 h-3" aria-hidden="true" />
-              Ver detalhes do trabalho
-            </>
-          )}
-        </button>
-
-        {banner_url ? (
-          <button
-            type="button"
-            onClick={handleVerBanner}
-            className="inline-flex items-center gap-1.5 rounded-full bg-fuchsia-600 hover:bg-fuchsia-700 text-white px-3 py-1.5 text-xs font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-300"
-          >
-            <ImageIcon className="w-3.5 h-3.5" aria-hidden="true" />
-            Ver banner
-            <ExternalLink className="w-3 h-3" aria-hidden="true" />
-          </button>
-        ) : (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400 px-3 py-1.5 text-xs">
-            <ImageIcon className="w-3.5 h-3.5" aria-hidden="true" />
-            Banner não disponível
-          </span>
-        )}
-      </div>
-
-      {/* Detalhes expansíveis */}
-      <AnimatePresence initial={false}>
-        {aberto && (
-          <motion.div
-            key="detalhes"
-            id={`trabalho-${id}-detalhes`}
-            className="mt-2 border-t border-dashed border-zinc-200 dark:border-zinc-700 pt-3"
-            initial={reduceMotion ? false : { opacity: 0, y: 6 }}
-            animate={reduceMotion ? {} : { opacity: 1, y: 0 }}
-            exit={reduceMotion ? {} : { opacity: 0, y: 6 }}
-            transition={{ duration: 0.18 }}
-          >
-            {secao("Introdução", introducao)}
-            {secao("Objetivos", objetivos)}
-            {secao("Método / Descrição da prática", metodo)}
-            {secao("Resultados / Impactos", resultados)}
-            {secao("Considerações finais", consideracao)}
-            {secao("Referências / Bibliografia", bibliografia)}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </article>
-  );
-}
-
-/* ---------------- Filtros ---------------- */
 function FiltrosRepositorio({
   chamadas,
   linhas,
@@ -392,98 +362,235 @@ function FiltrosRepositorio({
   totalFiltrados,
 }) {
   return (
-    <section
-      aria-label="Filtros de pesquisa"
-      className="mt-6 rounded-2xl bg-white dark:bg-zinc-900 shadow-sm ring-1 ring-zinc-200/70 dark:ring-zinc-800/70 p-4 flex flex-col gap-4"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-sm font-extrabold text-zinc-800 dark:text-zinc-100">
-          <Filter className="w-4 h-4" aria-hidden="true" />
-          <span>Filtrar trabalhos</span>
-          <span className="ml-1 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
-            ({totalFiltrados} encontrado{totalFiltrados === 1 ? "" : "s"})
-          </span>
+    <GlassCard className="p-4 sm:p-5" aria-label="Filtros de pesquisa">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h2 className="flex items-center gap-2 text-xl font-black text-slate-900 dark:text-white">
+            <Filter className="h-5 w-5 text-fuchsia-600" />
+            Filtrar trabalhos
+          </h2>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            {totalFiltrados} trabalho{totalFiltrados === 1 ? "" : "s"} encontrado{totalFiltrados === 1 ? "" : "s"} com os filtros atuais.
+          </p>
         </div>
 
         <button
           type="button"
           onClick={onClearAll}
-          className="inline-flex items-center gap-2 rounded-full border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-semibold hover:bg-zinc-50 dark:hover:bg-zinc-800 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-500"
-          aria-label="Limpar filtros"
-          title="Limpar filtros"
+          className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
         >
-          <X className="w-3.5 h-3.5" aria-hidden="true" />
-          Limpar
+          <X className="h-4 w-4" />
+          Limpar filtros
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        {/* Busca livre */}
-        <div className="col-span-1">
-          <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+      <div className="mt-5 grid gap-3 lg:grid-cols-[1.3fr_1fr_1fr]">
+        <label className="block">
+          <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">
             Buscar por título ou conteúdo
-          </label>
+          </span>
           <div className="relative">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" aria-hidden="true" />
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
               value={termoValue}
-              onChange={(e) => onChangeTermo(e.target.value)}
-              placeholder="Digite um termo chave…"
-              className="w-full pl-10 pr-3 py-2 text-sm rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950/40 text-zinc-900 dark:text-zinc-50 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
+              onChange={(event) => onChangeTermo(event.target.value)}
+              placeholder="Digite título, método, resultado, objetivo..."
+              className="h-12 w-full rounded-2xl border border-slate-200 bg-white pl-11 pr-4 text-sm outline-none transition focus:ring-2 focus:ring-fuchsia-500 dark:border-slate-700 dark:bg-slate-950"
               aria-label="Buscar por título ou conteúdo"
             />
           </div>
-          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-            Dica: a busca considera resultados, considerações, método, objetivos e mais.
-          </p>
-        </div>
+        </label>
 
-        {/* Filtro por chamada */}
-        <div>
-          <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-            Chamada científica
-          </label>
+        <label className="block">
+          <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">
+            Chamada
+          </span>
           <select
             value={chamadaSelecionada}
-            onChange={(e) => onChangeChamada(e.target.value)}
-            className="w-full text-sm rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950/40 text-zinc-900 dark:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
-            aria-label="Filtrar por chamada científica"
+            onChange={(event) => onChangeChamada(event.target.value)}
+            className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm outline-none transition focus:ring-2 focus:ring-fuchsia-500 dark:border-slate-700 dark:bg-slate-950"
+            aria-label="Filtrar por chamada"
           >
             <option value="">Todas</option>
-            {chamadas.map((c) => (
-              <option key={c} value={c}>
-                {c}
+            {chamadas.map((chamada) => (
+              <option key={chamada} value={chamada}>
+                {chamada}
               </option>
             ))}
           </select>
-        </div>
+        </label>
 
-        {/* Filtro por linha temática */}
-        <div>
-          <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+        <label className="block">
+          <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">
             Linha temática
-          </label>
+          </span>
           <select
             value={linhaSelecionada}
-            onChange={(e) => onChangeLinha(e.target.value)}
-            className="w-full text-sm rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950/40 text-zinc-900 dark:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
+            onChange={(event) => onChangeLinha(event.target.value)}
+            className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm outline-none transition focus:ring-2 focus:ring-fuchsia-500 dark:border-slate-700 dark:bg-slate-950"
             aria-label="Filtrar por linha temática"
           >
             <option value="">Todas</option>
-            {linhas.map((l) => (
-              <option key={l} value={l}>
-                {l}
+            {linhas.map((linha) => (
+              <option key={linha} value={linha}>
+                {linha}
               </option>
             ))}
           </select>
-        </div>
+        </label>
       </div>
-    </section>
+    </GlassCard>
   );
 }
 
-/* ---------------- Página principal ---------------- */
+/* =========================================================================
+   Card
+=========================================================================== */
+
+function LinhaBadge({ codigo, nome }) {
+  const texto = nome || codigo;
+  if (!texto) return null;
+
+  return <Badge tone="sky">{texto}</Badge>;
+}
+
+function CardTrabalho({ trabalho, reduceMotion }) {
+  const [aberto, setAberto] = useState(false);
+
+  const preview = trabalho.resultados || trabalho.consideracao || trabalho.objetivos || "";
+
+  const inicioFmt = useMemo(
+    () => inicioExperienciaFormatado(trabalho.inicio_experiencia),
+    [trabalho.inicio_experiencia]
+  );
+
+  function secao(titulo, texto) {
+    if (!texto) return null;
+
+    return (
+      <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/60">
+        <h4 className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">
+          {titulo}
+        </h4>
+        <p className="mt-2 whitespace-pre-wrap text-justify text-sm leading-relaxed text-slate-700 dark:text-slate-200">
+          {texto}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <motion.article
+      layout
+      className="overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-xl hover:shadow-slate-200/60 dark:border-slate-800 dark:bg-slate-900 dark:hover:shadow-black/20"
+      aria-label={`Trabalho ${trabalho.titulo || `#${trabalho.id}`}`}
+    >
+      <div className="h-1.5 bg-gradient-to-r from-sky-500 via-fuchsia-500 to-indigo-500" />
+
+      <div className="space-y-4 p-4 sm:p-5">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <div className="mb-2 flex flex-wrap gap-2">
+              <StatusBadge
+                status={trabalho.status}
+                statusEscrita={trabalho.status_escrita}
+                statusOral={trabalho.status_oral}
+              />
+              <LinhaBadge
+                codigo={trabalho.linha_tematica_codigo}
+                nome={trabalho.linha_tematica_nome}
+              />
+            </div>
+
+            <h3 className="text-lg font-black text-slate-900 dark:text-white">
+              {trabalho.titulo || "Trabalho sem título"}
+            </h3>
+
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              {trabalho.chamada_titulo || "Chamada não informada"}
+            </p>
+
+            <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500 dark:text-slate-400">
+              <span className="rounded-full bg-slate-100 px-3 py-1 dark:bg-slate-800">
+                Início da experiência: <strong>{inicioFmt}</strong>
+              </span>
+              <span className="rounded-full bg-slate-100 px-3 py-1 dark:bg-slate-800">
+                ID #{trabalho.id}
+              </span>
+            </div>
+          </div>
+
+          {trabalho.poster_arquivo_id ? (
+            <button
+              type="button"
+              onClick={() => abrirPosterSubmissao(trabalho.id)}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-fuchsia-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-fuchsia-900/20 transition hover:bg-fuchsia-700 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 focus:ring-offset-2"
+            >
+              <ImageIcon className="h-4 w-4" />
+              Ver arquivo
+              <ExternalLink className="h-3.5 w-3.5" />
+            </button>
+          ) : (
+            <Badge tone="slate" icon={ImageIcon}>Sem arquivo</Badge>
+          )}
+        </div>
+
+        {preview ? (
+          <p className="line-clamp-3 text-sm leading-relaxed text-slate-700 dark:text-slate-200">
+            {preview}
+          </p>
+        ) : null}
+
+        <button
+          type="button"
+          onClick={() => setAberto((current) => !current)}
+          className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+          aria-expanded={aberto}
+          aria-controls={`trabalho-${trabalho.id}-detalhes`}
+        >
+          {aberto ? (
+            <>
+              <ChevronUp className="h-4 w-4" />
+              Ocultar detalhes
+            </>
+          ) : (
+            <>
+              <ChevronDown className="h-4 w-4" />
+              Ver detalhes
+            </>
+          )}
+        </button>
+
+        <AnimatePresence initial={false}>
+          {aberto ? (
+            <motion.div
+              key="detalhes"
+              id={`trabalho-${trabalho.id}-detalhes`}
+              className="space-y-3 border-t border-dashed border-slate-200 pt-4 dark:border-slate-700"
+              initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+              animate={reduceMotion ? {} : { opacity: 1, y: 0 }}
+              exit={reduceMotion ? {} : { opacity: 0, y: 8 }}
+              transition={{ duration: 0.18 }}
+            >
+              {secao("Introdução", trabalho.introducao)}
+              {secao("Objetivos", trabalho.objetivos)}
+              {secao("Método / descrição da prática", trabalho.metodo)}
+              {secao("Resultados / impactos", trabalho.resultados)}
+              {secao("Considerações finais", trabalho.consideracao)}
+              {secao("Referências / bibliografia", trabalho.bibliografia)}
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+      </div>
+    </motion.article>
+  );
+}
+
+/* =========================================================================
+   Página
+=========================================================================== */
+
 export default function RepositorioTrabalhos() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -493,43 +600,48 @@ export default function RepositorioTrabalhos() {
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState("");
 
-  // filtros (controlados + querystring)
   const [termo, setTermo] = useState(() => searchParams.get("q") || "");
-  const [chamadaSel, setChamadaSel] = useState(() => searchParams.get("chamada") || "");
-  const [linhaSel, setLinhaSel] = useState(() => searchParams.get("linha") || "");
-
-  // debounce termo (para não filtrar a cada tecla)
-  const [termoDeb, setTermoDeb] = useState(() => searchParams.get("q") || "");
-  useEffect(() => {
-    const t = setTimeout(() => setTermoDeb(termo), 250);
-    return () => clearTimeout(t);
-  }, [termo]);
+  const [termoDebounced, setTermoDebounced] = useState(() => searchParams.get("q") || "");
+  const [chamadaSelecionada, setChamadaSelecionada] = useState(
+    () => searchParams.get("chamada") || ""
+  );
+  const [linhaSelecionada, setLinhaSelecionada] = useState(
+    () => searchParams.get("linha") || ""
+  );
 
   const carregar = useCallback(async () => {
     setLoading(true);
     setErro("");
 
     try {
-      // cache primeiro
       const cached = readCache();
+
       if (cached?.length) {
         setDados(cached);
         setLoading(false);
       }
 
-      const resp = await apiGet("/trabalhos/repositorio");
-      const lista = Array.isArray(resp?.data) ? resp.data : Array.isArray(resp) ? resp : [];
+      const response = await api.get("/trabalho/repositorio");
+      const lista = unwrapArray(response);
+
       setDados(lista);
       writeCache(lista);
-    } catch (e) {
-      const status = e?.status || e?.response?.status;
+    } catch (error) {
+      const status = error?.status || error?.response?.status;
 
       if (status === 401) {
-        navigate(`/login?next=${encodeURIComponent("/repositorio-trabalhos")}`, { replace: true });
+        navigate(`/login?next=${encodeURIComponent("/repositorio-trabalhos")}`, {
+          replace: true,
+        });
         return;
       }
 
-      setErro(e?.response?.data?.erro || e?.response?.data?.message || "Não foi possível carregar o repositório no momento.");
+      setErro(
+        getErrorMessage(
+          error,
+          "Não foi possível carregar o repositório no momento."
+        )
+      );
     } finally {
       setLoading(false);
     }
@@ -539,172 +651,238 @@ export default function RepositorioTrabalhos() {
     carregar();
   }, [carregar]);
 
-  // atualiza querystring quando filtros mudam
   useEffect(() => {
-    const q = new URLSearchParams();
-    if (termo) q.set("q", termo);
-    if (chamadaSel) q.set("chamada", chamadaSel);
-    if (linhaSel) q.set("linha", linhaSel);
-    setSearchParams(q, { replace: true });
-  }, [termo, chamadaSel, linhaSel, setSearchParams]);
+    const timer = window.setTimeout(() => {
+      setTermoDebounced(termo);
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [termo]);
+
+  useEffect(() => {
+    const query = new URLSearchParams();
+
+    if (termo) query.set("q", termo);
+    if (chamadaSelecionada) query.set("chamada", chamadaSelecionada);
+    if (linhaSelecionada) query.set("linha", linhaSelecionada);
+
+    setSearchParams(query, { replace: true });
+  }, [termo, chamadaSelecionada, linhaSelecionada, setSearchParams]);
 
   const chamadas = useMemo(() => {
     const set = new Set();
-    dados.forEach((d) => d?.chamada_titulo && set.add(d.chamada_titulo));
-    return Array.from(set).sort();
+
+    for (const item of dados) {
+      if (item?.chamada_titulo) set.add(item.chamada_titulo);
+    }
+
+    return Array.from(set).sort((a, b) =>
+      a.localeCompare(b, "pt-BR", { sensitivity: "base" })
+    );
   }, [dados]);
 
   const linhas = useMemo(() => {
     const set = new Set();
-    dados.forEach((d) => {
-      const nome = d?.linha_tematica_nome || d?.linha_tematica_codigo;
+
+    for (const item of dados) {
+      const nome = item?.linha_tematica_nome || item?.linha_tematica_codigo;
       if (nome) set.add(nome);
-    });
-    return Array.from(set).sort();
+    }
+
+    return Array.from(set).sort((a, b) =>
+      a.localeCompare(b, "pt-BR", { sensitivity: "base" })
+    );
   }, [dados]);
 
   const filtrados = useMemo(() => {
     let arr = Array.isArray(dados) ? [...dados] : [];
 
-    if (chamadaSel) arr = arr.filter((d) => d?.chamada_titulo === chamadaSel);
-
-    if (linhaSel) {
-      arr = arr.filter((d) => d?.linha_tematica_nome === linhaSel || d?.linha_tematica_codigo === linhaSel);
+    if (chamadaSelecionada) {
+      arr = arr.filter((item) => item?.chamada_titulo === chamadaSelecionada);
     }
 
-    const t = norm(termoDeb);
-    if (t) {
-      arr = arr.filter((d) =>
+    if (linhaSelecionada) {
+      arr = arr.filter(
+        (item) =>
+          item?.linha_tematica_nome === linhaSelecionada ||
+          item?.linha_tematica_codigo === linhaSelecionada
+      );
+    }
+
+    const termoNorm = norm(termoDebounced);
+
+    if (termoNorm) {
+      arr = arr.filter((item) =>
         [
-          d?.titulo,
-          d?.introducao,
-          d?.objetivos,
-          d?.metodo,
-          d?.resultados,
-          d?.consideracao,
-          d?.bibliografia,
+          item?.titulo,
+          item?.introducao,
+          item?.objetivos,
+          item?.metodo,
+          item?.resultados,
+          item?.consideracao,
+          item?.bibliografia,
+          item?.chamada_titulo,
+          item?.linha_tematica_nome,
         ]
           .filter(Boolean)
-          .some((campo) => norm(campo).includes(t))
+          .some((campo) => norm(campo).includes(termoNorm))
       );
     }
 
     return arr;
-  }, [dados, chamadaSel, linhaSel, termoDeb]);
+  }, [dados, chamadaSelecionada, linhaSelecionada, termoDebounced]);
 
   const total = dados.length;
   const totalChamadas = chamadas.length;
   const totalLinhas = linhas.length;
-  const totalComBanner = useMemo(() => dados.filter((d) => d?.banner_url).length, [dados]);
+  const totalComBanner = useMemo(
+    () => dados.filter((item) => item?.banner_url || item?.poster_arquivo_id).length,
+    [dados]
+  );
 
-  const limpar = useCallback(() => {
+  function limparFiltros() {
     setTermo("");
-    setChamadaSel("");
-    setLinhaSel("");
-  }, []);
+    setTermoDebounced("");
+    setChamadaSelecionada("");
+    setLinhaSelecionada("");
+  }
 
   return (
-    <div className="flex flex-col min-h-screen bg-zinc-50 text-gray-900 dark:bg-zinc-950 dark:text-white">
-      <HeaderHero onRefresh={carregar} carregando={loading} />
+    <PageShell>
+      <HeaderHero
+  icone={BookOpen}
+  etiqueta="Produção científica"
+  titulo="Repositório de Trabalhos"
+  subtitulo="Consulte produções, experiências, métodos e resultados publicados em chamadas institucionais da Escola da Saúde."
+/>
 
-      <main id="conteudo" role="main" className="flex-1 px-3 sm:px-4 py-6">
-        <div className="max-w-6xl mx-auto">
-          {/* Mini stats */}
-          <MiniStats
-            total={total}
-            totalChamadas={totalChamadas}
-            totalLinhas={totalLinhas}
-            totalComBanner={totalComBanner}
-            filtrados={filtrados.length}
-          />
+      <main id="conteudo" role="main" className="mx-auto w-full max-w-screen-2xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+  <section className="space-y-4">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <h2 className="text-xl font-black text-slate-900 dark:text-white">
+          Biblioteca institucional de trabalhos
+        </h2>
 
-          {/* Filtros */}
-          <FiltrosRepositorio
-            chamadas={chamadas}
-            linhas={linhas}
-            chamadaSelecionada={chamadaSel}
-            linhaSelecionada={linhaSel}
-            termoValue={termo}
-            onChangeChamada={setChamadaSel}
-            onChangeLinha={setLinhaSel}
-            onChangeTermo={setTermo}
-            onClearAll={limpar}
-            totalFiltrados={filtrados.length}
-          />
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+          Explore experiências, pesquisas e práticas apresentadas em eventos e chamadas da Escola da Saúde.
+        </p>
+      </div>
 
-          {/* Conteúdo principal */}
-          <section aria-label="Lista de trabalhos" className="mt-6 mb-6 flex flex-col gap-4">
-            {loading && (
-              <div className="flex items-center justify-center py-10">
-                <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-sm text-zinc-700 dark:text-zinc-200">
-                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
-                  Carregando trabalhos do repositório…
-                </div>
-              </div>
-            )}
+      <button
+        type="button"
+        onClick={carregar}
+        disabled={loading}
+        className="inline-flex items-center justify-center gap-2 rounded-2xl bg-fuchsia-600 px-4 py-2.5 text-sm font-black text-white transition hover:bg-fuchsia-700 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 disabled:pointer-events-none disabled:opacity-60"
+      >
+        <RefreshCcw
+          className={cx(
+            "h-4 w-4",
+            loading && "animate-spin"
+          )}
+        />
 
-            {!loading && erro && (
-              <div className="rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 px-4 py-3 flex items-start gap-2 text-sm text-rose-800 dark:text-rose-100">
-                <AlertCircle className="w-4 h-4 mt-0.5" aria-hidden="true" />
+        {loading ? "Atualizando..." : "Atualizar repositório"}
+      </button>
+    </div>
+
+    <MiniStats
+      total={total}
+      totalChamadas={totalChamadas}
+      totalLinhas={totalLinhas}
+      totalComBanner={totalComBanner}
+      filtrados={filtrados.length}
+    />
+  </section>
+
+        <FiltrosRepositorio
+          chamadas={chamadas}
+          linhas={linhas}
+          chamadaSelecionada={chamadaSelecionada}
+          linhaSelecionada={linhaSelecionada}
+          termoValue={termo}
+          onChangeChamada={setChamadaSelecionada}
+          onChangeLinha={setLinhaSelecionada}
+          onChangeTermo={setTermo}
+          onClearAll={limparFiltros}
+          totalFiltrados={filtrados.length}
+        />
+
+        <section aria-label="Lista de trabalhos" className="space-y-4">
+          {loading ? (
+            <GlassCard className="flex items-center justify-center gap-3 p-8 text-sm font-semibold text-slate-600 dark:text-slate-300">
+              <Loader2 className="h-5 w-5 animate-spin text-fuchsia-600" />
+              Carregando trabalhos do repositório...
+            </GlassCard>
+          ) : null}
+
+          {!loading && erro ? (
+            <GlassCard className="p-5">
+              <div className="flex items-start gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+                <AlertCircle className="mt-0.5 h-4 w-4 flex-none" />
                 <div className="min-w-0">
-                  <p className="font-extrabold">Não foi possível carregar os trabalhos.</p>
-                  <p className="mt-1 text-xs break-words">{erro}</p>
+                  <p className="font-black">Não foi possível carregar os trabalhos.</p>
+                  <p className="mt-1 break-words text-xs">{erro}</p>
 
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={carregar}
-                      className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-extrabold bg-rose-600 text-white hover:bg-rose-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-rose-600"
-                    >
-                      <RefreshCcw className="w-4 h-4" aria-hidden="true" />
-                      Tentar novamente
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {!loading && !erro && filtrados.length === 0 && (
-              <div className="rounded-2xl bg-white dark:bg-zinc-900 border border-dashed border-zinc-300 dark:border-zinc-800 px-4 py-8 text-center">
-                <p className="text-sm text-zinc-700 dark:text-zinc-200 font-semibold">
-                  Nenhum trabalho encontrado com os filtros atuais.
-                </p>
-                <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-                  Ajuste os filtros ou limpe o campo de busca.
-                </p>
-                <div className="mt-4 flex justify-center">
                   <button
                     type="button"
-                    onClick={limpar}
-                    className="inline-flex items-center gap-2 rounded-full border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-xs font-extrabold hover:bg-zinc-50 dark:hover:bg-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-500"
+                    onClick={carregar}
+                    className="mt-3 inline-flex items-center gap-2 rounded-2xl bg-rose-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-rose-700 focus:outline-none focus:ring-2 focus:ring-rose-500"
                   >
-                    <X className="w-4 h-4" aria-hidden="true" />
-                    Limpar filtros
+                    <RefreshCcw className="h-4 w-4" />
+                    Tentar novamente
                   </button>
                 </div>
               </div>
-            )}
+            </GlassCard>
+          ) : null}
 
-            {!loading && !erro && filtrados.length > 0 && (
-              <AnimatePresence mode="popLayout">
-                <motion.div
-                  key="grid"
-                  initial={reduceMotion ? false : { opacity: 0, y: 8 }}
-                  animate={reduceMotion ? {} : { opacity: 1, y: 0 }}
-                  transition={{ duration: 0.18 }}
-                  className="grid grid-cols-1 gap-4"
-                >
-                  {filtrados.map((trabalho) => (
-                    <CardTrabalho key={trabalho.id} trabalho={trabalho} reduceMotion={reduceMotion} />
-                  ))}
-                </motion.div>
-              </AnimatePresence>
-            )}
-          </section>
-        </div>
+          {!loading && !erro && filtrados.length === 0 ? (
+            <GlassCard className="p-8 text-center">
+              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-slate-100 dark:bg-slate-800">
+                <Filter className="h-7 w-7 text-slate-400" />
+              </div>
+              <h2 className="mt-4 text-lg font-black text-slate-900 dark:text-white">
+                Nenhum trabalho encontrado
+              </h2>
+              <p className="mx-auto mt-2 max-w-md text-sm text-slate-500 dark:text-slate-400">
+                Ajuste os filtros, limpe a busca ou atualize o repositório.
+              </p>
+
+              <button
+                type="button"
+                onClick={limparFiltros}
+                className="mt-5 inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+              >
+                <X className="h-4 w-4" />
+                Limpar filtros
+              </button>
+            </GlassCard>
+          ) : null}
+
+          {!loading && !erro && filtrados.length > 0 ? (
+            <AnimatePresence mode="popLayout">
+              <motion.div
+                key="grid"
+                initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+                animate={reduceMotion ? {} : { opacity: 1, y: 0 }}
+                transition={{ duration: 0.18 }}
+                className="grid grid-cols-1 gap-4"
+              >
+                {filtrados.map((trabalho) => (
+                  <CardTrabalho
+                    key={trabalho.id}
+                    trabalho={trabalho}
+                    reduceMotion={reduceMotion}
+                  />
+                ))}
+              </motion.div>
+            </AnimatePresence>
+          ) : null}
+        </section>
       </main>
 
       <Footer />
-    </div>
+    </PageShell>
   );
 }

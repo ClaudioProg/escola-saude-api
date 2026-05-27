@@ -1,47 +1,70 @@
-/* eslint-disable no-console */
-// ✅ src/pages/AgendaSalasAdmin.jsx — PREMIUM CALENDÁRIO MENSAL ADMIN
-// - Calendário mensal real, responsivo e orientado ao DIA
-// - Visual mais clean, no mesmo padrão do usuário
-// - Dias bloqueados em cinza
-// - Dias totalmente ocupados em lilás suave
-// - Dias com disponibilidade em branco
-// - Badge com quantidade de salas disponíveis
-// - Bolinha amarela quando houver solicitação pendente no dia
-// - Clique no dia abre modal com visão completa do dia
-// - Auditório + Sala de Reunião / Manhã + Tarde / solicitante / aprovador / termo
-// - Integração com ModalReservaAdmin para edição do slot
-// - PDF do termo disponível quando houver termo assinado
-// - Anti-fuso: sem new Date("YYYY-MM-DD")
+// 📁 src/pages/AgendaSalasAdmin.jsx
+// Atualizado em: 15/05/2026
+//
+// Plataforma Escola da Saúde — v2.0
+//
+// Página administrativa da agenda de salas.
+//
+// Contratos oficiais usados:
+// - GET    /api/sala/agenda-admin?ano=YYYY&mes=M&sala=auditorio|sala_reuniao
+// - DELETE /api/sala/admin/reservas/:id
+// - GET    /api/sala/admin/reservas/:id/termo-pdf
+//
+// Status oficiais do backend atual:
+// - pendente
+// - aprovado
+// - rejeitado
+// - cancelado
+// - bloqueado
+//
+// Diretrizes v2.0:
+// - sem status "confirmado" enquanto não existir no banco;
+// - sem status/alias "excluido/excluída/excluida";
+// - sem toast direto;
+// - sem relatório mensal se o backend não exporta mais essa rota;
+// - cancelamento lógico no backend, não exclusão física;
+// - resposta padrão ok/data/message/code/meta;
+// - UX/UI premium real;
+// - mobile-first;
+// - acessível;
+// - anti-fuso: sem new Date("YYYY-MM-DD").
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertCircle,
   CalendarDays,
+  CalendarRange,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  Users,
-  ShieldCheck,
-  Info,
+  FileSignature,
   FileText,
+  Info,
+  Loader2,
+  Lock,
   MapPin,
+  Pencil,
+  RefreshCcw,
+  ShieldCheck,
   Sparkles,
+  Trash2,
+  Users,
   Waves,
   X,
-  Pencil,
-  Trash2,
-  Lock,
-  CheckCircle2,
-  CalendarRange,
-  FileSignature,
 } from "lucide-react";
 import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
-import { toast } from "react-toastify";
 import { useNavigate } from "react-router-dom";
-import api, { apiGetFile } from "../services/api";
-import Footer from "../components/Footer";
-import ModalReservaAdmin from "../components/ModalReservaAdmin";
 
-/* ───────────────────────── Constantes ───────────────────────── */
+import api, { apiGetFile } from "../services/api";
+import Footer from "../components/layout/Footer";
+import HeaderHero from "../components/layout/HeaderHero";
+import ModalReservaAdmin from "../components/agendaSalas/ModalReservaAdmin";
+
+/* =========================================================================
+   Constantes
+=========================================================================== */
+
 const NOMES_MESES = [
   "Janeiro",
   "Fevereiro",
@@ -70,8 +93,16 @@ const DIAS_SEMANA_LONGOS = [
 ];
 
 const CAPACIDADES_SALA = {
-  auditorio: { conforto: 50, max: 60, labelCurta: "Auditório" },
-  sala_reuniao: { conforto: 25, max: 30, labelCurta: "Sala de Reunião" },
+  auditorio: {
+    conforto: 50,
+    max: 60,
+    labelCurta: "Auditório",
+  },
+  sala_reuniao: {
+    conforto: 25,
+    max: 30,
+    labelCurta: "Sala de Reunião",
+  },
 };
 
 const PERIODOS = [
@@ -81,13 +112,26 @@ const PERIODOS = [
 
 const SALAS_ORDEM = ["auditorio", "sala_reuniao"];
 
-/* ─────────────────────── Helpers gerais ─────────────────────── */
-function cx(...arr) {
-  return arr.filter(Boolean).join(" ");
+const STATUS_OFICIAL = new Set([
+  "pendente",
+  "aprovado",
+  "rejeitado",
+  "cancelado",
+  "bloqueado",
+]);
+
+const STATUS_OCUPA_SLOT = new Set(["pendente", "aprovado", "bloqueado"]);
+
+/* =========================================================================
+   Helpers
+=========================================================================== */
+
+function cx(...classes) {
+  return classes.filter(Boolean).join(" ");
 }
 
-function pad2(v) {
-  return String(v).padStart(2, "0");
+function pad2(value) {
+  return String(value).padStart(2, "0");
 }
 
 function getHojeISO() {
@@ -96,11 +140,12 @@ function getHojeISO() {
 }
 
 function splitISO(dateISO) {
-  const [y, m, d] = String(dateISO || "").split("-").map(Number);
+  const [year, month, day] = String(dateISO || "").split("-").map(Number);
+
   return {
-    year: Number.isFinite(y) ? y : 0,
-    month: Number.isFinite(m) ? m : 0,
-    day: Number.isFinite(d) ? d : 0,
+    year: Number.isFinite(year) ? year : 0,
+    month: Number.isFinite(month) ? month : 0,
+    day: Number.isFinite(day) ? day : 0,
   };
 }
 
@@ -114,14 +159,26 @@ function criarMatrixMes(ano, mesIndex) {
   let semanaAtual = new Array(7).fill(null);
   let dia = 1;
 
-  for (let i = 0; i < primeiroDiaSemana; i += 1) semanaAtual[i] = null;
-  for (let i = primeiroDiaSemana; i < 7; i += 1) semanaAtual[i] = dia++;
+  for (let index = 0; index < primeiroDiaSemana; index += 1) {
+    semanaAtual[index] = null;
+  }
+
+  for (let index = primeiroDiaSemana; index < 7; index += 1) {
+    semanaAtual[index] = dia;
+    dia += 1;
+  }
+
   semanas.push(semanaAtual);
 
   while (dia <= diasNoMes) {
-    const novaSemana = new Array(7).fill(null);
-    for (let i = 0; i < 7 && dia <= diasNoMes; i += 1) novaSemana[i] = dia++;
-    semanas.push(novaSemana);
+    semanaAtual = new Array(7).fill(null);
+
+    for (let index = 0; index < 7 && dia <= diasNoMes; index += 1) {
+      semanaAtual[index] = dia;
+      dia += 1;
+    }
+
+    semanas.push(semanaAtual);
   }
 
   return semanas;
@@ -132,29 +189,34 @@ function formatISO(ano, mesIndex, dia) {
 }
 
 function formatDataBR(dataISO) {
-  if (!dataISO) return "—";
   const { day, month, year } = splitISO(dataISO);
+
   if (!day || !month || !year) return "—";
+
   return `${pad2(day)}/${pad2(month)}/${year}`;
 }
 
-function formatDateTimeBR(dateValue) {
-  if (!dateValue) return "—";
-  const d = new Date(dateValue);
-  if (Number.isNaN(d.getTime())) return "—";
+function formatDateTimeBR(value) {
+  if (!value) return "—";
 
-  const dd = pad2(d.getDate());
-  const mm = pad2(d.getMonth() + 1);
-  const yy = d.getFullYear();
-  const hh = pad2(d.getHours());
-  const mi = pad2(d.getMinutes());
+  const date = new Date(value);
 
-  return `${dd}/${mm}/${yy} às ${hh}:${mi}`;
+  if (Number.isNaN(date.getTime())) return "—";
+
+  const day = pad2(date.getDate());
+  const month = pad2(date.getMonth() + 1);
+  const year = date.getFullYear();
+  const hour = pad2(date.getHours());
+  const minute = pad2(date.getMinutes());
+
+  return `${day}/${month}/${year} às ${hour}:${minute}`;
 }
 
 function getDayOfWeekFromISO(dataISO) {
   const { year, month, day } = splitISO(dataISO);
+
   if (!year || !month || !day) return 0;
+
   return new Date(year, month - 1, day).getDay();
 }
 
@@ -166,162 +228,148 @@ function keySlot(dataISO, periodo, sala) {
   return `${dataISO}|${periodo}|${sala}`;
 }
 
-/* ─────────────────── Normalização de reservas ─────────────────── */
-function normalizeReserva(r) {
-  const dataISO = (r.data || r.dataISO || r.dia || "").slice(0, 10);
-  const statusRaw = String(r.status || "pendente").trim().toLowerCase();
+function unwrapData(response) {
+  if (response?.data && typeof response.data === "object" && "ok" in response.data) {
+    return response.data.data || {};
+  }
 
-  const statusMap = {
-    excluido: "excluido",
-    excluida: "excluido",
-    "excluída": "excluido",
-    removido: "excluido",
-    removida: "excluido",
-    deletado: "excluido",
-    deletada: "excluido",
-    rejeitada: "rejeitado",
-    cancelada: "cancelado",
-    aprovada: "aprovado",
-    confirmada: "confirmado",
-  };
+  if (response && typeof response === "object" && "ok" in response) {
+    return response.data || {};
+  }
 
-  const status = statusMap[statusRaw] || statusRaw;
+  return response?.data || response || {};
+}
 
-  const pendenteAprovacao =
-    r.pendente_aprovacao === true ||
-    ["pendente", "em_analise", "solicitado"].includes(status);
+function getErrorMessage(error, fallback) {
+  return (
+    error?.response?.data?.message ||
+    error?.data?.message ||
+    error?.message ||
+    fallback
+  );
+}
 
-  const aprovadoConfirmado =
-    r.aprovado_confirmado === true ||
-    ["aprovado", "confirmado"].includes(status);
+function normalizarStatus(status) {
+  const value = String(status || "pendente").trim().toLowerCase();
 
-  const rejeitadoOuCancelado =
-    r.rejeitado_ou_cancelado === true ||
-    ["rejeitado", "cancelado", "excluido"].includes(status);
+  return STATUS_OFICIAL.has(value) ? value : "pendente";
+}
+
+function reservaOcupaSlot(reserva) {
+  if (!reserva) return false;
+
+  return STATUS_OCUPA_SLOT.has(normalizarStatus(reserva.status));
+}
+
+function normalizeReserva(raw) {
+  const dataISO = String(raw?.data || "").slice(0, 10);
+  const status = normalizarStatus(raw?.status);
 
   return {
-    id: r.id ?? r.reserva_id ?? r.uuid ?? null,
-    sala: r.sala || r.room || null,
+    id: raw?.id ?? null,
+    sala: raw?.sala || null,
     data: dataISO,
     dataISO,
-    periodo: r.periodo || r.turno || r.slot || "manha",
+    periodo: raw?.periodo || "manha",
     status,
-    qtd_pessoas: r.qtd_pessoas ?? r.qtdPessoas ?? r.qtd ?? r.capacidade ?? null,
-    coffee_break: r.coffee_break ?? r.coffeeBreak ?? r.coffee ?? false,
-    observacao: r.observacao ?? r.obs ?? r.observacao_admin ?? "",
-    finalidade: r.finalidade ?? r.descricao ?? r.titulo ?? r.assunto ?? "",
-    solicitante_id: r.solicitante_id ?? r.usuario_id ?? r.user_id ?? null,
-    solicitante_nome:
-      r.solicitante_nome ?? r.usuario_nome ?? r.nome_solicitante ?? r.nome ?? null,
-    solicitante_unidade:
-      r.solicitante_unidade ?? r.unidade ?? r.unidade_nome ?? r.setor ?? null,
-    aprovador_id:
-      r.aprovador_id ?? r.admin_id ?? r.aprovado_por_id ?? r.usuario_aprovador_id ?? null,
-    aprovador_nome:
-      r.aprovador_nome ??
-      r.admin_nome ??
-      r.aprovado_por_nome ??
-      r.usuario_aprovador_nome ??
-      null,
-    termo_aceito: Boolean(r.termo_aceito),
-    termo_assinado_em: r.termo_assinado_em ?? null,
-    assinatura_id: r.assinatura_id ?? null,
-    criado_em: r.criado_em ?? r.created_at ?? r.createdAt ?? null,
-    atualizado_em: r.atualizado_em ?? r.updated_at ?? r.updatedAt ?? null,
-
-    pendente_aprovacao: pendenteAprovacao,
-    aprovado_confirmado: aprovadoConfirmado,
-    rejeitado_ou_cancelado: rejeitadoOuCancelado,
+    qtd_pessoas: raw?.qtd_pessoas ?? null,
+    coffee_break: Boolean(raw?.coffee_break),
+    observacao: raw?.observacao ?? raw?.observacao_admin ?? "",
+    finalidade: raw?.finalidade ?? "",
+    solicitante_id: raw?.solicitante_id ?? null,
+    solicitante_nome: raw?.solicitante_nome ?? null,
+    solicitante_unidade: raw?.solicitante_unidade ?? raw?.unidade_nome ?? null,
+    aprovador_id: raw?.aprovador_id ?? null,
+    aprovador_nome: raw?.aprovador_nome ?? null,
+    termo_aceito: Boolean(raw?.termo_aceito),
+    termo_assinado_em: raw?.termo_assinado_em ?? null,
+    assinatura_id: raw?.assinatura_id ?? null,
+    criado_em: raw?.criado_em ?? raw?.created_at ?? null,
+    atualizado_em: raw?.atualizado_em ?? raw?.updated_at ?? null,
+    pendente_aprovacao: status === "pendente",
+    aprovado: status === "aprovado",
+    finalizada_sem_ocupar: status === "rejeitado" || status === "cancelado",
+    ocupa_slot: STATUS_OCUPA_SLOT.has(status),
   };
 }
 
-/* ─────────────────────── Status / UI ─────────────────────── */
 function classesStatusSlot(status) {
-  switch (status) {
-    case "pendente":
-      return [
-        "bg-amber-50 text-amber-900 border border-amber-200",
-        "dark:bg-amber-950/20 dark:text-amber-100 dark:border-amber-900/60",
-      ].join(" ");
+  const normalized = normalizarStatus(status);
 
-    case "aprovado":
-    case "confirmado":
-      return [
-        "bg-emerald-50 text-emerald-900 border border-emerald-200",
-        "dark:bg-emerald-950/20 dark:text-emerald-100 dark:border-emerald-900/60",
-      ].join(" ");
+  const map = {
+    pendente:
+      "bg-amber-50 text-amber-900 border border-amber-200 dark:bg-amber-950/20 dark:text-amber-100 dark:border-amber-900/60",
+    aprovado:
+      "bg-emerald-50 text-emerald-900 border border-emerald-200 dark:bg-emerald-950/20 dark:text-emerald-100 dark:border-emerald-900/60",
+    rejeitado:
+      "bg-rose-50 text-rose-900 border border-rose-200 dark:bg-rose-950/20 dark:text-rose-100 dark:border-rose-900/60",
+    cancelado:
+      "bg-rose-50 text-rose-900 border border-rose-200 dark:bg-rose-950/20 dark:text-rose-100 dark:border-rose-900/60",
+    bloqueado:
+      "bg-sky-50 text-sky-900 border border-sky-200 dark:bg-sky-950/20 dark:text-sky-100 dark:border-sky-900/60",
+  };
 
-    case "rejeitado":
-    case "cancelado":
-      return [
-        "bg-rose-50 text-rose-900 border border-rose-200",
-        "dark:bg-rose-950/20 dark:text-rose-100 dark:border-rose-900/60",
-      ].join(" ");
-
-    case "bloqueado":
-      return [
-        "bg-sky-50 text-sky-900 border border-sky-200",
-        "dark:bg-sky-950/20 dark:text-sky-100 dark:border-sky-900/60",
-      ].join(" ");
-
-    default:
-      return "bg-white text-slate-800 border border-slate-200 dark:bg-zinc-900 dark:text-zinc-100 dark:border-zinc-700";
-  }
+  return (
+    map[normalized] ||
+    "bg-white text-slate-800 border border-slate-200 dark:bg-zinc-900 dark:text-zinc-100 dark:border-zinc-700"
+  );
 }
 
 function labelStatus(status) {
-  switch (status) {
-    case "pendente":
-      return "Pendente";
-    case "aprovado":
-      return "Aprovado";
-    case "confirmado":
-      return "Confirmado";
-    case "rejeitado":
-      return "Rejeitado";
-    case "cancelado":
-      return "Cancelado";
-    case "bloqueado":
-      return "Bloqueado (uso interno)";
-    default:
-      return "Livre";
-  }
+  const normalized = normalizarStatus(status);
+
+  const map = {
+    pendente: "Pendente",
+    aprovado: "Aprovado",
+    rejeitado: "Rejeitado",
+    cancelado: "Cancelado",
+    bloqueado: "Bloqueado",
+  };
+
+  return map[normalized] || "Livre";
 }
 
 function getStatusTone(status) {
-  switch (status) {
-    case "pendente":
-      return "text-amber-700 bg-amber-100 border-amber-200";
-    case "aprovado":
-    case "confirmado":
-      return "text-emerald-700 bg-emerald-100 border-emerald-200";
-    case "rejeitado":
-    case "cancelado":
-      return "text-rose-700 bg-rose-100 border-rose-200";
-    case "bloqueado":
-      return "text-sky-700 bg-sky-100 border-sky-200";
-    default:
-      return "text-slate-700 bg-slate-100 border-slate-200";
-  }
+  const normalized = normalizarStatus(status);
+
+  const map = {
+    pendente: "text-amber-700 bg-amber-100 border-amber-200",
+    aprovado: "text-emerald-700 bg-emerald-100 border-emerald-200",
+    rejeitado: "text-rose-700 bg-rose-100 border-rose-200",
+    cancelado: "text-rose-700 bg-rose-100 border-rose-200",
+    bloqueado: "text-sky-700 bg-sky-100 border-sky-200",
+  };
+
+  return map[normalized] || "text-slate-700 bg-slate-100 border-slate-200";
 }
 
-/* ─────────────────────── Motivos ─────────────────────── */
-function limparPrefixosFeriado(txt) {
-  const s = String(txt || "").trim();
-  if (!s) return "";
-  return s
+function limparPrefixosFeriado(texto) {
+  const value = String(texto || "").trim();
+
+  if (!value) return "";
+
+  return value
     .replace(/^feriado\s*[-—:]\s*/i, "")
     .replace(/^ponto\s*facultativo\s*[-—:]\s*/i, "Ponto Facultativo — ")
     .trim();
 }
 
-function motivoBloqueio({ diaSemana, ehFeriado, feriadoObj, ehBloqueada, bloqueioObj }) {
+function motivoBloqueio({
+  diaSemana,
+  ehFeriado,
+  feriadoObj,
+  ehBloqueada,
+  bloqueioObj,
+}) {
   if (ehBloqueada) {
     const motivo = String(
-      bloqueioObj?.motivo || bloqueioObj?.descricao || bloqueioObj?.titulo || ""
+      bloqueioObj?.motivo ||
+        bloqueioObj?.descricao ||
+        bloqueioObj?.titulo ||
+        ""
     ).trim();
 
-    return motivo ? `Bloqueado (uso interno) — ${motivo}` : "Bloqueado (uso interno)";
+    return motivo ? `Bloqueado — ${motivo}` : "Bloqueado";
   }
 
   if (ehFeriado) {
@@ -337,52 +385,36 @@ function motivoBloqueio({ diaSemana, ehFeriado, feriadoObj, ehBloqueada, bloquei
 
     if (nome) return nome;
     if (tipo === "ponto_facultativo") return "Ponto Facultativo";
+
     return "Feriado";
   }
 
   if (diaSemana === 6) return "Sábado";
   if (diaSemana === 0) return "Domingo";
+
   return "Indisponível";
 }
 
-/* ─────────────────────── UI helpers ─────────────────────── */
-function MiniStat({ icon: Icon, label, value, tone = "ocean", loading }) {
-  const tones = {
-    ocean: {
-      ring: "ring-1 ring-white/15",
-      iconBg: "bg-white/12",
-      icon: "text-white",
-      label: "text-white/80",
-      value: "text-white",
-    },
-    ink: {
-      ring: "ring-1 ring-white/10",
-      iconBg: "bg-white/10",
-      icon: "text-white",
-      label: "text-white/75",
-      value: "text-white",
-    },
-  };
+/* =========================================================================
+   Componentes de UI locais
+=========================================================================== */
 
-  const t = tones[tone] || tones.ocean;
-
+function DashboardCard({ icon: Icon, label, value, loading }) {
   return (
-    <div
-      className={cx(
-        "rounded-2xl px-3 py-2.5 backdrop-blur",
-        "bg-white/10 hover:bg-white/12 transition",
-        t.ring
-      )}
-    >
-      <div className="flex items-center gap-2">
-        <span className={cx("w-9 h-9 rounded-2xl grid place-items-center", t.iconBg)}>
-          <Icon className={cx("w-4.5 h-4.5", t.icon)} aria-hidden="true" />
-        </span>
-        <div className="min-w-0">
-          <div className={cx("text-[11px] uppercase tracking-wide", t.label)}>{label}</div>
-          <div className={cx("text-lg font-extrabold leading-tight", t.value)}>
-            {loading ? <Skeleton width={40} /> : value}
+    <div className="rounded-[1.5rem] bg-white p-4 shadow-sm ring-1 ring-slate-200 dark:bg-zinc-900 dark:ring-zinc-800">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-zinc-400">
+            {label}
+          </p>
+
+          <div className="mt-2 text-3xl font-black text-slate-900 dark:text-white">
+            {loading ? <Skeleton width={60} /> : value}
           </div>
+        </div>
+
+        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-sky-50 text-sky-700 ring-1 ring-sky-100 dark:bg-sky-950/30 dark:text-sky-200 dark:ring-sky-900">
+          <Icon className="h-5 w-5" />
         </div>
       </div>
     </div>
@@ -398,12 +430,10 @@ function SoftIconButton({ title, ariaLabel, onClick, disabled = false, children 
       aria-label={ariaLabel}
       disabled={disabled}
       className={cx(
-        "p-2 rounded-full transition",
-        "bg-white/80 hover:bg-white shadow-sm border border-slate-200",
-        "dark:bg-zinc-900/70 dark:hover:bg-zinc-900 dark:border-zinc-800",
-        "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-sky-500",
-        "dark:focus-visible:ring-offset-zinc-950",
-        disabled ? "opacity-50 cursor-not-allowed hover:bg-white" : ""
+        "rounded-full border border-slate-200 bg-white/80 p-2 shadow-sm transition hover:bg-white",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2",
+        "dark:border-zinc-800 dark:bg-zinc-900/70 dark:hover:bg-zinc-900 dark:focus-visible:ring-offset-zinc-950",
+        disabled ? "cursor-not-allowed opacity-50" : ""
       )}
     >
       {children}
@@ -411,16 +441,58 @@ function SoftIconButton({ title, ariaLabel, onClick, disabled = false, children 
   );
 }
 
+function AlertBox({ type = "info", title, message, onClose }) {
+  const config = {
+    info: {
+      icon: Info,
+      className:
+        "border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/20 dark:text-sky-100",
+    },
+    success: {
+      icon: CheckCircle2,
+      className:
+        "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/20 dark:text-emerald-100",
+    },
+    error: {
+      icon: AlertCircle,
+      className:
+        "border-rose-200 bg-rose-50 text-rose-900 dark:border-rose-900/60 dark:bg-rose-950/20 dark:text-rose-100",
+    },
+  };
+
+  const item = config[type] || config.info;
+  const Icon = item.icon;
+
+  return (
+    <div className={cx("rounded-2xl border px-4 py-3 text-sm", item.className)}>
+      <div className="flex items-start gap-2">
+        <Icon className="mt-0.5 h-4 w-4 flex-none" />
+        <div className="min-w-0 flex-1">
+          {title ? <p className="font-black">{title}</p> : null}
+          <p className={title ? "mt-1" : ""}>{message}</p>
+        </div>
+
+        {onClose ? (
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl p-1 transition hover:bg-white/40"
+            aria-label="Fechar mensagem"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function CalendarDayCell({ dia, dataISO, diaInfo, eHoje, onClick }) {
   const { estado, motivo, labelResumo, salasDisponiveis, temPendencia } = diaInfo;
 
-  const HOJE_BG = "bg-sky-100/70 dark:bg-sky-950/25";
-  const HOJE_RING = "ring-2 ring-sky-500/70 dark:ring-sky-700/60";
-  const HOJE_BADGE =
-    "bg-sky-200 text-sky-950 border border-sky-300 dark:bg-sky-900/40 dark:text-sky-100 dark:border-sky-800";
-
   const cellTone = {
-    bloqueado: "bg-slate-100 dark:bg-zinc-900/70 border-slate-200 dark:border-zinc-800",
+    bloqueado:
+      "bg-slate-100 dark:bg-zinc-900/70 border-slate-200 dark:border-zinc-800",
     lotado:
       "bg-violet-50 dark:bg-violet-950/20 border-violet-200 dark:border-violet-900/50",
     parcial: "bg-white dark:bg-zinc-950 border-slate-200 dark:border-zinc-800",
@@ -439,10 +511,9 @@ function CalendarDayCell({ dia, dataISO, diaInfo, eHoje, onClick }) {
       type="button"
       onClick={onClick}
       className={cx(
-        "relative min-h-[108px] sm:min-h-[132px] md:min-h-[150px] w-full text-left p-2.5 sm:p-3",
-        "border-r border-b transition",
+        "relative min-h-[108px] w-full border-b border-r p-2.5 text-left transition sm:min-h-[132px] sm:p-3 md:min-h-[150px]",
         cellTone,
-        eHoje ? cx(HOJE_BG, HOJE_RING) : "",
+        eHoje ? "bg-sky-100/70 ring-2 ring-sky-500/70 dark:bg-sky-950/25 dark:ring-sky-700/60" : "",
         "hover:brightness-[0.985] focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60"
       )}
       aria-label={`Dia ${dia}. ${labelResumo}`}
@@ -452,48 +523,46 @@ function CalendarDayCell({ dia, dataISO, diaInfo, eHoje, onClick }) {
         <div>
           <div
             className={cx(
-              "text-sm sm:text-base font-extrabold",
-              eHoje ? "text-sky-800 dark:text-sky-200" : "text-slate-900 dark:text-white"
+              "text-sm font-extrabold sm:text-base",
+              eHoje
+                ? "text-sky-800 dark:text-sky-200"
+                : "text-slate-900 dark:text-white"
             )}
           >
             {dia}
           </div>
-          <div className="text-[10px] sm:text-[11px] text-slate-500 dark:text-zinc-400">
+
+          <div className="text-[10px] text-slate-500 dark:text-zinc-400 sm:text-[11px]">
             {DIAS_SEMANA[getDayOfWeekFromISO(dataISO)]}
           </div>
         </div>
 
         <div className="flex flex-col items-end gap-1">
-          {eHoje && (
-            <span
-              className={cx(
-                "text-[10px] font-extrabold px-2 py-0.5 rounded-full whitespace-nowrap",
-                HOJE_BADGE
-              )}
-            >
+          {eHoje ? (
+            <span className="rounded-full border border-sky-300 bg-sky-200 px-2 py-0.5 text-[10px] font-extrabold text-sky-950 dark:border-sky-800 dark:bg-sky-900/40 dark:text-sky-100">
               Hoje
             </span>
-          )}
+          ) : null}
 
-          {temPendencia && (
+          {temPendencia ? (
             <span
-              className="w-2.5 h-2.5 rounded-full bg-amber-400 border border-amber-500"
+              className="h-2.5 w-2.5 rounded-full border border-amber-500 bg-amber-400"
               title="Há solicitação pendente neste dia"
             />
-          )}
+          ) : null}
         </div>
       </div>
 
       <div className="mt-3 flex flex-col gap-2">
-        {(estado === "parcial" || estado === "vazio") && salasDisponiveis > 0 && (
-          <span className="inline-flex w-fit items-center rounded-full border px-2 py-0.5 text-[10px] sm:text-[11px] font-extrabold bg-sky-50 text-sky-700 border-sky-200">
+        {(estado === "parcial" || estado === "vazio") && salasDisponiveis > 0 ? (
+          <span className="inline-flex w-fit items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-extrabold text-sky-700 sm:text-[11px]">
             {salasDisponiveis} sala{salasDisponiveis === 1 ? "" : "s"}
           </span>
-        )}
+        ) : null}
 
         <span
           className={cx(
-            "inline-flex w-fit items-center rounded-full border px-2 py-1 text-[10px] sm:text-[11px] font-extrabold",
+            "inline-flex w-fit items-center rounded-full border px-2 py-1 text-[10px] font-extrabold sm:text-[11px]",
             chipTone
           )}
         >
@@ -504,27 +573,27 @@ function CalendarDayCell({ dia, dataISO, diaInfo, eHoje, onClick }) {
               : "Disponível"}
         </span>
 
-        {estado === "bloqueado" && (
-          <p className="text-[11px] sm:text-xs leading-snug text-slate-600 dark:text-zinc-300 line-clamp-3">
+        {estado === "bloqueado" ? (
+          <p className="line-clamp-3 text-[11px] leading-snug text-slate-600 dark:text-zinc-300 sm:text-xs">
             {motivo}
           </p>
-        )}
+        ) : null}
       </div>
     </button>
   );
 }
 
-function SlotCardDia({ slot, baseURL, onEditar, onExcluir }) {
-  const status = slot?.reserva ? slot.reserva.status : "livre";
+function SlotCardDia({ slot, onEditar, onCancelar }) {
+  const status = slot?.reserva ? normalizarStatus(slot.reserva.status) : "livre";
   const titulo = slot?.reserva?.finalidade?.trim()
     ? slot.reserva.finalidade.trim()
-    : labelStatus(status);
+    : slot?.reserva
+      ? labelStatus(status)
+      : "Horário livre";
 
   const solicitante = slot?.reserva?.solicitante_nome || "—";
   const aprovador =
-    slot?.reserva?.aprovador_nome || (status === "aprovado" || status === "confirmado"
-      ? "—"
-      : "Não aprovado");
+    slot?.reserva?.aprovador_nome || (status === "aprovado" ? "—" : "Não aprovado");
 
   const temTermo =
     Boolean(slot?.reserva?.termo_aceito) &&
@@ -532,58 +601,48 @@ function SlotCardDia({ slot, baseURL, onEditar, onExcluir }) {
     Boolean(slot?.reserva?.assinatura_id);
 
   async function abrirPdfTermo() {
-  if (!slot?.reserva?.id) return;
+    if (!slot?.reserva?.id) return;
 
-  try {
-    console.log("[AgendaSalasAdmin][PDF_TERMO] Baixando termo com autenticação:", {
-      reservaId: slot.reserva.id,
-    });
+    try {
+      const { blob, filename } = await apiGetFile(
+        `/sala/admin/reservas/${slot.reserva.id}/termo-pdf`
+      );
 
-    const { blob, filename } = await apiGetFile(
-      `/salas/admin/reservas/${slot.reserva.id}/termo-pdf`
-    );
+      if (!blob || typeof blob.size !== "number" || blob.size <= 0) {
+        throw new Error("Resposta inválida ao gerar o PDF do termo.");
+      }
 
-    console.log("[AgendaSalasAdmin][PDF_TERMO][RESPONSE]", {
-      blobType: blob?.type,
-      blobSize: blob?.size,
-      filename: filename || null,
-    });
+      if (
+        blob?.type &&
+        !String(blob.type).includes("pdf") &&
+        !String(blob.type).includes("octet-stream")
+      ) {
+        throw new Error("A rota retornou um conteúdo que não é PDF.");
+      }
 
-    if (!blob || typeof blob.size !== "number" || blob.size <= 0) {
-      throw new Error("Resposta inválida ao gerar o PDF do termo.");
+      const blobUrl = URL.createObjectURL(blob);
+      const novaAba = window.open(blobUrl, "_blank", "noopener,noreferrer");
+
+      if (!novaAba) {
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = filename || `termo-reserva-${slot.reserva.id}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
+
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    } catch (error) {
+      console.error("[AgendaSalasAdmin][PDF_TERMO][ERRO]", error);
+      slot?.onMessage?.({
+        type: "error",
+        title: "Não foi possível abrir o termo",
+        message:
+          "O PDF do termo não pôde ser carregado. Verifique se a reserva possui termo assinado e tente novamente.",
+      });
     }
-
-    if (
-      blob?.type &&
-      !String(blob.type).includes("pdf") &&
-      !String(blob.type).includes("octet-stream")
-    ) {
-      const textoErro =
-        typeof blob?.text === "function" ? await blob.text().catch(() => "") : "";
-      console.error("[AgendaSalasAdmin][PDF_TERMO][CONTEUDO_NAO_PDF]", textoErro);
-      throw new Error("A rota retornou um conteúdo que não é PDF.");
-    }
-
-    const blobUrl = URL.createObjectURL(blob);
-    const novaAba = window.open(blobUrl, "_blank", "noopener,noreferrer");
-
-    if (!novaAba) {
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = filename || `termo-reserva-${slot.reserva.id}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    }
-
-    setTimeout(() => {
-      URL.revokeObjectURL(blobUrl);
-    }, 60_000);
-  } catch (err) {
-    console.error("[AgendaSalasAdmin][PDF_TERMO][ERRO]", err);
-    toast.error("Não foi possível abrir o PDF do termo.");
   }
-}
 
   return (
     <div
@@ -591,37 +650,39 @@ function SlotCardDia({ slot, baseURL, onEditar, onExcluir }) {
         "rounded-2xl p-3 sm:p-4",
         slot?.reserva
           ? classesStatusSlot(status)
-          : "bg-white border border-slate-200 dark:bg-zinc-900 dark:border-zinc-800"
+          : "border border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900"
       )}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] uppercase tracking-wide text-slate-500 dark:text-zinc-300 font-bold">
-  {slot.periodoLabel}
-</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-zinc-300">
+              {slot.periodoLabel}
+            </span>
+
             <span
               className={cx(
                 "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-extrabold",
                 getStatusTone(status)
               )}
             >
-              {labelStatus(status)}
+              {slot?.reserva ? labelStatus(status) : "Livre"}
             </span>
-            {temTermo && (
-              <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-extrabold bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/20 dark:text-sky-300 dark:border-sky-900/60">
-                <FileSignature className="w-3.5 h-3.5" />
+
+            {temTermo ? (
+              <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-extrabold text-sky-700 dark:border-sky-900/60 dark:bg-sky-950/20 dark:text-sky-300">
+                <FileSignature className="h-3.5 w-3.5" />
                 Termo assinado
               </span>
-            )}
+            ) : null}
           </div>
 
-          <p className="mt-2 text-sm sm:text-base font-extrabold leading-snug break-words text-slate-900 dark:text-zinc-50">
-  {titulo}
-</p>
+          <p className="mt-2 break-words text-sm font-extrabold leading-snug text-slate-900 dark:text-zinc-50 sm:text-base">
+            {titulo}
+          </p>
 
           {slot?.reserva ? (
-            <div className="mt-3 space-y-1.5 text-[12px] sm:text-[13px] text-slate-700 dark:text-zinc-200">
+            <div className="mt-3 space-y-1.5 text-[12px] text-slate-700 dark:text-zinc-200 sm:text-[13px]">
               <p>
                 <span className="font-semibold">Solicitante:</span> {solicitante}
               </p>
@@ -630,15 +691,17 @@ function SlotCardDia({ slot, baseURL, onEditar, onExcluir }) {
                 <span className="font-semibold">Aprovador:</span> {aprovador}
               </p>
 
-              {slot?.reserva?.solicitante_unidade && (
+              {slot?.reserva?.solicitante_unidade ? (
                 <p>
-                  <span className="font-semibold">Unidade:</span> {slot.reserva.solicitante_unidade}
+                  <span className="font-semibold">Unidade:</span>{" "}
+                  {slot.reserva.solicitante_unidade}
                 </p>
-              )}
+              ) : null}
 
               {slot?.reserva?.qtd_pessoas ? (
                 <p>
-                  <span className="font-semibold">Pessoas:</span> {slot.reserva.qtd_pessoas}
+                  <span className="font-semibold">Pessoas:</span>{" "}
+                  {slot.reserva.qtd_pessoas}
                 </p>
               ) : null}
 
@@ -648,17 +711,17 @@ function SlotCardDia({ slot, baseURL, onEditar, onExcluir }) {
                 </p>
               ) : null}
 
-              {temTermo && (
+              {temTermo ? (
                 <p>
                   <span className="font-semibold">Assinado em:</span>{" "}
                   {formatDateTimeBR(slot.reserva.termo_assinado_em)}
                 </p>
-              )}
+              ) : null}
             </div>
           ) : (
-            <p className="mt-3 text-[12px] sm:text-[13px] text-slate-600 dark:text-zinc-300">
-  Horário disponível para edição/criação.
-</p>
+            <p className="mt-3 text-[12px] text-slate-600 dark:text-zinc-300 sm:text-[13px]">
+              Horário disponível para criação de reserva administrativa.
+            </p>
           )}
         </div>
       </div>
@@ -667,51 +730,39 @@ function SlotCardDia({ slot, baseURL, onEditar, onExcluir }) {
         <button
           type="button"
           onClick={onEditar}
-          className={cx(
-            "inline-flex items-center gap-2 rounded-xl px-3 py-2 text-[12px] font-extrabold transition",
-            "bg-slate-900 text-white hover:bg-slate-800",
-            "dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-100"
-          )}
+          className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-[12px] font-extrabold text-white transition hover:bg-slate-800 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-100"
         >
-          <Pencil className="w-4 h-4" />
-          {slot?.reserva ? "Editar" : "Reservar / Editar"}
+          <Pencil className="h-4 w-4" />
+          {slot?.reserva ? "Editar" : "Reservar"}
         </button>
 
-        {slot?.reserva && temTermo && (
+        {slot?.reserva && temTermo ? (
           <button
             type="button"
             onClick={abrirPdfTermo}
-            className={cx(
-              "inline-flex items-center gap-2 rounded-xl px-3 py-2 text-[12px] font-extrabold transition",
-              "bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100",
-              "dark:bg-sky-950/20 dark:text-sky-300 dark:border-sky-900/60 dark:hover:bg-sky-950/30"
-            )}
+            className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-[12px] font-extrabold text-sky-700 transition hover:bg-sky-100 dark:border-sky-900/60 dark:bg-sky-950/20 dark:text-sky-300 dark:hover:bg-sky-950/30"
           >
-            <FileText className="w-4 h-4" />
-            Ver termo (PDF)
+            <FileText className="h-4 w-4" />
+            Ver termo
           </button>
-        )}
+        ) : null}
 
-        {slot?.reserva && (
+        {slot?.reserva ? (
           <button
             type="button"
-            onClick={onExcluir}
-            className={cx(
-              "inline-flex items-center gap-2 rounded-xl px-3 py-2 text-[12px] font-extrabold transition",
-              "bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100",
-              "dark:bg-rose-950/20 dark:text-rose-300 dark:border-rose-900/60 dark:hover:bg-rose-950/30"
-            )}
+            onClick={onCancelar}
+            className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] font-extrabold text-rose-700 transition hover:bg-rose-100 dark:border-rose-900/60 dark:bg-rose-950/20 dark:text-rose-300 dark:hover:bg-rose-950/30"
           >
-            <Trash2 className="w-4 h-4" />
-            Excluir
+            <Trash2 className="h-4 w-4" />
+            Cancelar
           </button>
-        )}
+        ) : null}
       </div>
     </div>
   );
 }
 
-function ConfirmDeleteModal({ open, reserva, onClose, onConfirm, deleting }) {
+function ConfirmCancelModal({ open, reserva, onClose, onConfirm, loading }) {
   if (!open || !reserva) return null;
 
   return (
@@ -721,63 +772,77 @@ function ConfirmDeleteModal({ open, reserva, onClose, onConfirm, deleting }) {
         onClick={onClose}
         aria-hidden="true"
       />
-      <div className="absolute inset-0 p-4 grid place-items-center">
-        <div className="w-full max-w-md rounded-3xl bg-white dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 shadow-2xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-200 dark:border-zinc-800 flex items-center justify-between gap-3">
+
+      <div className="absolute inset-0 grid place-items-center p-4">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="cancelar-reserva-title"
+          className="w-full max-w-md overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
+        >
+          <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-zinc-800">
             <div>
-              <h3 className="text-lg font-extrabold text-slate-900 dark:text-white">
-                Confirmar exclusão
+              <h3
+                id="cancelar-reserva-title"
+                className="text-lg font-extrabold text-slate-900 dark:text-white"
+              >
+                Cancelar reserva
               </h3>
               <p className="text-sm text-slate-500 dark:text-zinc-400">
-                Esta ação removerá a reserva selecionada.
+                O backend v2.0 preserva o histórico e altera o status para cancelado.
               </p>
             </div>
 
             <button
               type="button"
               onClick={onClose}
-              className="p-2 rounded-full border border-slate-200 dark:border-zinc-800 hover:bg-slate-50 dark:hover:bg-zinc-900"
+              disabled={loading}
+              className="rounded-full border border-slate-200 p-2 transition hover:bg-slate-50 disabled:opacity-60 dark:border-zinc-800 dark:hover:bg-zinc-900"
               aria-label="Fechar"
             >
-              <X className="w-4 h-4" />
+              <X className="h-4 w-4" />
             </button>
           </div>
 
           <div className="px-5 py-5">
-            <div className="rounded-2xl border border-rose-200 bg-rose-50 dark:bg-rose-950/20 dark:border-rose-900/60 p-4">
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 dark:border-rose-900/60 dark:bg-rose-950/20">
               <p className="text-sm text-rose-800 dark:text-rose-200">
-                <span className="font-extrabold">Reserva:</span> {reserva.finalidade || "Sem título"}
+                <span className="font-extrabold">Reserva:</span>{" "}
+                {reserva.finalidade || "Sem título"}
               </p>
               <p className="mt-1 text-sm text-rose-700 dark:text-rose-300">
-                <span className="font-semibold">Solicitante:</span> {reserva.solicitante_nome || "—"}
+                <span className="font-semibold">Solicitante:</span>{" "}
+                {reserva.solicitante_nome || "—"}
               </p>
               <p className="mt-1 text-sm text-rose-700 dark:text-rose-300">
-                <span className="font-semibold">Status:</span> {labelStatus(reserva.status)}
+                <span className="font-semibold">Status atual:</span>{" "}
+                {labelStatus(reserva.status)}
               </p>
             </div>
 
             <p className="mt-4 text-sm text-slate-600 dark:text-zinc-300">
-              Confirme apenas se tiver certeza. Esta exclusão está protegida também no backend.
+              Confirme apenas se realmente deseja cancelar esta reserva. O horário será liberado para nova utilização.
             </p>
           </div>
 
-          <div className="px-5 pb-5 flex justify-end gap-2">
+          <div className="flex justify-end gap-2 px-5 pb-5">
             <button
               type="button"
               onClick={onClose}
-              disabled={deleting}
-              className="px-4 py-2 rounded-xl border border-slate-200 dark:border-zinc-800 text-sm font-bold hover:bg-slate-50 dark:hover:bg-zinc-900"
+              disabled={loading}
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold transition hover:bg-slate-50 disabled:opacity-60 dark:border-zinc-800 dark:hover:bg-zinc-900"
             >
-              Cancelar
+              Voltar
             </button>
 
             <button
               type="button"
               onClick={onConfirm}
-              disabled={deleting}
-              className="px-4 py-2 rounded-xl bg-rose-600 text-white text-sm font-extrabold hover:bg-rose-700 disabled:opacity-60"
+              disabled={loading}
+              className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-sm font-extrabold text-white transition hover:bg-rose-700 disabled:opacity-60"
             >
-              {deleting ? "Excluindo..." : "Excluir reserva"}
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              {loading ? "Cancelando..." : "Cancelar reserva"}
             </button>
           </div>
         </div>
@@ -786,7 +851,14 @@ function ConfirmDeleteModal({ open, reserva, onClose, onConfirm, deleting }) {
   );
 }
 
-function ModalDiaAgenda({ open, diaDetalhe, baseURL, onClose, onEditarSlot, onExcluirReserva }) {
+function ModalDiaAgenda({
+  open,
+  diaDetalhe,
+  onClose,
+  onEditarSlot,
+  onCancelarReserva,
+  onMessage,
+}) {
   if (!open || !diaDetalhe) return null;
 
   const { dataISO, bloqueado, motivo, salas } = diaDetalhe;
@@ -799,18 +871,24 @@ function ModalDiaAgenda({ open, diaDetalhe, baseURL, onClose, onEditarSlot, onEx
         aria-hidden="true"
       />
 
-      <div className="absolute inset-0 p-3 sm:p-5 grid place-items-center">
-        <div className="w-full max-w-5xl max-h-[92vh] overflow-hidden rounded-[28px] bg-white dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 shadow-2xl">
-          <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-zinc-800 flex items-start justify-between gap-4">
+      <div className="absolute inset-0 grid place-items-center p-3 sm:p-5">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-dia-agenda-title"
+          className="max-h-[92vh] w-full max-w-5xl overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
+        >
+          <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-4 py-4 dark:border-zinc-800 sm:px-6">
             <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="inline-flex items-center gap-2 text-slate-500 dark:text-zinc-400 text-xs font-bold uppercase tracking-wide">
-                  <CalendarRange className="w-4 h-4" />
-                  Agenda do dia
-                </span>
-              </div>
+              <span className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-zinc-400">
+                <CalendarRange className="h-4 w-4" />
+                Agenda do dia
+              </span>
 
-              <h3 className="mt-1 text-lg sm:text-2xl font-extrabold text-slate-900 dark:text-white">
+              <h3
+                id="modal-dia-agenda-title"
+                className="mt-1 text-lg font-extrabold text-slate-900 dark:text-white sm:text-2xl"
+              >
                 {formatDataBR(dataISO)} — {getDiaSemanaLabelLongo(dataISO)}
               </h3>
 
@@ -822,25 +900,25 @@ function ModalDiaAgenda({ open, diaDetalhe, baseURL, onClose, onEditarSlot, onEx
             <button
               type="button"
               onClick={onClose}
-              className="p-2 rounded-full border border-slate-200 dark:border-zinc-800 hover:bg-slate-50 dark:hover:bg-zinc-900"
+              className="rounded-full border border-slate-200 p-2 transition hover:bg-slate-50 dark:border-zinc-800 dark:hover:bg-zinc-900"
               aria-label="Fechar"
             >
-              <X className="w-4 h-4" />
+              <X className="h-4 w-4" />
             </button>
           </div>
 
-          <div className="overflow-y-auto max-h-[calc(92vh-90px)] px-4 sm:px-6 py-5">
+          <div className="max-h-[calc(92vh-90px)] overflow-y-auto px-4 py-5 sm:px-6">
             {bloqueado ? (
-              <div className="rounded-3xl border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-900/50 p-6 text-center">
-                <div className="mx-auto w-14 h-14 rounded-2xl bg-slate-200 dark:bg-zinc-800 grid place-items-center">
-                  <Lock className="w-6 h-6 text-slate-700 dark:text-zinc-300" />
+              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6 text-center dark:border-zinc-800 dark:bg-zinc-900/50">
+                <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-slate-200 dark:bg-zinc-800">
+                  <Lock className="h-6 w-6 text-slate-700 dark:text-zinc-300" />
                 </div>
 
                 <h4 className="mt-4 text-xl font-extrabold text-slate-900 dark:text-white">
                   Dia bloqueado
                 </h4>
 
-                <p className="mt-2 text-sm sm:text-base text-slate-600 dark:text-zinc-300 max-w-2xl mx-auto">
+                <p className="mx-auto mt-2 max-w-2xl text-sm text-slate-600 dark:text-zinc-300 sm:text-base">
                   {motivo || "Data indisponível para agendamento."}
                 </p>
               </div>
@@ -849,11 +927,11 @@ function ModalDiaAgenda({ open, diaDetalhe, baseURL, onClose, onEditarSlot, onEx
                 {salas.map((salaItem) => (
                   <section
                     key={salaItem.sala}
-                    className="rounded-3xl border border-slate-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-950"
+                    className="overflow-hidden rounded-3xl border border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
                   >
-                    <div className="px-4 sm:px-5 py-4 bg-slate-50 dark:bg-zinc-900/60 border-b border-slate-200 dark:border-zinc-800 flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-4 dark:border-zinc-800 dark:bg-zinc-900/60 sm:px-5">
                       <div>
-                        <h4 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white">
+                        <h4 className="text-base font-extrabold text-slate-900 dark:text-white sm:text-lg">
                           {salaItem.label}
                         </h4>
                         <p className="text-sm text-slate-500 dark:text-zinc-400">
@@ -862,19 +940,21 @@ function ModalDiaAgenda({ open, diaDetalhe, baseURL, onClose, onEditarSlot, onEx
                         </p>
                       </div>
 
-                      <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 dark:bg-zinc-800 px-3 py-1 text-xs font-bold text-slate-700 dark:text-zinc-300 border border-slate-200 dark:border-zinc-700">
+                      <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
                         {salaItem.ocupados}/2 ocupados
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 sm:p-5">
+                    <div className="grid grid-cols-1 gap-4 p-4 sm:p-5 md:grid-cols-2">
                       {salaItem.slots.map((slot) => (
                         <SlotCardDia
                           key={`${slot.sala}-${slot.periodo}`}
-                          slot={slot}
-                          baseURL={baseURL}
+                          slot={{
+                            ...slot,
+                            onMessage,
+                          }}
                           onEditar={() => onEditarSlot(slot)}
-                          onExcluir={() => onExcluirReserva(slot)}
+                          onCancelar={() => onCancelarReserva(slot)}
                         />
                       ))}
                     </div>
@@ -889,17 +969,23 @@ function ModalDiaAgenda({ open, diaDetalhe, baseURL, onClose, onEditarSlot, onEx
   );
 }
 
-/* ───────────────────────────── Página ───────────────────────────── */
+/* =========================================================================
+   Página
+=========================================================================== */
+
 function AgendaSalasAdmin() {
   const navigate = useNavigate();
-  const baseURL = (api.defaults?.baseURL || "/api").replace(/\/+$/, "");
-  const hojeISO = useMemo(() => getHojeISO(), []);
+  const liveRef = useRef(null);
 
+  const hojeISO = useMemo(() => getHojeISO(), []);
   const hojeParts = splitISO(hojeISO);
+
   const [ano, setAno] = useState(hojeParts.year);
   const [mesIndex, setMesIndex] = useState((hojeParts.month || 1) - 1);
 
   const [loading, setLoading] = useState(false);
+  const [mensagem, setMensagem] = useState(null);
+
   const [reservasMap, setReservasMap] = useState({});
   const [feriadosMap, setFeriadosMap] = useState({});
   const [datasBloqueadasMap, setDatasBloqueadasMap] = useState({});
@@ -911,11 +997,22 @@ function AgendaSalasAdmin() {
   const [diaModalAberto, setDiaModalAberto] = useState(false);
   const [diaSelecionadoISO, setDiaSelecionadoISO] = useState(null);
 
-  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
-  const [reservaParaExcluir, setReservaParaExcluir] = useState(null);
-  const [deletingReserva, setDeletingReserva] = useState(false);
+  const [confirmCancelOpen, setConfirmCancelOpen] = useState(false);
+  const [reservaParaCancelar, setReservaParaCancelar] = useState(null);
+  const [cancelandoReserva, setCancelandoReserva] = useState(false);
 
   const semanas = useMemo(() => criarMatrixMes(ano, mesIndex), [ano, mesIndex]);
+
+  function setLive(texto) {
+    if (liveRef.current) {
+      liveRef.current.textContent = texto;
+    }
+  }
+
+  function showMessage(payload) {
+    setMensagem(payload);
+    setLive(`${payload.title || ""} ${payload.message || ""}`.trim());
+  }
 
   const mudarMes = useCallback(
     (delta) => {
@@ -938,21 +1035,23 @@ function AgendaSalasAdmin() {
 
   const hojeClick = useCallback(() => {
     const agoraISO = getHojeISO();
-    const p = splitISO(agoraISO);
-    setAno(p.year);
-    setMesIndex((p.month || 1) - 1);
+    const parts = splitISO(agoraISO);
+
+    setAno(parts.year);
+    setMesIndex((parts.month || 1) - 1);
   }, []);
 
   const handleKeyNav = useCallback(
-    (e) => {
-      const tag = (e?.target?.tagName || "").toLowerCase();
-      if (tag === "input" || tag === "select" || tag === "textarea") return;
+    (event) => {
+      const tag = String(event?.target?.tagName || "").toLowerCase();
 
-      if (e.key === "ArrowLeft") mudarMes(-1);
-      if (e.key === "ArrowRight") mudarMes(1);
+      if (["input", "select", "textarea"].includes(tag)) return;
 
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "h") {
-        e.preventDefault();
+      if (event.key === "ArrowLeft") mudarMes(-1);
+      if (event.key === "ArrowRight") mudarMes(1);
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "h") {
+        event.preventDefault();
         hojeClick();
       }
     },
@@ -960,96 +1059,115 @@ function AgendaSalasAdmin() {
   );
 
   useEffect(() => {
+    document.title = "Agenda de Salas | Administração";
+  }, []);
+
+  useEffect(() => {
     window.addEventListener("keydown", handleKeyNav);
+
     return () => window.removeEventListener("keydown", handleKeyNav);
   }, [handleKeyNav]);
 
-  useEffect(() => {
-    carregarAgenda();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ano, mesIndex]);
+  const carregarAgenda = useCallback(async () => {
+    setLoading(true);
+    setMensagem(null);
+    setLive("Carregando agenda de salas.");
 
-  async function carregarAgenda() {
     try {
-      setLoading(true);
-      console.log("[AgendaSalasAdmin][LOAD] Carregando agenda do mês", {
-        ano,
-        mes: mesIndex + 1,
-      });
-
-      const anoParam = ano;
-      const mesParam = mesIndex + 1;
+      const paramsBase = {
+        ano: String(ano),
+        mes: String(mesIndex + 1),
+      };
 
       const qsAuditorio = new URLSearchParams({
-        ano: String(anoParam),
-        mes: String(mesParam),
+        ...paramsBase,
         sala: "auditorio",
       }).toString();
 
       const qsSalaReuniao = new URLSearchParams({
-        ano: String(anoParam),
-        mes: String(mesParam),
+        ...paramsBase,
         sala: "sala_reuniao",
       }).toString();
 
-      const [respA, respS] = await Promise.all([
-        api.get(`/salas/agenda-admin?${qsAuditorio}`),
-        api.get(`/salas/agenda-admin?${qsSalaReuniao}`),
+      const [respAuditorio, respSalaReuniao] = await Promise.all([
+        api.get(`/sala/agenda-admin?${qsAuditorio}`),
+        api.get(`/sala/agenda-admin?${qsSalaReuniao}`),
       ]);
 
-      const dataAuditorio = respA?.data ?? respA ?? {};
-      const dataSalaReuniao = respS?.data ?? respS ?? {};
+      const dataAuditorio = unwrapData(respAuditorio);
+      const dataSalaReuniao = unwrapData(respSalaReuniao);
 
       const novoMapaReservas = {};
 
-      for (const r of dataAuditorio.reservas || []) {
-  const nr = normalizeReserva(r);
-  if (!nr.dataISO || !nr.sala) continue;
+      for (const item of dataAuditorio.reservas || []) {
+        const reserva = normalizeReserva(item);
 
-  const k = keySlot(nr.dataISO, nr.periodo, nr.sala);
-  (novoMapaReservas[k] ??= []);
-  novoMapaReservas[k].push(nr);
-}
+        if (!reserva.dataISO || !reserva.sala) continue;
 
-for (const r of dataSalaReuniao.reservas || []) {
-  const nr = normalizeReserva(r);
-  if (!nr.dataISO || !nr.sala) continue;
+        const key = keySlot(reserva.dataISO, reserva.periodo, reserva.sala);
 
-  const k = keySlot(nr.dataISO, nr.periodo, nr.sala);
-  (novoMapaReservas[k] ??= []);
-  novoMapaReservas[k].push(nr);
-}
-
-      const ferMap = {};
-      const feriadosBase = dataAuditorio.feriados?.length
-        ? dataAuditorio.feriados
-        : dataSalaReuniao.feriados || [];
-
-      for (const f of feriadosBase || []) {
-        const dataISO = (f.data || "").slice(0, 10);
-        if (dataISO) ferMap[dataISO] = f;
+        if (!novoMapaReservas[key]) novoMapaReservas[key] = [];
+        novoMapaReservas[key].push(reserva);
       }
 
-      const bloqueiosMap = {};
-      const bloqueiosBase = dataAuditorio.datas_bloqueadas?.length
-        ? dataAuditorio.datas_bloqueadas
-        : dataSalaReuniao.datas_bloqueadas || [];
+      for (const item of dataSalaReuniao.reservas || []) {
+        const reserva = normalizeReserva(item);
 
-      for (const b of bloqueiosBase || []) {
-        const dataISO = (b.data || "").slice(0, 10);
-        if (dataISO) bloqueiosMap[dataISO] = b;
+        if (!reserva.dataISO || !reserva.sala) continue;
+
+        const key = keySlot(reserva.dataISO, reserva.periodo, reserva.sala);
+
+        if (!novoMapaReservas[key]) novoMapaReservas[key] = [];
+        novoMapaReservas[key].push(reserva);
+      }
+
+      const feriadosBase =
+        dataAuditorio.feriados?.length
+          ? dataAuditorio.feriados
+          : dataSalaReuniao.feriados || [];
+
+      const bloqueiosBase =
+        dataAuditorio.datas_bloqueadas?.length
+          ? dataAuditorio.datas_bloqueadas
+          : dataSalaReuniao.datas_bloqueadas || [];
+
+      const feriados = {};
+      const bloqueios = {};
+
+      for (const feriado of feriadosBase) {
+        const dataISO = String(feriado.data || "").slice(0, 10);
+        if (dataISO) feriados[dataISO] = feriado;
+      }
+
+      for (const bloqueio of bloqueiosBase) {
+        const dataISO = String(bloqueio.data || "").slice(0, 10);
+        if (dataISO) bloqueios[dataISO] = bloqueio;
       }
 
       setReservasMap(novoMapaReservas);
-      setFeriadosMap(ferMap);
-      setDatasBloqueadasMap(bloqueiosMap);
-    } catch (err) {
-      console.error("[AgendaSalasAdmin][LOAD][ERRO]", err);
-      toast.error("Erro ao carregar agenda de salas.");
+      setFeriadosMap(feriados);
+      setDatasBloqueadasMap(bloqueios);
+
+      setLive("Agenda de salas carregada.");
+    } catch (error) {
+      console.error("[AgendaSalasAdmin][carregarAgenda]", error);
+
+      showMessage({
+        type: "error",
+        title: "Erro ao carregar agenda",
+        message: getErrorMessage(
+          error,
+          "Não foi possível carregar a agenda de salas. Verifique sua conexão e tente novamente."
+        ),
+      });
     } finally {
       setLoading(false);
     }
-  }
+  }, [ano, mesIndex]);
+
+  useEffect(() => {
+    carregarAgenda();
+  }, [carregarAgenda]);
 
   function abrirModalSlot(slot) {
     if (!slot?.dataISO || !slot?.periodo || !slot?.sala) return;
@@ -1076,54 +1194,44 @@ for (const r of dataSalaReuniao.reservas || []) {
   }
 
   function prioridadeReservaAdmin(reserva) {
-  if (!reserva) return 0;
+    if (!reserva) return 0;
 
-  const status = String(reserva.status || "").trim().toLowerCase();
+    const status = normalizarStatus(reserva.status);
 
-  if (reserva.pendente_aprovacao) return 50;
-  if (reserva.aprovado_confirmado) return 40;
-  if (["rejeitado", "cancelado", "excluido"].includes(status)) return 0;
-  if (reserva.rejeitado_ou_cancelado) return 0;
+    if (status === "pendente") return 50;
+    if (status === "aprovado") return 40;
+    if (status === "bloqueado") return 30;
+    if (status === "rejeitado" || status === "cancelado") return 0;
 
-  return 20;
-}
+    return 10;
+  }
 
-function getReservasSlot(dataISO, periodo, salaKey) {
-  const raw = reservasMap[keySlot(dataISO, periodo, salaKey)];
-  if (!raw) return [];
-  return Array.isArray(raw) ? raw : [raw];
-}
+  function getReservasSlot(dataISO, periodo, salaKey) {
+    const raw = reservasMap[keySlot(dataISO, periodo, salaKey)];
 
-function getReservaSlot(dataISO, periodo, salaKey) {
-  const reservas = getReservasSlot(dataISO, periodo, salaKey);
-  if (!reservas.length) return null;
+    if (!raw) return [];
 
-  const reservasAtivas = reservas.filter((r) => !["rejeitado", "cancelado", "excluido"].includes(
-    String(r?.status || "").trim().toLowerCase()
-  ));
+    return Array.isArray(raw) ? raw : [raw];
+  }
 
-  if (!reservasAtivas.length) return null;
+  function getReservaSlot(dataISO, periodo, salaKey) {
+    const reservas = getReservasSlot(dataISO, periodo, salaKey);
 
-  return [...reservasAtivas].sort(
-    (a, b) => prioridadeReservaAdmin(b) - prioridadeReservaAdmin(a)
-  )[0];
-}
+    if (!reservas.length) return null;
 
-function reservaOcupaSlot(reserva) {
-  if (!reserva) return false;
+    const reservasAtivas = reservas.filter(reservaOcupaSlot);
 
-  const status = String(reserva.status || "").trim().toLowerCase();
+    if (!reservasAtivas.length) return null;
 
-  if (reserva.rejeitado_ou_cancelado) return false;
-  if (["rejeitado", "cancelado", "excluido"].includes(status)) return false;
+    return [...reservasAtivas].sort(
+      (a, b) => prioridadeReservaAdmin(b) - prioridadeReservaAdmin(a)
+    )[0];
+  }
 
-  return true;
-}
-
-    function getDiaInfo(dataISO) {
+  function getDiaInfo(dataISO) {
     const diaSemana = getDayOfWeekFromISO(dataISO);
-    const ehFeriado = !!feriadosMap[dataISO];
-    const ehBloqueada = !!datasBloqueadasMap[dataISO];
+    const ehFeriado = Boolean(feriadosMap[dataISO]);
+    const ehBloqueada = Boolean(datasBloqueadasMap[dataISO]);
     const ehFimDeSemana = diaSemana === 0 || diaSemana === 6;
     const bloqueado = ehFimDeSemana || ehFeriado || ehBloqueada;
 
@@ -1140,30 +1248,32 @@ function reservaOcupaSlot(reserva) {
     let ocupados = 0;
     let temPendencia = false;
     let salasDisponiveis = 0;
+
     const totalSlots = SALAS_ORDEM.length * PERIODOS.length;
 
     const salas = SALAS_ORDEM.map((salaKey) => {
-      const slots = PERIODOS.map((p) => {
-        const reserva = getReservaSlot(dataISO, p.value, salaKey);
+      const slots = PERIODOS.map((periodo) => {
+        const reserva = getReservaSlot(dataISO, periodo.value, salaKey);
         const ocupa = reservaOcupaSlot(reserva);
 
         if (ocupa) ocupados += 1;
-        if (reserva?.pendente_aprovacao) temPendencia = true;
+        if (reserva?.status === "pendente") temPendencia = true;
 
         return {
           dataISO,
           sala: salaKey,
           salaLabel: CAPACIDADES_SALA[salaKey].labelCurta,
-          periodo: p.value,
-          periodoLabel: p.label,
+          periodo: periodo.value,
+          periodoLabel: periodo.label,
           reserva,
         };
       });
 
-      const ocupadosSala = slots.filter((s) => reservaOcupaSlot(s.reserva)).length;
-      const temAlgumLivreNaSala = ocupadosSala < PERIODOS.length;
+      const ocupadosSala = slots.filter((slot) => reservaOcupaSlot(slot.reserva)).length;
 
-      if (temAlgumLivreNaSala) salasDisponiveis += 1;
+      if (ocupadosSala < PERIODOS.length) {
+        salasDisponiveis += 1;
+      }
 
       return {
         sala: salaKey,
@@ -1175,10 +1285,10 @@ function reservaOcupaSlot(reserva) {
     });
 
     let estado = "vazio";
+
     if (bloqueado) estado = "bloqueado";
     else if (ocupados >= totalSlots) estado = "lotado";
     else if (ocupados > 0) estado = "parcial";
-    else estado = "vazio";
 
     const labelResumo =
       estado === "bloqueado"
@@ -1203,55 +1313,66 @@ function reservaOcupaSlot(reserva) {
 
   const diasDoMes = useMemo(() => {
     const last = new Date(ano, mesIndex + 1, 0).getDate();
-    return Array.from({ length: last }, (_, i) => i + 1);
+
+    return Array.from({ length: last }, (_, index) => index + 1);
   }, [ano, mesIndex]);
 
   const diaInfosMap = useMemo(() => {
     const map = {};
+
     for (const dia of diasDoMes) {
       const dataISO = formatISO(ano, mesIndex, dia);
       map[dataISO] = getDiaInfo(dataISO);
     }
+
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ano, mesIndex, diasDoMes, reservasMap, feriadosMap, datasBloqueadasMap]);
 
   const diaDetalheSelecionado = useMemo(() => {
     if (!diaSelecionadoISO) return null;
+
     return diaInfosMap[diaSelecionadoISO] || null;
   }, [diaSelecionadoISO, diaInfosMap]);
 
   const reservasFlat = useMemo(
-  () => Object.values(reservasMap).flatMap((item) => (Array.isArray(item) ? item : [item])),
-  [reservasMap]
-);
+    () =>
+      Object.values(reservasMap).flatMap((item) =>
+        Array.isArray(item) ? item : [item]
+      ),
+    [reservasMap]
+  );
 
-const totalMes = useMemo(() => reservasFlat.length, [reservasFlat]);
+  const reservasAtivas = useMemo(
+    () => reservasFlat.filter(reservaOcupaSlot),
+    [reservasFlat]
+  );
 
-const totalAprovados = useMemo(
-  () => reservasFlat.filter((r) => r?.status === "aprovado" || r?.status === "confirmado").length,
-  [reservasFlat]
-);
+  const totalMes = reservasAtivas.length;
 
-const totalPendentes = useMemo(
-  () => reservasFlat.filter((r) => r?.pendente_aprovacao).length,
-  [reservasFlat]
-);
+  const totalAprovados = reservasAtivas.filter(
+    (reserva) => normalizarStatus(reserva.status) === "aprovado"
+  ).length;
+
+  const totalPendentes = reservasAtivas.filter(
+    (reserva) => normalizarStatus(reserva.status) === "pendente"
+  ).length;
 
   const totalDiasBloqueados = useMemo(
-    () => Object.values(diaInfosMap).filter((d) => d?.estado === "bloqueado").length,
+    () => Object.values(diaInfosMap).filter((dia) => dia?.estado === "bloqueado").length,
     [diaInfosMap]
   );
 
   const totalDiasLotados = useMemo(
-    () => Object.values(diaInfosMap).filter((d) => d?.estado === "lotado").length,
+    () => Object.values(diaInfosMap).filter((dia) => dia?.estado === "lotado").length,
     [diaInfosMap]
   );
 
   const totalDiasComDisponibilidade = useMemo(
     () =>
-      Object.values(diaInfosMap).filter((d) => d?.estado === "parcial" || d?.estado === "vazio")
-        .length,
+      Object.values(diaInfosMap).filter(
+        (dia) => dia?.estado === "parcial" || dia?.estado === "vazio"
+      ).length,
     [diaInfosMap]
   );
 
@@ -1265,170 +1386,146 @@ const totalPendentes = useMemo(
     abrirModalSlot(slot);
   }
 
-  function abrirExcluirReserva(slot) {
+  function abrirCancelarReserva(slot) {
     if (!slot?.reserva?.id) {
-      toast.info("Este horário ainda está livre, não há reserva para excluir.");
+      showMessage({
+        type: "info",
+        title: "Horário livre",
+        message: "Este horário ainda não possui reserva para cancelar.",
+      });
       return;
     }
 
-    setReservaParaExcluir(slot.reserva);
-    setConfirmDeleteOpen(true);
+    setReservaParaCancelar(slot.reserva);
+    setConfirmCancelOpen(true);
   }
 
-  function fecharExcluirReserva() {
-    if (deletingReserva) return;
-    setConfirmDeleteOpen(false);
-    setReservaParaExcluir(null);
+  function fecharCancelarReserva() {
+    if (cancelandoReserva) return;
+
+    setConfirmCancelOpen(false);
+    setReservaParaCancelar(null);
   }
 
-  async function confirmarExcluirReserva() {
-    if (!reservaParaExcluir?.id) return;
+  async function confirmarCancelarReserva() {
+    if (!reservaParaCancelar?.id) return;
+
+    setCancelandoReserva(true);
+    setMensagem(null);
 
     try {
-      setDeletingReserva(true);
+      await api.delete(`/sala/admin/reservas/${reservaParaCancelar.id}`);
 
-      console.log("[AgendaSalasAdmin][DELETE] Tentando excluir reserva", {
-        reservaId: reservaParaExcluir.id,
+      showMessage({
+        type: "success",
+        title: "Reserva cancelada",
+        message:
+          "A reserva foi cancelada com sucesso e o histórico operacional foi preservado.",
       });
 
-      await api.delete(`/salas/admin/reservas/${reservaParaExcluir.id}`);
-
-      toast.success("Reserva excluída com sucesso.");
-      setConfirmDeleteOpen(false);
-      setReservaParaExcluir(null);
+      setConfirmCancelOpen(false);
+      setReservaParaCancelar(null);
       fecharModalDia();
+
       await carregarAgenda();
-    } catch (err) {
-      console.error("[AgendaSalasAdmin][DELETE][ERRO]", err);
-      toast.error(err?.response?.data?.erro || "Não foi possível excluir a reserva.");
+    } catch (error) {
+      console.error("[AgendaSalasAdmin][cancelarReserva]", error);
+
+      showMessage({
+        type: "error",
+        title: "Não foi possível cancelar",
+        message: getErrorMessage(
+          error,
+          "A reserva não pôde ser cancelada. Verifique o status atual e tente novamente."
+        ),
+      });
     } finally {
-      setDeletingReserva(false);
+      setCancelandoReserva(false);
     }
   }
 
-  function abrirRelatorioMensal() {
-    const url = `${baseURL}/salas/admin/relatorio-mensal?ano=${ano}&mes=${mesIndex + 1}`;
-    window.open(url, "_blank", "noopener,noreferrer");
-  }
-
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-b from-slate-50 via-white to-white dark:from-zinc-950 dark:via-zinc-950 dark:to-black text-gray-900 dark:text-gray-100">
-      <header className="relative overflow-hidden text-white shadow-[0_20px_60px_-35px_rgba(2,6,23,0.75)]">
-        <div
-          className="absolute inset-0 bg-gradient-to-br from-slate-950 via-sky-900 to-violet-900"
-          aria-hidden="true"
-        />
-        <div
-          className="absolute -top-32 -left-24 w-96 h-96 rounded-full bg-cyan-400/20 blur-3xl"
-          aria-hidden="true"
-        />
-        <div
-          className="absolute -bottom-32 -right-24 w-96 h-96 rounded-full bg-fuchsia-400/15 blur-3xl"
-          aria-hidden="true"
-        />
-        <div
-          className="absolute inset-0 opacity-[0.10] bg-[radial-gradient(circle_at_1px_1px,rgba(255,255,255,0.55)_1px,transparent_0)] [background-size:18px_18px]"
-          aria-hidden="true"
-        />
+    <div className="flex min-h-screen flex-col bg-gradient-to-b from-slate-50 via-white to-white text-gray-900 dark:from-zinc-950 dark:via-zinc-950 dark:to-black dark:text-gray-100">
+      <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-        <a
-          href="#conteudo"
-          className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
-        >
-          Ir para o conteúdo
-        </a>
+      <HeaderHero
+  titulo="Agenda administrativa de salas"
+  subtitulo="Gestão premium de reservas, bloqueios, disponibilidade e utilização institucional dos ambientes da Escola da Saúde."
+  icon={CalendarDays}
+/>
 
-        <div className="relative max-w-7xl mx-auto px-4 py-7 sm:py-9">
-          <div className="flex items-start justify-between gap-4 flex-wrap">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 sm:p-3 rounded-2xl bg-white/12 ring-1 ring-white/15 backdrop-blur">
-                <CalendarDays className="w-7 h-7 sm:w-8 sm:h-8" aria-hidden="true" />
-              </div>
+     <main id="conteudo" className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:py-8">
+      <section className="mb-5 space-y-4">
+  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+    <DashboardCard
+      icon={Sparkles}
+      label="Reservas"
+      value={totalMes}
+      loading={loading}
+    />
 
-              <div className="min-w-0">
-                <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">
-                  Agenda de Salas — Administração
-                </h1>
-                <p className="mt-1 text-sm sm:text-base text-white/85 flex items-center gap-1.5">
-                  <MapPin className="w-4 h-4 opacity-90" />
-                  Calendário mensal premium com visão consolidada por dia
-                </p>
-              </div>
-            </div>
+    <DashboardCard
+      icon={ShieldCheck}
+      label="Aprovadas"
+      value={totalAprovados}
+      loading={loading}
+    />
 
-            <div className="flex gap-2.5 flex-wrap items-start">
-              <div className="rounded-2xl px-3 py-2 bg-white/10 ring-1 ring-white/15 backdrop-blur">
-                <div className="flex items-center gap-2 text-xs sm:text-sm text-white/90">
-                  <ShieldCheck className="w-4 h-4" />
-                  <span className="font-semibold">Auditório</span>
-                </div>
-                <p className="mt-1 text-sm font-extrabold">
-                  {CAPACIDADES_SALA.auditorio.conforto}{" "}
-                  <span className="text-white/70">/</span>{" "}
-                  {CAPACIDADES_SALA.auditorio.max}{" "}
-                  <span className="text-white/70">máx.</span>
-                </p>
-              </div>
+    <DashboardCard
+      icon={Waves}
+      label="Pendentes"
+      value={totalPendentes}
+      loading={loading}
+    />
 
-              <div className="rounded-2xl px-3 py-2 bg-white/10 ring-1 ring-white/15 backdrop-blur">
-                <div className="flex items-center gap-2 text-xs sm:text-sm text-white/90">
-                  <Users className="w-4 h-4" />
-                  <span className="font-semibold">Sala de Reunião</span>
-                </div>
-                <p className="mt-1 text-sm font-extrabold">
-                  {CAPACIDADES_SALA.sala_reuniao.conforto}{" "}
-                  <span className="text-white/70">/</span>{" "}
-                  {CAPACIDADES_SALA.sala_reuniao.max}{" "}
-                  <span className="text-white/70">máx.</span>
-                </p>
-              </div>
+    <DashboardCard
+      icon={Lock}
+      label="Bloqueados"
+      value={totalDiasBloqueados}
+      loading={loading}
+    />
 
-              <button
-                type="button"
-                onClick={abrirRelatorioMensal}
-                className={cx(
-                  "inline-flex items-center gap-2 px-3 py-2 rounded-2xl",
-                  "bg-white/12 hover:bg-white/16 ring-1 ring-white/15 backdrop-blur",
-                  "text-white text-xs sm:text-sm font-extrabold transition",
-                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-white/70 focus-visible:ring-offset-transparent"
-                )}
-                title="Gerar PDF do mês"
-              >
-                <FileText className="w-4 h-4" />
-                Relatório do mês (PDF)
-              </button>
-            </div>
-          </div>
+    <DashboardCard
+      icon={CheckCircle2}
+      label="Disponíveis"
+      value={totalDiasComDisponibilidade}
+      loading={loading}
+    />
+  </div>
 
-          <div className="mt-4 grid grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-3">
-            <MiniStat icon={Sparkles} label="Reservas no mês" value={totalMes} loading={loading} />
-            <MiniStat
-              icon={ShieldCheck}
-              label="Aprovadas"
-              value={totalAprovados}
-              loading={loading}
-            />
-            <MiniStat icon={Waves} label="Pendentes" value={totalPendentes} loading={loading} />
-            <MiniStat
-              icon={Lock}
-              label="Dias bloqueados"
-              value={totalDiasBloqueados}
-              loading={loading}
-            />
-            <MiniStat
-              icon={CheckCircle2}
-              label="Dias com vaga"
-              value={totalDiasComDisponibilidade}
-              loading={loading}
+  <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
+    <button
+      type="button"
+      onClick={carregarAgenda}
+      disabled={loading}
+      className="inline-flex items-center justify-center gap-2 rounded-[1.5rem] bg-white px-5 py-4 text-sm font-black text-slate-800 shadow-sm ring-1 ring-slate-200 hover:bg-slate-50 disabled:opacity-60 dark:bg-zinc-900 dark:text-white dark:ring-zinc-800 dark:hover:bg-zinc-800"
+    >
+      <RefreshCcw className={cx("h-4 w-4", loading && "animate-spin")} />
+      {loading ? "Atualizando..." : "Atualizar agenda"}
+    </button>
+
+    <button
+      type="button"
+      onClick={() => navigate("/admin/calendario-bloqueios")}
+      className="inline-flex items-center justify-center gap-2 rounded-[1.5rem] bg-slate-900 px-5 py-4 text-sm font-black text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900"
+    >
+      <Lock className="h-4 w-4" />
+      Gerenciar bloqueios
+    </button>
+  </div>
+</section>
+        {mensagem ? (
+          <div className="mb-4">
+            <AlertBox
+              type={mensagem.type}
+              title={mensagem.title}
+              message={mensagem.message}
+              onClose={() => setMensagem(null)}
             />
           </div>
-        </div>
+        ) : null}
 
-        <div className="absolute bottom-0 left-0 right-0 h-px bg-white/15" aria-hidden="true" />
-      </header>
-
-      <main id="conteudo" className="flex-1 max-w-7xl mx-auto w-full px-4 py-6 sm:py-8">
-        <div className="sticky top-0 z-10 -mx-4 px-4 py-3 bg-white/85 dark:bg-zinc-950/80 backdrop-blur border-b border-slate-200/60 dark:border-zinc-800/70 mb-4">
+        <div className="sticky top-0 z-10 -mx-4 mb-4 border-b border-slate-200/60 bg-white/85 px-4 py-3 backdrop-blur dark:border-zinc-800/70 dark:bg-zinc-950/80">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-2">
               <SoftIconButton
@@ -1436,14 +1533,14 @@ const totalPendentes = useMemo(
                 ariaLabel="Mês anterior"
                 title="Mês anterior (atalho ←)"
               >
-                <ChevronLeft className="w-4 h-4" />
+                <ChevronLeft className="h-4 w-4" />
               </SoftIconButton>
 
               <div className="px-2">
                 <p className="text-[11px] uppercase tracking-wide text-slate-500 dark:text-zinc-400">
                   Mês
                 </p>
-                <p className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white leading-tight">
+                <p className="text-base font-extrabold leading-tight text-slate-900 dark:text-white sm:text-lg">
                   {NOMES_MESES[mesIndex]} {ano}
                 </p>
               </div>
@@ -1453,35 +1550,41 @@ const totalPendentes = useMemo(
                 ariaLabel="Próximo mês"
                 title="Próximo mês (atalho →)"
               >
-                <ChevronRight className="w-4 h-4" />
+                <ChevronRight className="h-4 w-4" />
               </SoftIconButton>
 
               <button
-                className={cx(
-                  "ml-1 px-3 py-1.5 rounded-2xl text-xs font-extrabold",
-                  "bg-sky-600 hover:bg-sky-700 text-white shadow-sm",
-                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-sky-500",
-                  "dark:focus-visible:ring-offset-zinc-950"
-                )}
+                type="button"
+                className="ml-1 rounded-2xl bg-sky-600 px-3 py-1.5 text-xs font-extrabold text-white shadow-sm transition hover:bg-sky-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-zinc-950"
                 onClick={hojeClick}
                 aria-label="Ir para o mês atual"
                 title="Atalho: Ctrl/Cmd + H"
               >
                 Hoje
               </button>
+
+              <button
+                type="button"
+                onClick={carregarAgenda}
+                disabled={loading}
+                className="ml-1 inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-extrabold text-slate-800 transition hover:bg-slate-50 disabled:opacity-60 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+              >
+                <RefreshCcw className={cx("h-3.5 w-3.5", loading && "animate-spin")} />
+                Atualizar
+              </button>
             </div>
 
-            <div className="flex flex-col md:flex-row gap-2 md:items-center text-xs sm:text-sm">
-              <span className="px-3 py-1.5 rounded-full bg-slate-50 border border-slate-200 text-slate-800 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-200">
+            <div className="flex flex-col gap-2 text-xs sm:text-sm md:flex-row md:items-center">
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-slate-800 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
                 Clique no dia para ver Auditório + Sala de Reunião
               </span>
 
               {loading ? (
-                <span className="text-slate-500 dark:text-zinc-400 inline-flex items-center gap-2">
+                <span className="inline-flex items-center gap-2 text-slate-500 dark:text-zinc-400">
                   <Skeleton width={160} height={18} />
                 </span>
               ) : (
-                <span className="px-3 py-1.5 rounded-full bg-violet-50 border border-violet-200 text-violet-800 dark:bg-violet-950/20 dark:border-violet-900/60 dark:text-violet-200">
+                <span className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1.5 text-violet-800 dark:border-violet-900/60 dark:bg-violet-950/20 dark:text-violet-200">
                   {totalDiasLotados} dia(s) totalmente ocupado(s)
                 </span>
               )}
@@ -1489,59 +1592,68 @@ const totalPendentes = useMemo(
           </div>
         </div>
 
-        {loading && (
-          <div className="mb-4 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800 dark:bg-sky-950/20 dark:border-sky-900/50 dark:text-sky-200">
+        {loading ? (
+          <div className="mb-4 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800 dark:border-sky-900/50 dark:bg-sky-950/20 dark:text-sky-200">
             Carregando agenda do mês...
           </div>
-        )}
+        ) : null}
 
-        <div className="mb-3 rounded-2xl bg-slate-50 border border-slate-200 px-3 py-2 text-[11px] sm:text-xs text-slate-800 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-200 flex items-center justify-between gap-2 flex-wrap">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-800 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 sm:text-xs">
           <div className="flex items-start gap-2">
-            <Info className="w-4 h-4 mt-0.5 text-sky-700 dark:text-sky-300" />
+            <Info className="mt-0.5 h-4 w-4 text-sky-700 dark:text-sky-300" />
             <p>
               <strong>Feriados</strong>, <strong>pontos facultativos</strong> e{" "}
-              <strong>datas bloqueadas</strong> deixam o dia indisponível. Dias com todos os
-              horários ocupados ficam em <strong>lilás suave</strong>.
+              <strong>datas bloqueadas</strong> deixam o dia indisponível. Dias com todos os horários ocupados ficam em{" "}
+              <strong>lilás suave</strong>.
             </p>
           </div>
 
           <button
             type="button"
             onClick={() => navigate("/admin/calendario-bloqueios")}
-            className="inline-flex px-3 py-1.5 rounded-full text-[11px] font-extrabold border border-slate-300 text-slate-800 hover:bg-slate-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800/70"
+            className="inline-flex rounded-full border border-slate-300 px-3 py-1.5 text-[11px] font-extrabold text-slate-800 transition hover:bg-slate-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800/70"
           >
             Gerenciar feriados
           </button>
         </div>
 
-        <div className="mb-4 flex flex-wrap gap-2 text-xs sm:text-sm text-slate-700 dark:text-zinc-300">
+        <div className="mb-4 flex flex-wrap gap-2 text-xs text-slate-700 dark:text-zinc-300 sm:text-sm">
           {[
             {
               c: "bg-white border-slate-200 dark:bg-zinc-900 dark:border-zinc-700",
               t: "Dia com disponibilidade",
             },
-            { c: "bg-violet-100 border-violet-300", t: "Dia totalmente ocupado" },
-            { c: "bg-slate-200 border-slate-300", t: "Bloqueado / fim de semana / feriado" },
-            { c: "bg-amber-400 border-amber-500", t: "Há pendência no dia" },
-          ].map((it) => (
+            {
+              c: "bg-violet-100 border-violet-300",
+              t: "Dia totalmente ocupado",
+            },
+            {
+              c: "bg-slate-200 border-slate-300",
+              t: "Bloqueado / fim de semana / feriado",
+            },
+            {
+              c: "bg-amber-400 border-amber-500",
+              t: "Há pendência no dia",
+            },
+          ].map((item) => (
             <span
-              key={it.t}
-              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-white/70 dark:bg-zinc-950/40 border border-slate-200/70 dark:border-zinc-800"
+              key={item.t}
+              className="inline-flex items-center gap-1.5 rounded-full border border-slate-200/70 bg-white/70 px-2 py-1 dark:border-zinc-800 dark:bg-zinc-950/40"
             >
-              <span className={cx("w-3 h-3 rounded-full border", it.c)} />
-              {it.t}
+              <span className={cx("h-3 w-3 rounded-full border", item.c)} />
+              {item.t}
             </span>
           ))}
         </div>
 
-        <section className="bg-white dark:bg-zinc-950 rounded-3xl shadow-sm border border-slate-200 dark:border-zinc-800 overflow-hidden">
-          <div className="grid grid-cols-7 bg-slate-50 dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800 text-[11px] sm:text-sm">
-            {DIAS_SEMANA.map((d) => (
+        <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50 text-[11px] dark:border-zinc-800 dark:bg-zinc-900 sm:text-sm">
+            {DIAS_SEMANA.map((dia) => (
               <div
-                key={d}
-                className="py-2.5 text-center font-bold text-slate-600 dark:text-zinc-300 uppercase tracking-wide"
+                key={dia}
+                className="py-2.5 text-center font-bold uppercase tracking-wide text-slate-600 dark:text-zinc-300"
               >
-                {d}
+                {dia}
               </div>
             ))}
           </div>
@@ -1554,7 +1666,7 @@ const totalPendentes = useMemo(
                     return (
                       <div
                         key={`${idxSemana}-${idxDia}`}
-                        className="min-h-[108px] sm:min-h-[132px] md:min-h-[150px] border-r border-b border-slate-200 dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-950/30"
+                        className="min-h-[108px] border-b border-r border-slate-200 bg-slate-50/50 dark:border-zinc-800 dark:bg-zinc-950/30 sm:min-h-[132px] md:min-h-[150px]"
                       />
                     );
                   }
@@ -1578,12 +1690,11 @@ const totalPendentes = useMemo(
             ))}
           </div>
 
-          {!loading && !Object.keys(reservasMap).length && (
+          {!loading && !Object.keys(reservasMap).length ? (
             <div className="p-6 text-center text-sm text-slate-500 dark:text-zinc-400">
-              Nenhuma reserva localizada para {NOMES_MESES[mesIndex]} / {ano}. Ainda assim, os
-              dias seguem clicáveis para criação ou análise.
+              Nenhuma reserva ativa localizada para {NOMES_MESES[mesIndex]} / {ano}. Os dias continuam clicáveis para criação ou análise.
             </div>
-          )}
+          ) : null}
         </section>
       </main>
 
@@ -1592,21 +1703,21 @@ const totalPendentes = useMemo(
       <ModalDiaAgenda
         open={diaModalAberto}
         diaDetalhe={diaDetalheSelecionado}
-        baseURL={baseURL}
         onClose={fecharModalDia}
         onEditarSlot={abrirEditarSlot}
-        onExcluirReserva={abrirExcluirReserva}
+        onCancelarReserva={abrirCancelarReserva}
+        onMessage={showMessage}
       />
 
-      <ConfirmDeleteModal
-        open={confirmDeleteOpen}
-        reserva={reservaParaExcluir}
-        onClose={fecharExcluirReserva}
-        onConfirm={confirmarExcluirReserva}
-        deleting={deletingReserva}
+      <ConfirmCancelModal
+        open={confirmCancelOpen}
+        reserva={reservaParaCancelar}
+        onClose={fecharCancelarReserva}
+        onConfirm={confirmarCancelarReserva}
+        loading={cancelandoReserva}
       />
 
-      {modalAberto && slotSelecionado && (
+      {modalAberto && slotSelecionado ? (
         <ModalReservaAdmin
           onClose={fecharModalSlot}
           slot={slotSelecionado}
@@ -1614,10 +1725,9 @@ const totalPendentes = useMemo(
           sala={slotSelecionado.sala}
           capacidadeSala={CAPACIDADES_SALA[slotSelecionado.sala]}
           recarregar={carregarAgenda}
-          baseURL={baseURL}
           origem="calendario_dia"
         />
-      )}
+      ) : null}
     </div>
   );
 }

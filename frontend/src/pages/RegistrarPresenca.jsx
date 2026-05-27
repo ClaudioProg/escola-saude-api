@@ -1,127 +1,447 @@
-// ✅ src/pages/RegistrarPresenca.jsx — premium (scanner UX + a11y + motion-safe + torch/câmera + fallback manual + segurança de origem)
+// ✅ frontend/src/pages/RegistrarPresenca.jsx — v2.0
+// Atualizado em: 14/05/2026
+// Plataforma Escola da Saúde
+//
+// Página para registro de presença por leitura de QR Code.
+//
+// Contratos aplicados:
+// - Sem apiPost direto na página;
+// - Sem API_BASE_URL na página;
+// - Sem QR chamando path livre da API;
+// - Sem /api/presencas/confirmar-qr;
+// - Sem /presencas;
+// - QR oficial deve conter:
+//   1) URL com ?turma_id=123
+//   2) URL com ?token=...
+//   3) JSON { "turma_id": 123 }
+//   4) JSON { "token": "..." }
+//   5) número puro representando turma_id
+// - Registro por turma: api.presenca.confirmarQr(turma_id);
+// - Registro por token: api.presenca.confirmarToken(token);
+// - Sem toast direto;
+// - Sem Footer antigo;
+// - Sem PageHeader de caminho incerto;
+// - Sem CarregandoSkeleton/ErroCarregamento em caminho antigo;
+// - Sem bg-gelo;
+// - Scanner com fallback manual;
+// - Acessível, mobile-first, dark mode, motion-safe e com aria-live.
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, Navigate } from "react-router-dom";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import QrScanner from "react-qr-scanner";
-import { toast } from "react-toastify";
-import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-
-import { apiPost, API_BASE_URL } from "../services/api";
-import ErroCarregamento from "../components/ErroCarregamento";
-import CarregandoSkeleton from "../components/CarregandoSkeleton";
-
-// Cabeçalho compacto e rodapé institucional (padrão do app)
-import PageHeader from "../components/PageHeader";
-import Footer from "../components/Footer";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
-  QrCode,
   Camera,
   CameraOff,
-  Repeat,
+  CheckCircle2,
   Flashlight,
   FlashlightOff,
-  Keyboard,
-  CheckCircle2,
-  Sparkles,
-  ShieldCheck,
-  ScanLine,
-  Loader2,
-  X,
   Info,
+  Keyboard,
+  Loader2,
+  QrCode,
+  RefreshCw,
+  Repeat,
+  ScanLine,
+  ShieldCheck,
+  Sparkles,
+  X,
 } from "lucide-react";
 
-/* ───────── Helpers ───────── */
-const cx = (...c) => c.filter(Boolean).join(" ");
-const ensureLeadingSlash = (path) => (!path ? "/" : path.startsWith("/") ? path : `/${path}`);
+import { api } from "../services/api";
+import CarregandoSkeleton from "../components/ui/CarregandoSkeleton";
+import ErroCarregamento from "../components/ui/ErroCarregamento";
+import Footer from "../components/layout/Footer";
+import {
+  notifyError,
+  notifyInfo,
+  notifySuccess,
+  notifyWarning,
+} from "../components/ui/AppToast";
 
-// Permite aceitar QR como URL completa do backend OU JSON { path, payload }
-function parseQrPayload(text) {
+/* ─────────────────────────────────────────────────────────────
+ * Helpers base
+ * ───────────────────────────────────────────────────────────── */
+
+function classNames(...classes) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function toPositiveInt(value) {
+  const number = Number(value);
+
+  return Number.isInteger(number) && number > 0 ? number : null;
+}
+
+function safeAtob(value) {
   try {
-    const base = new URL(API_BASE_URL);
-    const maybeUrl = new URL(text);
-
-    // Segurança: origem deve bater com API_BASE_URL
-    if (maybeUrl.origin !== base.origin) {
-      return { kind: "invalid", reason: "Origem do QR não corresponde à API oficial." };
-    }
-
-    const pathWithQuery = `${maybeUrl.pathname}${maybeUrl.search || ""}`;
-    return { kind: "url", path: ensureLeadingSlash(pathWithQuery) };
+    return atob(value);
   } catch {
+    const pad =
+      value.length % 4 === 2 ? "==" : value.length % 4 === 3 ? "=" : "";
+
     try {
-      const parsed = JSON.parse(text);
-      if (typeof parsed?.path === "string") {
-        return { kind: "json", path: ensureLeadingSlash(parsed.path), payload: parsed.payload ?? {} };
-      }
-      return { kind: "invalid", reason: "Formato JSON inválido no QR Code." };
+      return atob(value + pad);
     } catch {
-      return { kind: "invalid", reason: "Conteúdo do QR Code inválido." };
+      return "";
     }
   }
 }
 
+function getRawToken() {
+  try {
+    const raw = localStorage.getItem("token");
+
+    return raw ? raw.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function getValidToken() {
+  const raw = getRawToken();
+
+  if (!raw) return null;
+
+  const token = raw.startsWith("Bearer ") ? raw.slice(7).trim() : raw;
+  const parts = token.split(".");
+
+  if (parts.length !== 3) return null;
+
+  try {
+    const payloadStr = safeAtob(
+      parts[1].replace(/-/g, "+").replace(/_/g, "/")
+    );
+
+    const payload = JSON.parse(payloadStr || "{}");
+    const now = Date.now() / 1000;
+
+    if (payload?.nbf && now < payload.nbf) return null;
+    if (payload?.exp && now >= payload.exp) return null;
+
+    return token;
+  } catch {
+    return null;
+  }
+}
+
+function getNomeUsuario() {
+  try {
+    return localStorage.getItem("nome") || "usuário";
+  } catch {
+    return "usuário";
+  }
+}
+
+function getErrorMessage(error, fallback) {
+  return (
+    error?.data?.message ||
+    error?.response?.data?.message ||
+    error?.message ||
+    fallback
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * QR oficial
+ * ───────────────────────────────────────────────────────────── */
+
+function parseQrPayload(text) {
+  const raw = String(text || "").trim();
+
+  if (!raw) {
+    return {
+      ok: false,
+      message: "Conteúdo do QR Code vazio.",
+    };
+  }
+
+  const numeroDireto = toPositiveInt(raw);
+
+  if (numeroDireto) {
+    return {
+      ok: true,
+      tipo: "turma",
+      turma_id: numeroDireto,
+    };
+  }
+
+  try {
+    const maybeUrl = new URL(raw);
+    const turmaId = toPositiveInt(maybeUrl.searchParams.get("turma_id"));
+    const token = String(maybeUrl.searchParams.get("token") || "").trim();
+
+    if (turmaId) {
+      return {
+        ok: true,
+        tipo: "turma",
+        turma_id: turmaId,
+      };
+    }
+
+    if (token) {
+      return {
+        ok: true,
+        tipo: "token",
+        token,
+      };
+    }
+
+    return {
+      ok: false,
+      message:
+        "URL de QR inválida. O QR oficial precisa conter turma_id ou token.",
+    };
+  } catch {
+    // Não era URL. Tenta JSON.
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {
+        ok: false,
+        message: "JSON do QR Code inválido.",
+      };
+    }
+
+    const turmaId = toPositiveInt(parsed.turma_id);
+    const token = String(parsed.token || "").trim();
+
+    if (turmaId) {
+      return {
+        ok: true,
+        tipo: "turma",
+        turma_id: turmaId,
+      };
+    }
+
+    if (token) {
+      return {
+        ok: true,
+        tipo: "token",
+        token,
+      };
+    }
+
+    return {
+      ok: false,
+      message:
+        "JSON do QR inválido. Use somente { turma_id } ou { token } no contrato oficial.",
+    };
+  } catch {
+    return {
+      ok: false,
+      message:
+        "Conteúdo do QR Code inválido. Use QR oficial com turma_id ou token.",
+    };
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * Componentes locais v2.0
+ * ───────────────────────────────────────────────────────────── */
+
+function HeaderHero() {
+  return (
+    <header className="relative isolate overflow-hidden text-white" role="banner">
+      <div className="absolute inset-0 bg-gradient-to-br from-amber-950 via-orange-800 to-rose-700" />
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 bg-[radial-gradient(circle_at_18%_12%,rgba(255,255,255,0.16),transparent_34%),radial-gradient(circle_at_82%_28%,rgba(251,191,36,0.22),transparent_42%),radial-gradient(circle_at_50%_100%,rgba(244,63,94,0.20),transparent_45%)]"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -top-32 left-1/2 h-[360px] w-[960px] max-w-[95vw] -translate-x-1/2 rounded-full bg-amber-300/20 blur-3xl"
+      />
+
+      <a
+        href="#conteudo"
+        className="relative sr-only px-3 py-2 text-sm focus:not-sr-only focus:block focus:bg-white/20 focus:text-white"
+      >
+        Ir para o conteúdo
+      </a>
+
+      <div className="relative mx-auto max-w-7xl px-4 py-8 text-center sm:px-6 sm:py-10 md:py-12">
+        <div className="mx-auto max-w-3xl">
+          <div className="inline-flex items-center justify-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-black uppercase tracking-wide ring-1 ring-white/15">
+            <QrCode className="h-4 w-4" aria-hidden="true" />
+            Leitor de presença v2.0
+          </div>
+
+          <h1 className="mt-4 text-2xl font-black tracking-tight sm:text-4xl">
+            Registrar presença
+          </h1>
+
+          <p className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-white/88 sm:text-base">
+            Escaneie o QR Code oficial da turma para confirmar sua presença de
+            forma autenticada e segura.
+          </p>
+
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+            <span className="inline-flex items-center gap-2 rounded-2xl bg-white/10 px-3 py-2 text-xs font-black ring-1 ring-white/15 sm:text-sm">
+              <Sparkles className="h-4 w-4" aria-hidden="true" />
+              Leitura rápida
+            </span>
+
+            <span className="inline-flex items-center gap-2 rounded-2xl bg-white/10 px-3 py-2 text-xs font-black ring-1 ring-white/15 sm:text-sm">
+              <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+              Contrato oficial
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="relative h-px w-full bg-white/25" aria-hidden="true" />
+    </header>
+  );
+}
+
 function MiniStat({ icon: Icon, label, value, tone = "neutral" }) {
   const tones = {
-    neutral: "bg-white dark:bg-neutral-800 border-neutral-200 dark:border-neutral-700",
-    ok: "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200/60 dark:border-emerald-800",
-    info: "bg-orange-50 dark:bg-orange-900/20 border-orange-200/60 dark:border-orange-800",
+    neutral:
+      "border-slate-200 bg-white text-slate-950 dark:border-slate-800 dark:bg-slate-900 dark:text-white",
+    ok: "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-100",
+    info: "border-orange-200 bg-orange-50 text-orange-900 dark:border-orange-900/50 dark:bg-orange-950/30 dark:text-orange-100",
   };
+
   return (
-    <div className={cx("rounded-2xl border p-4 text-center shadow-sm", tones[tone])}>
-      <div className="inline-flex items-center justify-center gap-2 text-[11px] sm:text-xs opacity-80">
-        {Icon ? <Icon className="w-4 h-4" aria-hidden="true" /> : null}
+    <article
+      className={classNames(
+        "rounded-3xl border p-3 text-center shadow-sm sm:p-4",
+        tones[tone] || tones.neutral
+      )}
+    >
+      <div className="inline-flex items-center justify-center gap-2 text-[11px] font-black uppercase tracking-wide opacity-80 sm:text-xs">
+        {Icon ? <Icon className="h-4 w-4" aria-hidden="true" /> : null}
         <span>{label}</span>
       </div>
-      <div className="mt-1 text-xl sm:text-2xl font-extrabold tracking-tight">{value}</div>
+
+      <div className="mt-1 text-xl font-black tracking-tight sm:text-2xl">
+        {value}
+      </div>
+    </article>
+  );
+}
+
+function ScannerToolbar({
+  paused,
+  togglePause,
+  devices,
+  switchCamera,
+  hasTorch,
+  torchOn,
+  toggleTorch,
+  manualOpen,
+  setManualOpen,
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-2">
+      <button
+        type="button"
+        onClick={togglePause}
+        className="inline-flex items-center gap-2 rounded-2xl border border-orange-300 bg-white px-3 py-2 text-sm font-black text-orange-800 transition hover:bg-orange-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 dark:border-orange-900/50 dark:bg-slate-900 dark:text-orange-100 dark:hover:bg-orange-950/30"
+        aria-pressed={paused}
+      >
+        {paused ? (
+          <Camera className="h-4 w-4" aria-hidden="true" />
+        ) : (
+          <CameraOff className="h-4 w-4" aria-hidden="true" />
+        )}
+        {paused ? "Retomar" : "Pausar"}
+      </button>
+
+      {devices.length > 1 && (
+        <button
+          type="button"
+          onClick={switchCamera}
+          className="inline-flex items-center gap-2 rounded-2xl border border-orange-300 bg-white px-3 py-2 text-sm font-black text-orange-800 transition hover:bg-orange-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 dark:border-orange-900/50 dark:bg-slate-900 dark:text-orange-100 dark:hover:bg-orange-950/30"
+        >
+          <Repeat className="h-4 w-4" aria-hidden="true" />
+          Trocar câmera
+        </button>
+      )}
+
+      {hasTorch && (
+        <button
+          type="button"
+          onClick={toggleTorch}
+          className="inline-flex items-center gap-2 rounded-2xl border border-orange-300 bg-white px-3 py-2 text-sm font-black text-orange-800 transition hover:bg-orange-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 dark:border-orange-900/50 dark:bg-slate-900 dark:text-orange-100 dark:hover:bg-orange-950/30"
+          aria-pressed={torchOn}
+        >
+          {torchOn ? (
+            <FlashlightOff className="h-4 w-4" aria-hidden="true" />
+          ) : (
+            <Flashlight className="h-4 w-4" aria-hidden="true" />
+          )}
+          Lanterna
+        </button>
+      )}
+
+      <button
+        type="button"
+        onClick={() => setManualOpen((value) => !value)}
+        className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+        aria-expanded={manualOpen}
+        aria-controls="manual-panel"
+      >
+        <Keyboard className="h-4 w-4" aria-hidden="true" />
+        Inserir manualmente
+      </button>
     </div>
   );
 }
 
-/* ───────── Página ───────── */
+/* ─────────────────────────────────────────────────────────────
+ * Página
+ * ───────────────────────────────────────────────────────────── */
+
 export default function RegistrarPresenca() {
   const navigate = useNavigate();
+  const location = useLocation();
   const reduceMotion = useReducedMotion();
 
-  const token = localStorage.getItem("token");
-  const nome = localStorage.getItem("nome") || "usuário";
+  const token = getValidToken();
+  const nome = getNomeUsuario();
 
   const [carregando, setCarregando] = useState(false);
   const [erroCamera, setErroCamera] = useState(false);
 
-  // Scanner controls
   const [paused, setPaused] = useState(false);
   const [hasTorch, setHasTorch] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
-  const [devices, setDevices] = useState([]); // cameras
-  const [deviceId, setDeviceId] = useState(null); // câmera atual
+  const [devices, setDevices] = useState([]);
+  const [deviceId, setDeviceId] = useState(null);
 
-  // Fallback manual
   const [manualOpen, setManualOpen] = useState(false);
   const [manualText, setManualText] = useState("");
 
-  // A11y live region
   const liveRef = useRef(null);
-  const setLive = useCallback((t) => {
-    if (liveRef.current) liveRef.current.textContent = t || "";
-  }, []);
-
-  // Evita excesso de leituras
   const lockRef = useRef(false);
   const lastScanRef = useRef(0);
   const videoWrapRef = useRef(null);
   const currentTrackRef = useRef(null);
 
-  // Preferência por traseira; se deviceId for definido, usamos ele
-  const defaultConstraints = useMemo(
+  const setLive = useCallback((message) => {
+    if (liveRef.current) {
+      liveRef.current.textContent = message || "";
+    }
+  }, []);
+
+  const cameraConstraints = useMemo(
     () => ({
-      facingMode: deviceId ? undefined : { ideal: "environment" },
-      width: { ideal: 1280 },
-      height: { ideal: 720 },
-      deviceId: deviceId ? { exact: deviceId } : undefined,
+      video: {
+        facingMode: deviceId ? undefined : { ideal: "environment" },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        deviceId: deviceId ? { exact: deviceId } : undefined,
+      },
     }),
     [deviceId]
   );
 
-  const motionWrap = useMemo(
+  const motionConfig = useMemo(
     () => ({
       initial: reduceMotion ? false : { opacity: 0, y: 8 },
       animate: reduceMotion ? {} : { opacity: 1, y: 0 },
@@ -132,121 +452,148 @@ export default function RegistrarPresenca() {
   );
 
   useEffect(() => {
-    if (!token) toast.error("⚠️ Faça login para registrar presença.");
+    if (!token) {
+      notifyWarning("Faça login para registrar presença.");
+    }
   }, [token]);
 
   useEffect(() => {
-    // lista de dispositivos para permitir troca de câmera
     navigator.mediaDevices
       ?.enumerateDevices?.()
-      .then((all) => {
-        const cams = (all || []).filter((d) => d.kind === "videoinput");
-        setDevices(cams);
+      .then((allDevices) => {
+        const cameras = (allDevices || []).filter(
+          (device) => device.kind === "videoinput"
+        );
 
-        // mantém deviceId se ainda válido
-        if (cams.length && deviceId && !cams.some((c) => c.deviceId === deviceId)) {
-          setDeviceId(cams[0].deviceId);
+        setDevices(cameras);
+
+        if (
+          cameras.length &&
+          deviceId &&
+          !cameras.some((camera) => camera.deviceId === deviceId)
+        ) {
+          setDeviceId(cameras[0].deviceId);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        // Sem bloqueio: scanner ainda pode funcionar.
+      });
   }, [deviceId]);
 
-  // Detecta suporte a lanterna (torch)
   const detectTorchSupport = useCallback((track) => {
     if (!track?.getCapabilities) return false;
-    const caps = track.getCapabilities();
-    return !!caps?.torch;
+
+    const capabilities = track.getCapabilities();
+
+    return Boolean(capabilities?.torch);
   }, []);
 
-  // Liga/desliga a lanterna se suportado
-  const toggleTorch = useCallback(async () => {
-    const track = currentTrackRef.current;
-    if (!track) return;
-
-    try {
-      const caps = track.getCapabilities?.();
-      if (!caps?.torch) return;
-
-      await track.applyConstraints({ advanced: [{ torch: !torchOn }] });
-      setTorchOn((v) => !v);
-      setLive(!torchOn ? "Lanterna ligada." : "Lanterna desligada.");
-    } catch (e) {
-      console.error(e);
-      toast.info("Lanterna indisponível neste dispositivo/navegador.");
-    }
-  }, [torchOn, setLive]);
-
-  // QrScanner dá acesso ao stream dentro de <video>; observamos a track
   const onVideoLoad = useCallback(() => {
     try {
       const videoEl = videoWrapRef.current?.querySelector("video");
+
       if (!videoEl?.srcObject) return;
 
       const [track] = videoEl.srcObject.getVideoTracks?.() || [];
+
       currentTrackRef.current = track;
 
-      const torch = detectTorchSupport(track);
-      setHasTorch(!!torch);
+      const supported = detectTorchSupport(track);
 
-      // ao trocar câmera, reset
+      setHasTorch(supported);
       setTorchOn(false);
     } catch {
-      /* noop */
+      // noop
     }
   }, [detectTorchSupport]);
 
-  const safeUnlock = () => setTimeout(() => (lockRef.current = false), 450);
+  const toggleTorch = useCallback(async () => {
+    const track = currentTrackRef.current;
+
+    if (!track) return;
+
+    try {
+      const capabilities = track.getCapabilities?.();
+
+      if (!capabilities?.torch) {
+        notifyInfo("Lanterna indisponível neste dispositivo ou navegador.");
+        return;
+      }
+
+      await track.applyConstraints({
+        advanced: [{ torch: !torchOn }],
+      });
+
+      setTorchOn((value) => !value);
+      setLive(!torchOn ? "Lanterna ligada." : "Lanterna desligada.");
+    } catch {
+      notifyInfo("Lanterna indisponível neste dispositivo ou navegador.");
+    }
+  }, [setLive, torchOn]);
+
+  const safeUnlock = useCallback(() => {
+    window.setTimeout(() => {
+      lockRef.current = false;
+    }, 450);
+  }, []);
 
   const registrar = useCallback(
     async (parsed, origem = "scan") => {
       try {
         setCarregando(true);
-        setLive(origem === "manual" ? "Registrando presença (manual)…" : "Registrando presença…");
+        setLive(
+          origem === "manual"
+            ? "Registrando presença por inserção manual."
+            : "Registrando presença por QR Code."
+        );
 
-        if (parsed.kind === "url") {
-          await apiPost(parsed.path, null);
+        if (parsed.tipo === "token") {
+          await api.presenca.confirmarToken(parsed.token);
         } else {
-          await apiPost(parsed.path, parsed.payload);
+          await api.presenca.confirmarQr(parsed.turma_id);
         }
 
-        toast.success("✅ Presença registrada com sucesso!");
+        notifySuccess("Presença registrada com sucesso.");
         setLive("Presença registrada com sucesso.");
+
         navigate("/minhas-presencas");
-      } catch (err) {
-        const msg =
-          err?.data?.erro ||
-          err?.data?.message ||
-          err?.message ||
-          "QR Code inválido ou presença já registrada.";
-        toast.warning(`⚠️ ${msg}`);
-        setLive(msg);
+      } catch (error) {
+        const message = getErrorMessage(
+          error,
+          "QR Code inválido ou presença já registrada."
+        );
+
+        notifyWarning(message);
+        setLive(message);
       } finally {
         setCarregando(false);
         safeUnlock();
       }
     },
-    [navigate, setLive]
+    [navigate, safeUnlock, setLive]
   );
 
   const handleScan = useCallback(
     async (data) => {
       if (!data || carregando || paused) return;
 
-      // Debounce básico (ignora múltiplos scans em < 1.2s)
       const now = Date.now();
+
       if (now - lastScanRef.current < 1200) return;
+
       lastScanRef.current = now;
 
       if (lockRef.current) return;
+
       lockRef.current = true;
 
-      const text = data?.text || data; // libs podem retornar string crua
+      const text = data?.text || data;
       const parsed = parseQrPayload(String(text));
 
-      if (parsed.kind === "invalid") {
+      if (!parsed.ok) {
         lockRef.current = false;
-        toast.warning(`⚠️ ${parsed.reason}`);
-        setLive(parsed.reason);
+        notifyWarning(parsed.message);
+        setLive(parsed.message);
         return;
       }
 
@@ -256,291 +603,329 @@ export default function RegistrarPresenca() {
   );
 
   const handleError = useCallback(
-    (err) => {
-      console.error("Erro ao acessar câmera:", err);
+    (error) => {
+      console.error("Erro ao acessar câmera:", error);
       setErroCamera(true);
       setLive("Erro ao acessar câmera.");
     },
     [setLive]
   );
 
-  // Pausar/retomar leitura
   const togglePause = useCallback(() => {
-    setPaused((p) => {
-      const next = !p;
+    setPaused((current) => {
+      const next = !current;
+
       setLive(next ? "Leitura pausada." : "Leitura retomada.");
+
       return next;
     });
   }, [setLive]);
 
-  // Trocar câmera (se múltiplas)
   const switchCamera = useCallback(() => {
     if (!devices.length) return;
-    const idx = devices.findIndex((d) => d.deviceId === deviceId);
+
+    const index = devices.findIndex((device) => device.deviceId === deviceId);
     const next =
-      devices[(idx + 1 + devices.length) % devices.length]?.deviceId ?? devices[0]?.deviceId;
+      devices[(index + 1 + devices.length) % devices.length]?.deviceId ||
+      devices[0]?.deviceId;
+
     if (next && next !== deviceId) {
       setDeviceId(next);
       setLive("Câmera alternada.");
     }
   }, [deviceId, devices, setLive]);
 
-  // Inserção manual (fallback acessível)
   const enviarManual = useCallback(async () => {
     const raw = manualText.trim();
+
     if (!raw) {
-      toast.info("Informe o conteúdo do QR (URL da API ou JSON).");
+      notifyInfo("Informe o conteúdo do QR oficial.");
       return;
     }
+
     const parsed = parseQrPayload(raw);
-    if (parsed.kind === "invalid") {
-      toast.warning(`⚠️ ${parsed.reason}`);
+
+    if (!parsed.ok) {
+      notifyWarning(parsed.message);
+      setLive(parsed.message);
       return;
     }
+
     setManualOpen(false);
     setManualText("");
+
     await registrar(parsed, "manual");
-  }, [manualText, registrar]);
+  }, [manualText, registrar, setLive]);
 
-  const limparManual = useCallback(() => setManualText(""), []);
+  const limparManual = useCallback(() => {
+    setManualText("");
+  }, []);
 
-  // KPIs (UX)
-  const kpis = useMemo(() => {
-    const cams = devices.length;
-    return {
-      cameras: cams,
+  const kpis = useMemo(
+    () => ({
+      cameras: devices.length,
       modo: paused ? "Pausado" : "Ativo",
       lanterna: hasTorch ? (torchOn ? "Ligada" : "Disponível") : "—",
-    };
-  }, [devices.length, hasTorch, paused, torchOn]);
+    }),
+    [devices.length, hasTorch, paused, torchOn]
+  );
 
-  if (!token) return <Navigate to="/login" replace />;
+  if (!token) {
+    const redirect = `${location.pathname}${location.search}`;
+
+    return (
+      <Navigate
+        to={`/login?redirect=${encodeURIComponent(redirect)}`}
+        replace
+      />
+    );
+  }
 
   return (
-    <div className="flex flex-col min-h-screen bg-gelo dark:bg-neutral-900 text-black dark:text-white">
-      {/* 🟧 Cabeçalho padrão da família Presenças/QR */}
-      <PageHeader title="Registrar Presença" icon={QrCode} variant="laranja" />
+    <div className="flex min-h-dvh flex-col bg-slate-50 text-slate-950 dark:bg-slate-950 dark:text-white">
+      <HeaderHero />
 
-      {/* live region for SR */}
-      <p ref={liveRef} className="sr-only" aria-live="polite" />
-
-      <motion.main
+      <main
+        id="conteudo"
         role="main"
-        className="flex-1 p-4 max-w-3xl mx-auto w-full min-w-0"
-        initial={reduceMotion ? false : { opacity: 0 }}
-        animate={reduceMotion ? {} : { opacity: 1 }}
+        className="mx-auto w-full max-w-4xl flex-1 px-3 py-6 sm:px-4 lg:px-6"
+        aria-busy={carregando ? "true" : "false"}
       >
-        <h1 className="sr-only">Escanear QR Code da Sala</h1>
+        <p
+          ref={liveRef}
+          className="sr-only"
+          aria-live="polite"
+          aria-atomic="true"
+        />
 
-        {/* Top intro */}
-        <div className="text-center mb-4">
-          <p className="text-gray-700 dark:text-gray-200">
-            Olá, <strong>{nome}</strong>. Aponte a câmera para o QR Code fixado na sala para confirmar sua presença.
-          </p>
+        <motion.section
+          {...motionConfig}
+          className="space-y-5"
+          aria-label="Leitor de QR Code para presença"
+        >
+          <section className="rounded-[2rem] border border-slate-200 bg-white p-5 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <p className="text-sm text-slate-700 dark:text-slate-200">
+              Olá, <strong>{nome}</strong>. Aponte a câmera para o QR Code
+              oficial da turma para confirmar sua presença.
+            </p>
 
-          <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
-            <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-orange-500/10 text-orange-700 dark:text-orange-200 border border-orange-200/60 dark:border-orange-900/40 text-xs font-semibold">
-              <Sparkles className="w-4 h-4" aria-hidden="true" />
-              Leitura rápida
-            </span>
-            <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-800 dark:text-emerald-200 border border-emerald-200/60 dark:border-emerald-900/40 text-xs font-semibold">
-              <ShieldCheck className="w-4 h-4" aria-hidden="true" />
-              QR validado pela API
-            </span>
-          </div>
-        </div>
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+              <span className="inline-flex items-center gap-2 rounded-full border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-black text-orange-800 dark:border-orange-900/50 dark:bg-orange-950/30 dark:text-orange-100">
+                <Sparkles className="h-4 w-4" aria-hidden="true" />
+                Leitura rápida
+              </span>
 
-        {/* ministats */}
-        <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-4">
-          <MiniStat icon={Camera} label="Câmeras" value={kpis.cameras} tone="neutral" />
-          <MiniStat icon={ScanLine} label="Status" value={kpis.modo} tone="info" />
-          <MiniStat icon={Flashlight} label="Lanterna" value={kpis.lanterna} tone="ok" />
-        </div>
-
-        {/* Controles do scanner */}
-        <div className="mb-3 flex flex-wrap items-center justify-center gap-2">
-          <button
-            type="button"
-            onClick={togglePause}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-orange-600 text-orange-700 dark:text-orange-200 hover:bg-orange-50/60 dark:hover:bg-orange-900/20 focus-visible:ring-2 focus-visible:ring-orange-600"
-            aria-pressed={paused ? "true" : "false"}
-          >
-            {paused ? <Camera className="w-4 h-4" aria-hidden="true" /> : <CameraOff className="w-4 h-4" aria-hidden="true" />}
-            {paused ? "Retomar" : "Pausar"}
-          </button>
-
-          {devices.length > 1 && (
-            <button
-              type="button"
-              onClick={switchCamera}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-orange-600 text-orange-700 dark:text-orange-200 hover:bg-orange-50/60 dark:hover:bg-orange-900/20 focus-visible:ring-2 focus-visible:ring-orange-600"
-              title="Alternar câmera"
-            >
-              <Repeat className="w-4 h-4" aria-hidden="true" />
-              Trocar câmera
-            </button>
-          )}
-
-          {hasTorch && (
-            <button
-              type="button"
-              onClick={toggleTorch}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-orange-600 text-orange-700 dark:text-orange-200 hover:bg-orange-50/60 dark:hover:bg-orange-900/20 focus-visible:ring-2 focus-visible:ring-orange-600"
-              title={torchOn ? "Desligar lanterna" : "Ligar lanterna"}
-              aria-pressed={torchOn ? "true" : "false"}
-            >
-              {torchOn ? (
-                <FlashlightOff className="w-4 h-4" aria-hidden="true" />
-              ) : (
-                <Flashlight className="w-4 h-4" aria-hidden="true" />
-              )}
-              Lanterna
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={() => setManualOpen((v) => !v)}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-gray-400 text-gray-700 dark:text-gray-200 hover:bg-gray-50/60 dark:hover:bg-gray-800/40 focus-visible:ring-2 focus-visible:ring-gray-400"
-            aria-expanded={manualOpen ? "true" : "false"}
-            aria-controls="manual-panel"
-          >
-            <Keyboard className="w-4 h-4" aria-hidden="true" />
-            Inserir manualmente
-          </button>
-        </div>
-
-        {/* Scanner */}
-        <div className="rounded-2xl overflow-hidden border border-neutral-300 dark:border-neutral-700 bg-black/60 shadow-sm">
-          <div className="relative" ref={videoWrapRef} role="region" aria-label="Leitor de QR Code">
-            {/* overlay */}
-            <div className="pointer-events-none absolute inset-0">
-              <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/20" />
-              <div className="absolute inset-x-0 top-3 flex justify-center">
-                <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/45 text-white text-xs font-semibold">
-                  <ScanLine className={cx("w-4 h-4", reduceMotion ? "" : "animate-pulse")} aria-hidden="true" />
-                  Alinhe o QR dentro da área
-                </span>
-              </div>
+              <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-black text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-100">
+                <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+                Validado pelo backend
+              </span>
             </div>
+          </section>
 
-            {erroCamera ? (
-              <div className="p-4 bg-white dark:bg-neutral-800">
-                <ErroCarregamento
-                  titulo="Erro ao acessar a câmera"
-                  mensagem="Verifique as permissões do navegador. Em celulares, tente Chrome/Firefox atualizados. Se o problema persistir, use a inserção manual."
-                />
-              </div>
-            ) : carregando ? (
-              <div className="p-4 bg-white dark:bg-neutral-800">
-                <CarregandoSkeleton height="320px" />
-                <p className="mt-3 text-center text-sm text-neutral-600 dark:text-neutral-300" role="status" aria-live="polite">
-                  <span className="inline-flex items-center gap-2">
-                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
-                    Registrando presença…
-                  </span>
-                </p>
-              </div>
-            ) : paused ? (
-              <div className="h-[320px] flex flex-col items-center justify-center gap-3 bg-white/90 dark:bg-neutral-800 text-center p-6">
-                <CameraOff className="w-8 h-8 text-orange-600 dark:text-orange-300" aria-hidden="true" />
-                <p className="font-extrabold">Leitura pausada</p>
-                <p className="text-sm text-neutral-600 dark:text-neutral-300">
-                  Toque em <strong>Retomar</strong> para reativar a câmera.
-                </p>
-              </div>
-            ) : (
-              <QrScanner
-                delay={500}
-                onError={handleError}
-                onScan={handleScan}
-                onLoad={onVideoLoad}
-                style={{ width: "100%", height: "320px" }}
-                constraints={{ video: defaultConstraints }}
-              />
-            )}
+          <div className="grid grid-cols-3 gap-2 sm:gap-3">
+            <MiniStat
+              icon={Camera}
+              label="Câmeras"
+              value={kpis.cameras}
+              tone="neutral"
+            />
+            <MiniStat
+              icon={ScanLine}
+              label="Status"
+              value={kpis.modo}
+              tone="info"
+            />
+            <MiniStat
+              icon={Flashlight}
+              label="Lanterna"
+              value={kpis.lanterna}
+              tone="ok"
+            />
           </div>
-        </div>
 
-        {/* Fallback manual */}
-        <AnimatePresence>
-          {manualOpen && (
-            <motion.section
-              key="manual"
-              {...motionWrap}
-              id="manual-panel"
-              className="mt-4 w-full bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-2xl p-4 text-left shadow-sm"
+          <ScannerToolbar
+            paused={paused}
+            togglePause={togglePause}
+            devices={devices}
+            switchCamera={switchCamera}
+            hasTorch={hasTorch}
+            torchOn={torchOn}
+            toggleTorch={toggleTorch}
+            manualOpen={manualOpen}
+            setManualOpen={setManualOpen}
+          />
+
+          <section className="overflow-hidden rounded-[2rem] border border-slate-300 bg-black/70 shadow-sm dark:border-slate-800">
+            <div
+              ref={videoWrapRef}
+              className="relative"
               role="region"
-              aria-label="Inserção manual do conteúdo do QR"
+              aria-label="Leitor de QR Code"
             >
-              <div className="flex items-start justify-between gap-2">
-                <p className="font-extrabold mb-2 flex items-center gap-2">
-                  <Keyboard className="w-4 h-4" aria-hidden="true" /> Inserir conteúdo do QR
-                </p>
+              <div className="pointer-events-none absolute inset-0 z-10">
+                <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/20" />
 
-                <button
-                  type="button"
-                  onClick={() => setManualOpen(false)}
-                  className="p-2 rounded-xl hover:bg-neutral-100 dark:hover:bg-neutral-700 focus-visible:ring-2 focus-visible:ring-orange-600"
-                  aria-label="Fechar inserção manual"
-                >
-                  <X className="w-4 h-4" aria-hidden="true" />
-                </button>
+                <div className="absolute inset-x-0 top-3 flex justify-center">
+                  <span className="inline-flex items-center gap-2 rounded-full bg-black/50 px-3 py-1.5 text-xs font-black text-white">
+                    <ScanLine
+                      className={classNames(
+                        "h-4 w-4",
+                        reduceMotion ? "" : "animate-pulse"
+                      )}
+                      aria-hidden="true"
+                    />
+                    Alinhe o QR dentro da área
+                  </span>
+                </div>
               </div>
 
-              <div className="rounded-2xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-900/40 p-3 text-xs text-neutral-700 dark:text-neutral-200 flex gap-2">
-                <Info className="w-4 h-4 mt-0.5" aria-hidden="true" />
-                <p>
-                  Cole a <strong>URL da API</strong> gerada no QR{" "}
-                  <em>(ex.: {API_BASE_URL}/api/presencas/confirmar-qr?...)</em> ou um JSON válido com{" "}
-                  <code className="px-1 rounded bg-neutral-100 dark:bg-neutral-700">{"{ path, payload }"}</code>.
-                </p>
-              </div>
+              {erroCamera ? (
+                <div className="bg-white p-4 dark:bg-slate-900">
+                  <ErroCarregamento
+                    titulo="Erro ao acessar a câmera"
+                    mensagem="Verifique as permissões do navegador. Em celulares, tente usar um navegador atualizado. Se o problema persistir, use a inserção manual."
+                  />
+                </div>
+              ) : carregando ? (
+                <div className="bg-white p-4 dark:bg-slate-900">
+                  <CarregandoSkeleton height="320px" />
 
-              <textarea
-                rows={4}
-                value={manualText}
-                onChange={(e) => setManualText(e.target.value)}
-                className="mt-3 w-full rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-600"
-                placeholder="Cole aqui a URL da API ou o JSON { path: '/api/presencas/confirmar-qr', payload: {...} }"
-              />
+                  <p
+                    className="mt-3 text-center text-sm text-slate-600 dark:text-slate-300"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2
+                        className="h-4 w-4 animate-spin"
+                        aria-hidden="true"
+                      />
+                      Registrando presença...
+                    </span>
+                  </p>
+                </div>
+              ) : paused ? (
+                <div className="flex h-[320px] flex-col items-center justify-center gap-3 bg-white/95 p-6 text-center dark:bg-slate-900">
+                  <CameraOff
+                    className="h-8 w-8 text-orange-600 dark:text-orange-300"
+                    aria-hidden="true"
+                  />
 
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={enviarManual}
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-lousa text-white hover:brightness-110 focus-visible:ring-2 focus-visible:ring-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed"
-                  disabled={carregando}
-                >
-                  <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
-                  Enviar
-                </button>
+                  <p className="font-black">Leitura pausada</p>
 
-                <button
-                  type="button"
-                  onClick={limparManual}
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-900 focus-visible:ring-2 focus-visible:ring-neutral-400"
-                >
-                  Limpar
-                </button>
+                  <p className="text-sm text-slate-600 dark:text-slate-300">
+                    Toque em <strong>Retomar</strong> para reativar a câmera.
+                  </p>
+                </div>
+              ) : (
+                <div className="h-[320px] [&_video]:h-[320px] [&_video]:w-full [&_video]:object-cover">
+                  <QrScanner
+                    delay={500}
+                    onError={handleError}
+                    onScan={handleScan}
+                    onLoad={onVideoLoad}
+                    constraints={cameraConstraints}
+                  />
+                </div>
+              )}
+            </div>
+          </section>
 
-                <button
-                  type="button"
-                  onClick={() => setManualOpen(false)}
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-900 focus-visible:ring-2 focus-visible:ring-neutral-400"
-                >
-                  Cancelar
-                </button>
-              </div>
-            </motion.section>
-          )}
-        </AnimatePresence>
+          <AnimatePresence>
+            {manualOpen && (
+              <motion.section
+                key="manual"
+                {...motionConfig}
+                id="manual-panel"
+                className="rounded-[2rem] border border-slate-200 bg-white p-4 text-left shadow-sm dark:border-slate-800 dark:bg-slate-900"
+                role="region"
+                aria-label="Inserção manual do conteúdo do QR"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <p className="mb-2 flex items-center gap-2 font-black">
+                    <Keyboard className="h-4 w-4" aria-hidden="true" />
+                    Inserir conteúdo do QR
+                  </p>
 
-        {/* Dica de privacidade/acesso */}
-        <p className="mt-5 text-xs text-neutral-600 dark:text-neutral-400 text-center">
-          Dica: se a câmera não abre, verifique as permissões de câmera do navegador e permita o acesso para este site.
-        </p>
-      </motion.main>
+                  <button
+                    type="button"
+                    onClick={() => setManualOpen(false)}
+                    className="rounded-xl p-2 transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 dark:hover:bg-slate-800"
+                    aria-label="Fechar inserção manual"
+                  >
+                    <X className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+
+                <div className="flex gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
+                  <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+
+                  <p>
+                    Cole o conteúdo oficial do QR: uma URL com{" "}
+                    <code className="rounded bg-slate-100 px-1 dark:bg-slate-800">
+                      turma_id
+                    </code>{" "}
+                    ou{" "}
+                    <code className="rounded bg-slate-100 px-1 dark:bg-slate-800">
+                      token
+                    </code>
+                    , ou um JSON com{" "}
+                    <code className="rounded bg-slate-100 px-1 dark:bg-slate-800">
+                      {"{ turma_id }"}
+                    </code>{" "}
+                    ou{" "}
+                    <code className="rounded bg-slate-100 px-1 dark:bg-slate-800">
+                      {"{ token }"}
+                    </code>
+                    .
+                  </p>
+                </div>
+
+                <textarea
+                  rows={4}
+                  value={manualText}
+                  onChange={(event) => setManualText(event.target.value)}
+                  className="mt-3 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-orange-500 focus:ring-4 focus:ring-orange-500/15 dark:border-slate-800 dark:bg-slate-950"
+                  placeholder='Ex.: {"turma_id": 123} ou {"token": "..."}'
+                />
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={enviarManual}
+                    disabled={carregando}
+                    className="inline-flex items-center gap-2 rounded-2xl bg-orange-700 px-4 py-2 text-sm font-black text-white transition hover:bg-orange-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                    Enviar
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={limparManual}
+                    className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-800"
+                  >
+                    Limpar
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setManualOpen(false)}
+                    className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-800"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </motion.section>
+            )}
+          </AnimatePresence>
+
+          <p className="text-center text-xs text-slate-600 dark:text-slate-400">
+            Se a câmera não abrir, verifique as permissões do navegador ou use a
+            inserção manual com o conteúdo oficial do QR.
+          </p>
+        </motion.section>
+      </main>
 
       <Footer />
     </div>

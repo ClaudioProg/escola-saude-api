@@ -1,35 +1,61 @@
 // 📁 public/boot-theme.js
-// Executa o tema o mais cedo possível (antes do React)
+// Atualizado em: 15/05/2026
+//
+// Plataforma Escola da Saúde — v2.0
+//
+// Aplica o tema antes do React carregar para evitar flash visual.
+//
+// Contrato oficial:
+// - localStorage["escola_theme"]
+// - valores permitidos: "light" | "dark"
+//
+// Diretrizes v2.0:
+// - não usar "theme";
+// - não migrar chave antiga;
+// - não usar aliases;
+// - não bloquear carregamento da aplicação por falha de localStorage;
+// - respeitar preferência do sistema apenas quando não houver tema oficial salvo.
+
 (() => {
   try {
     const root = document.documentElement;
-    const stored = localStorage.getItem("theme");
+    const body = document.body;
 
-    // Detecta preferência do sistema, caso não haja preferido salvo
+    const STORAGE_KEY = "escola_theme";
+    const VALORES_PERMITIDOS = new Set(["light", "dark"]);
+
+    let storedTheme = null;
+
+    try {
+      storedTheme = localStorage.getItem(STORAGE_KEY);
+    } catch {
+      storedTheme = null;
+    }
+
+    const hasValidStoredTheme = VALORES_PERMITIDOS.has(storedTheme);
+
     const prefersDark =
-      window.matchMedia &&
+      typeof window.matchMedia === "function" &&
       window.matchMedia("(prefers-color-scheme: dark)").matches;
 
-    const theme =
-      stored === "dark" || stored === "light"
-        ? stored
-        : prefersDark
-        ? "dark"
-        : "light";
+    const theme = hasValidStoredTheme ? storedTheme : prefersDark ? "dark" : "light";
 
-    // Aplica tema
     root.classList.toggle("dark", theme === "dark");
-
-    // Salva o valor padrão, se ainda não existir
-    if (!stored) localStorage.setItem("theme", theme);
-
-    // Ajuste de cor de fundo do body imediato (sem piscar branco/preto)
-    document.body.style.backgroundColor =
-      theme === "dark" ? "#111827" : "#ffffff";
-
-    // Atributo ARIA para acessibilidade
     root.setAttribute("data-theme", theme);
-  } catch (err) {
-    console.error("Erro ao aplicar tema inicial:", err);
+    root.style.colorScheme = theme;
+
+    if (body) {
+      body.style.backgroundColor = theme === "dark" ? "#111827" : "#ffffff";
+    }
+
+    if (!hasValidStoredTheme) {
+      try {
+        localStorage.setItem(STORAGE_KEY, theme);
+      } catch {
+        // Sem persistência, mas sem impedir carregamento.
+      }
+    }
+  } catch {
+    // Não bloquear carregamento da aplicação por falha de tema.
   }
 })();

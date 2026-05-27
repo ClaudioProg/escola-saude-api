@@ -1,312 +1,762 @@
-// ✅ src/pages/PresencasPorTurma.jsx (premium: hero + ministats + busca + a11y + motion + mobile)
+// ✅ frontend/src/pages/PresencasPorTurma.jsx — v2.0
+// Atualizado em: 14/05/2026
+// Plataforma Escola da Saúde
+//
+// Página de presenças por turma.
+//
+// Contratos aplicados:
+// - Parâmetro oficial da rota: turma_id
+// - Consulta oficial: api.presenca.turmaDetalhe(turma_id)
+// - Confirmação oficial pelo organizador/admin:
+//   api.presenca.confirmarorganizador({ usuario_id, turma_id, data_presenca })
+// - Sem /api manual no frontend
+// - Sem /api/relatorio-presencas/turma/:id
+// - Sem /api/presencas/confirmar-simples
+// - Sem apiGet/apiPost direto
+// - Sem toast direto
+// - Sem Footer antigo
+// - Sem CarregandoSkeleton/ErroCarregamento/NadaEncontrado em caminho antigo
+// - Sem bg-gelo
+// - Sem date-fns
+// - Sem style inline
+// - Date-only seguro em YYYY-MM-DD
+// - Visual v2.0 real, mobile-first, dark mode, acessível e com aria-live.
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { toast } from "react-toastify";
-import { differenceInMinutes, isBefore } from "date-fns";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
+  AlertTriangle,
+  CalendarDays,
+  CheckCircle2,
   CheckSquare,
+  Clock3,
+  Hourglass,
+  Loader2,
   RefreshCw,
   Search,
-  Loader2,
-  AlertTriangle,
-  Users,
+  ShieldCheck,
   UserCheck,
-  Hourglass,
+  Users,
   UserX,
+  X,
+  XCircle,
 } from "lucide-react";
 
-import { apiGet, apiPost } from "../services/api";
-import CarregandoSkeleton from "../components/CarregandoSkeleton";
-import ErroCarregamento from "../components/ErroCarregamento";
-import NadaEncontrado from "../components/NadaEncontrado";
-import { formatarCPF, formatarDataBrasileira } from "../utils/dateTime";
-import Footer from "../components/Footer";
+import { api } from "../services/api";
+import CarregandoSkeleton from "../components/ui/CarregandoSkeleton";
+import ErroCarregamento from "../components/ui/ErroCarregamento";
+import NadaEncontrado from "../components/ui/NadaEncontrado";
+import Footer from "../components/layout/Footer";
+import {
+  notifyError,
+  notifySuccess,
+} from "../components/ui/AppToast";
 
-/* ───────────────── helpers anti-UTC ───────────────── */
-const ymd = (s) => {
-  const m = String(s || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
-  return m ? { y: +m[1], mo: +m[2], d: +m[3] } : null;
-};
-const hms = (s, fb = "00:00") => {
-  const [hh, mm] = String(s || fb)
-    .split(":")
-    .map((n) => parseInt(n, 10) || 0);
-  return { hh, mm };
-};
-const makeLocalDate = (ymdStr, hhmm = "00:00") => {
-  const d = ymd(ymdStr);
-  const t = hms(hhmm);
-  return d ? new Date(d.y, d.mo - 1, d.d, t.hh, t.mm, 0, 0) : new Date(NaN);
-};
+/* ─────────────────────────────────────────────────────────────
+ * Helpers base
+ * ───────────────────────────────────────────────────────────── */
 
-/* ───────────────── sessão: valida token com JWT URL-safe ───────────────── */
-function getValidToken() {
+function classNames(...classes) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function toPositiveInt(value) {
+  const number = Number(value);
+
+  return Number.isInteger(number) && number > 0 ? number : null;
+}
+
+function ymd(value) {
+  const safe = String(value || "").trim();
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(safe)) return safe;
+  if (/^\d{4}-\d{2}-\d{2}T/.test(safe)) return safe.slice(0, 10);
+
+  return "";
+}
+
+function hhmm(value, fallback = "00:00") {
+  const safe = String(value || "").trim();
+
+  if (/^\d{2}:\d{2}$/.test(safe)) return safe;
+  if (/^\d{2}:\d{2}:\d{2}$/.test(safe)) return safe.slice(0, 5);
+
+  return fallback;
+}
+
+function makeLocalDate(dateOnly, time = "00:00") {
+  const data = ymd(dateOnly);
+  const hora = hhmm(time, "00:00");
+
+  if (!data || !hora) return null;
+
+  const [year, month, day] = data.split("-").map(Number);
+  const [hour, minute] = hora.split(":").map(Number);
+
+  return new Date(year, month - 1, day, hour, minute, 0, 0);
+}
+
+function formatarDataBR(value) {
+  const data = ymd(value);
+
+  if (!data) return "—";
+
+  const [year, month, day] = data.split("-");
+  return `${day}/${month}/${year}`;
+}
+
+function somenteDigitos(value) {
+  return String(value ?? "").replace(/\D/g, "");
+}
+
+function cpfProtegido(value) {
+  const digits = somenteDigitos(value);
+
+  if (digits.length !== 11) {
+    return value ? String(value) : "—";
+  }
+
+  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.***-**`;
+}
+
+function normalizarTexto(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .trim()
+    .toLowerCase();
+}
+
+function getErrorMessage(error, fallback) {
+  return (
+    error?.data?.message ||
+    error?.response?.data?.message ||
+    error?.message ||
+    fallback
+  );
+}
+
+function isAbortLike(error) {
+  const name = String(error?.name || "");
+  const message = String(error?.message || error || "").toLowerCase();
+
+  return (
+    name === "AbortError" ||
+    message.includes("abort") ||
+    message.includes("aborted") ||
+    message.includes("canceled") ||
+    message.includes("cancelled")
+  );
+}
+
+function unwrapData(response) {
+  return response?.data !== undefined ? response.data : response;
+}
+
+function getRawToken() {
   try {
     const raw = localStorage.getItem("token");
-    if (!raw) return null;
-    const token = raw.startsWith("Bearer ") ? raw.slice(7).trim() : raw;
-    const parts = token.split(".");
-    if (parts.length !== 3) return null;
-    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const pad = "=".repeat((4 - (b64.length % 4)) % 4);
-    const payload = JSON.parse(atob(b64 + pad));
+
+    return raw ? raw.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function safeAtob(value) {
+  try {
+    return atob(value);
+  } catch {
+    const pad =
+      value.length % 4 === 2 ? "==" : value.length % 4 === 3 ? "=" : "";
+
+    try {
+      return atob(value + pad);
+    } catch {
+      return "";
+    }
+  }
+}
+
+function getValidToken() {
+  const raw = getRawToken();
+
+  if (!raw) return null;
+
+  const token = raw.startsWith("Bearer ") ? raw.slice(7).trim() : raw;
+  const parts = token.split(".");
+
+  if (parts.length !== 3) return null;
+
+  try {
+    const payloadStr = safeAtob(
+      parts[1].replace(/-/g, "+").replace(/_/g, "/")
+    );
+
+    const payload = JSON.parse(payloadStr || "{}");
     const now = Date.now() / 1000;
+
     if (payload?.nbf && now < payload.nbf) return null;
     if (payload?.exp && now >= payload.exp) return null;
+
     return token;
   } catch {
     return null;
   }
 }
 
-/* ───────────────── HeaderHero padronizado (degradê 3 cores) ───────────────── */
-function HeaderHero({ turmaId, onRefresh, carregando }) {
+/* ─────────────────────────────────────────────────────────────
+ * Normalização do retorno oficial
+ * ───────────────────────────────────────────────────────────── */
+
+function normalizarLinhasPresenca(payload) {
+  const data = unwrapData(payload);
+
+  if (!data || typeof data !== "object") {
+    return [];
+  }
+
+  const datas = Array.isArray(data?.datas) ? data.datas.map(ymd).filter(Boolean) : [];
+  const usuarios = Array.isArray(data?.usuarios) ? data.usuarios : [];
+
+  const linhas = [];
+
+  for (const usuario of usuarios) {
+    const usuario_id = toPositiveInt(usuario?.usuario_id || usuario?.id);
+
+    if (!usuario_id) continue;
+
+    const mapaPresencas = new Map();
+
+    if (Array.isArray(usuario?.presencas)) {
+      for (const item of usuario.presencas) {
+        const dataPresenca = ymd(item?.data || item?.data_presenca);
+
+        if (!dataPresenca) continue;
+
+        mapaPresencas.set(dataPresenca, {
+          presente: item?.presente === true,
+          confirmado_em: item?.confirmado_em || null,
+        });
+      }
+    }
+
+    const datasBase = datas.length
+      ? datas
+      : Array.from(mapaPresencas.keys()).sort();
+
+    for (const data_referencia of datasBase) {
+      const registro = mapaPresencas.get(data_referencia);
+      const presente = registro?.presente === true;
+
+      linhas.push({
+        usuario_id,
+        turma_id: toPositiveInt(data?.turma_id),
+        evento_id: toPositiveInt(data?.evento_id),
+        nome: usuario?.nome || "Participante sem nome",
+        cpf: usuario?.cpf || usuario?.cpf_protegido || "",
+        email: usuario?.email || "",
+        data_referencia,
+        data_presenca: presente ? data_referencia : null,
+        presente,
+        confirmado_em: registro?.confirmado_em || null,
+      });
+    }
+  }
+
+  return linhas;
+}
+
+function getStatusFlags(registro, agora = new Date()) {
+  const dataReferencia = ymd(registro?.data_referencia);
+  const horarioInicio = hhmm(registro?.horario_inicio || "00:00");
+  const horarioFim = hhmm(registro?.horario_fim || "23:59");
+
+  const inicio = makeLocalDate(dataReferencia, horarioInicio);
+  const fim = makeLocalDate(dataReferencia, horarioFim);
+
+  const presente = Boolean(registro?.data_presenca) || registro?.presente === true;
+
+  if (!inicio || !fim) {
+    return {
+      presente,
+      aguardando: false,
+      dentroJanelaConfirmacao: false,
+      expirado: !presente,
+    };
+  }
+
+  const umHoraDepoisInicio = new Date(inicio.getTime() + 60 * 60 * 1000);
+  const expiracao = new Date(fim.getTime() + 48 * 60 * 60 * 1000);
+
+  const aguardando = !presente && agora < umHoraDepoisInicio;
+  const dentroJanelaConfirmacao =
+    !presente && agora >= umHoraDepoisInicio && agora <= expiracao;
+  const expirado = !presente && agora > expiracao;
+
+  return {
+    presente,
+    aguardando,
+    dentroJanelaConfirmacao,
+    expirado,
+    expiracao,
+  };
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * Componentes locais v2.0
+ * ───────────────────────────────────────────────────────────── */
+
+function HeaderHero({ turma_id, onRefresh, carregando }) {
   return (
-    <header className="relative isolate overflow-hidden bg-gradient-to-br from-amber-900 via-orange-800 to-rose-700 text-white">
-      {/* skip link (a11y) */}
+    <header className="relative isolate overflow-hidden text-white" role="banner">
+      <div className="absolute inset-0 bg-gradient-to-br from-amber-950 via-orange-800 to-rose-700" />
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 bg-[radial-gradient(circle_at_18%_12%,rgba(255,255,255,0.16),transparent_34%),radial-gradient(circle_at_82%_28%,rgba(251,191,36,0.22),transparent_42%),radial-gradient(circle_at_50%_100%,rgba(244,63,94,0.20),transparent_45%)]"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -top-32 left-1/2 h-[360px] w-[960px] max-w-[95vw] -translate-x-1/2 rounded-full bg-amber-300/20 blur-3xl"
+      />
+
       <a
         href="#conteudo"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[100] focus:bg-white focus:text-black focus:px-3 focus:py-2 focus:rounded-lg focus:shadow"
+        className="relative sr-only px-3 py-2 text-sm focus:not-sr-only focus:block focus:bg-white/20 focus:text-white"
       >
-        Pular para o conteúdo
+        Ir para o conteúdo
       </a>
 
-      <div
-        className="pointer-events-none absolute inset-0 opacity-70"
-        style={{
-          background:
-            "radial-gradient(52% 60% at 50% 0%, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.05) 32%, rgba(255,255,255,0) 60%)",
-        }}
-        aria-hidden="true"
-      />
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10 md:py-12 min-h-[160px] sm:min-h-[190px] text-center flex flex-col items-center gap-3">
-        <div className="inline-flex items-center gap-2">
-          <CheckSquare className="w-6 h-6" aria-hidden="true" />
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Presenças por Turma</h1>
-        </div>
-        <p className="text-sm sm:text-base text-white/90 max-w-2xl">
-          Consulte e, quando aplicável, confirme presenças manualmente até <span className="font-semibold">48h</span>{" "}
-          após o término.
-        </p>
+      <div className="relative mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10 md:py-12">
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+          <div className="min-w-0 text-center lg:text-left">
+            <div className="inline-flex items-center justify-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-black uppercase tracking-wide ring-1 ring-white/15">
+              <CheckSquare className="h-4 w-4" aria-hidden="true" />
+              Presenças por turma v2.0
+            </div>
 
-        <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
-          <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/15 text-sm">
-            <span className="font-semibold">Turma</span> #{turmaId || "—"}
-          </span>
+            <h1 className="mt-4 text-2xl font-black tracking-tight sm:text-4xl">
+              Presenças por turma
+            </h1>
 
-          <button
-            type="button"
-            onClick={onRefresh}
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/20 hover:bg-white/25 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:opacity-70 disabled:cursor-not-allowed"
-            aria-label="Atualizar lista de presenças"
-            title="Atualizar"
-            disabled={carregando}
-          >
-            {carregando ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-            Atualizar
-          </button>
+            <p className="mt-3 max-w-2xl text-sm leading-relaxed text-white/88 sm:text-base">
+              Consulte registros por participante e confirme presenças pendentes
+              dentro da janela administrativa permitida.
+            </p>
+
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-2 lg:justify-start">
+              <span className="inline-flex items-center gap-2 rounded-2xl bg-white/10 px-3 py-2 text-sm font-black ring-1 ring-white/15">
+                Turma #{turma_id || "—"}
+              </span>
+
+              <button
+                type="button"
+                onClick={onRefresh}
+                disabled={carregando}
+                className={classNames(
+                  "inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-black text-white shadow-sm transition",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80",
+                  carregando
+                    ? "cursor-not-allowed bg-white/20 opacity-70"
+                    : "bg-white/15 hover:bg-white/25"
+                )}
+                aria-label="Atualizar lista de presenças"
+                aria-busy={carregando ? "true" : "false"}
+              >
+                {carregando ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                )}
+                Atualizar
+              </button>
+            </div>
+          </div>
+
+          <div className="hidden rounded-[2rem] border border-white/10 bg-white/10 p-4 shadow-sm backdrop-blur lg:block lg:w-[360px]">
+            <div className="flex items-start gap-3">
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white/15">
+                <ShieldCheck className="h-5 w-5" aria-hidden="true" />
+              </span>
+
+              <div>
+                <p className="text-sm font-black">Regra operacional</p>
+                <p className="mt-1 text-xs leading-relaxed text-white/75">
+                  A confirmação manual segue validação de permissão, turma,
+                  data e prazo diretamente no backend.
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
-      <div className="absolute bottom-0 left-0 right-0 h-px bg-white/25" aria-hidden="true" />
+
+      <div className="relative h-px w-full bg-white/25" aria-hidden="true" />
     </header>
   );
 }
 
-/* ───────────────── ministat card ───────────────── */
 function MiniStat({ icon: Icon, label, value, tone = "neutral" }) {
   const tones = {
     neutral:
-      "bg-white dark:bg-zinc-800 border-slate-200 dark:border-zinc-700 text-slate-900 dark:text-white",
-    ok:
-      "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200/60 dark:border-emerald-800 text-emerald-900 dark:text-emerald-100",
-    warn:
-      "bg-amber-50 dark:bg-amber-900/20 border-amber-200/60 dark:border-amber-800 text-amber-900 dark:text-amber-100",
-    bad:
-      "bg-rose-50 dark:bg-rose-900/20 border-rose-200/60 dark:border-rose-800 text-rose-900 dark:text-rose-100",
+      "border-slate-200 bg-white text-slate-950 dark:border-slate-800 dark:bg-slate-900 dark:text-white",
+    ok: "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-100",
+    warn: "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100",
+    bad: "border-rose-200 bg-rose-50 text-rose-900 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-100",
   };
 
   return (
-    <div className={`rounded-2xl border p-3 sm:p-4 text-center shadow-sm ${tones[tone] || tones.neutral}`}>
-      <div className="inline-flex items-center justify-center gap-2 text-[11px] sm:text-xs opacity-80">
-        {Icon ? <Icon className="w-4 h-4" aria-hidden="true" /> : null}
+    <article
+      className={classNames(
+        "rounded-3xl border p-3 text-center shadow-sm sm:p-4",
+        tones[tone] || tones.neutral
+      )}
+    >
+      <div className="inline-flex items-center justify-center gap-2 text-[11px] font-black uppercase tracking-wide opacity-80 sm:text-xs">
+        {Icon ? <Icon className="h-4 w-4" aria-hidden="true" /> : null}
         <span>{label}</span>
       </div>
-      <div className="mt-1 text-xl sm:text-2xl font-extrabold tracking-tight">{value}</div>
-    </div>
+
+      <div className="mt-1 text-xl font-black tracking-tight sm:text-2xl">
+        {value}
+      </div>
+    </article>
   );
 }
 
-/* ───────────────── status helpers ───────────────── */
-function getStatusFlags(p, agora = new Date()) {
-  const inicio = makeLocalDate(p.data_referencia, p.horario_inicio || "00:00");
-  const fim = makeLocalDate(p.data_referencia, p.horario_fim || "23:59");
-  const expiracao = new Date(fim.getTime() + 48 * 60 * 60 * 1000);
-  const passou60min = differenceInMinutes(agora, inicio) > 60;
+function ToolbarBusca({
+  busca,
+  setBusca,
+  limparBusca,
+  inputRef,
+  carregando,
+  onRefresh,
+}) {
+  return (
+    <section
+      aria-label="Busca e ações"
+      className="rounded-[1.75rem] border border-slate-200 bg-white/90 p-3 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-900/90"
+    >
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+        <label className="relative block">
+          <span className="sr-only">Buscar por nome, CPF ou e-mail</span>
 
-  const presente = Boolean(p.data_presenca) || Boolean(p.presente);
-  const dentroJanelaConfirmacao = passou60min && isBefore(agora, expiracao);
+          <Search
+            className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
+            aria-hidden="true"
+          />
 
-  return { presente, passou60min, expiracao, dentroJanelaConfirmacao };
+          <input
+            ref={inputRef}
+            type="search"
+            value={busca}
+            onChange={(event) => setBusca(event.target.value)}
+            placeholder="Buscar por nome, CPF ou e-mail..."
+            className="h-12 w-full rounded-2xl border border-slate-200 bg-white pl-11 pr-24 text-sm font-semibold text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-amber-500 focus:ring-4 focus:ring-amber-500/15 dark:border-slate-800 dark:bg-slate-950 dark:text-white"
+            autoComplete="off"
+          />
+
+          {busca ? (
+            <button
+              type="button"
+              onClick={limparBusca}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-xl bg-slate-100 px-3 py-1.5 text-xs font-black text-slate-700 transition hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+              aria-label="Limpar busca"
+            >
+              Limpar
+            </button>
+          ) : null}
+        </label>
+
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={carregando}
+          className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-amber-700 px-4 text-sm font-black text-white transition hover:bg-amber-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {carregando ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <RefreshCw className="h-4 w-4" aria-hidden="true" />
+          )}
+          Atualizar
+        </button>
+      </div>
+    </section>
+  );
 }
+
+function StatusRegistro({ registro, loading, onConfirmar }) {
+  const flags = getStatusFlags(registro);
+
+  if (flags.presente) {
+    return (
+      <span className="inline-flex items-center gap-2 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-black text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200">
+        <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+        Presente
+      </span>
+    );
+  }
+
+  if (flags.aguardando) {
+    return (
+      <span className="inline-flex items-center gap-2 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-black text-amber-900 dark:bg-amber-950/50 dark:text-amber-200">
+        <Hourglass className="h-3.5 w-3.5" aria-hidden="true" />
+        Aguardando
+      </span>
+    );
+  }
+
+  if (flags.dentroJanelaConfirmacao) {
+    return (
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <span className="inline-flex items-center gap-2 rounded-full bg-rose-100 px-2.5 py-1 text-xs font-black text-rose-800 dark:bg-rose-950/50 dark:text-rose-200">
+          <UserX className="h-3.5 w-3.5" aria-hidden="true" />
+          Pendente
+        </span>
+
+        <button
+          type="button"
+          onClick={onConfirmar}
+          disabled={loading}
+          className="inline-flex min-h-9 items-center justify-center gap-2 rounded-xl bg-sky-700 px-3 py-1.5 text-xs font-black text-white transition hover:bg-sky-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
+          aria-label={`Confirmar presença de ${registro?.nome || "participante"} em ${formatarDataBR(registro?.data_referencia)}`}
+        >
+          {loading ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              Confirmando...
+            </>
+          ) : (
+            <>
+              <CheckSquare className="h-3.5 w-3.5" aria-hidden="true" />
+              Confirmar
+            </>
+          )}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-2 rounded-full bg-rose-200 px-2.5 py-1 text-xs font-black text-rose-900 dark:bg-rose-950/60 dark:text-rose-100">
+      <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
+      Expirado
+    </span>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * Página
+ * ───────────────────────────────────────────────────────────── */
 
 export default function PresencasPorTurma() {
   const reduceMotion = useReducedMotion();
 
-  const { turmaId } = useParams();
+  const { turma_id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+
+  const turmaIdSeguro = useMemo(() => toPositiveInt(turma_id), [turma_id]);
+  const turmaValida = Boolean(turmaIdSeguro);
 
   const [dados, setDados] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
   const [confirmandoId, setConfirmandoId] = useState(null);
   const [busca, setBusca] = useState("");
+
   const liveRef = useRef(null);
   const inputBuscaRef = useRef(null);
   const abortRef = useRef(null);
+  const mountedRef = useRef(true);
 
-  const setLive = useCallback((msg) => {
-    if (liveRef.current) liveRef.current.textContent = msg || "";
+  const setLive = useCallback((message) => {
+    if (liveRef.current) {
+      liveRef.current.textContent = message || "";
+    }
   }, []);
 
-  // gate de sessão coerente (preserva retorno)
+  useEffect(() => {
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+
+      try {
+        abortRef.current?.abort?.("unmount");
+      } catch {
+        // noop
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (!getValidToken()) {
       const redirect = `${location.pathname}${location.search}`;
-      navigate(`/login?redirect=${encodeURIComponent(redirect)}`, { replace: true });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
-  const turmaIdNum = useMemo(() => Number(turmaId), [turmaId]);
-  const turmaValida = useMemo(
-    () => Boolean(turmaId) && !Number.isNaN(turmaIdNum) && turmaIdNum > 0,
-    [turmaId, turmaIdNum]
-  );
+      navigate(`/login?redirect=${encodeURIComponent(redirect)}`, {
+        replace: true,
+      });
+    }
+  }, [location.pathname, location.search, navigate]);
 
   const carregar = useCallback(async () => {
     if (!turmaValida) {
-      setErro("ID da turma inválido.");
+      setErro("turma_id ausente ou inválido.");
       setCarregando(false);
       setDados([]);
-      setLive("ID da turma inválido.");
+      setLive("turma_id inválido.");
       return;
     }
 
-    // cancela requisição anterior (se houver)
     try {
-      abortRef.current?.abort?.();
+      abortRef.current?.abort?.("new-request");
     } catch {
       // noop
     }
-    abortRef.current = typeof AbortController !== "undefined" ? new AbortController() : null;
+
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     try {
       setCarregando(true);
       setErro("");
-      setLive("Carregando presenças…");
+      setLive("Carregando presenças da turma.");
 
-      const data = await apiGet(`/api/relatorio-presencas/turma/${turmaIdNum}`, {
-        signal: abortRef.current?.signal,
+      const response = await api.presenca.turmaDetalhe(turmaIdSeguro, {
+        signal: controller.signal,
       });
 
-      const lista = Array.isArray(data?.lista) ? data.lista : Array.isArray(data) ? data : [];
+      const lista = normalizarLinhasPresenca(response);
+
+      if (!mountedRef.current) return;
+
       setDados(lista);
       setLive(`Presenças carregadas. Total: ${lista.length}.`);
-    } catch (e) {
-      if (e?.name === "AbortError") return;
-      console.error(e);
-      setErro("Erro ao carregar presenças da turma.");
-      toast.error("❌ Erro ao carregar presenças da turma.");
+    } catch (error) {
+      if (isAbortLike(error)) return;
+
+      const message = getErrorMessage(
+        error,
+        "Erro ao carregar presenças da turma."
+      );
+
+      if (!mountedRef.current) return;
+
+      setErro(message);
       setDados([]);
+      notifyError(message);
       setLive("Falha ao carregar presenças.");
     } finally {
-      setCarregando(false);
+      if (mountedRef.current) {
+        setCarregando(false);
+      }
     }
-  }, [setLive, turmaIdNum, turmaValida]);
+  }, [setLive, turmaIdSeguro, turmaValida]);
 
   useEffect(() => {
     carregar();
   }, [carregar]);
 
-  // filtro local (nome/CPF)
-  const normaliza = useCallback(
-    (s) => String(s || "").normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase(),
-    []
-  );
-
   const filtrados = useMemo(() => {
-    const q = normaliza(busca).trim();
-    if (!q) return dados;
+    const q = normalizarTexto(busca);
+    const qDigits = somenteDigitos(busca);
 
-    const qdigits = q.replace(/\D/g, "");
-    return dados.filter((p) => {
-      const nome = normaliza(p.nome);
-      const cpf = String(p.cpf || "").replace(/\D/g, "");
-      return nome.includes(q) || (qdigits && cpf.includes(qdigits));
+    if (!q && !qDigits) return dados;
+
+    return dados.filter((registro) => {
+      const nome = normalizarTexto(registro?.nome);
+      const email = normalizarTexto(registro?.email);
+      const cpf = somenteDigitos(registro?.cpf);
+
+      return (
+        nome.includes(q) ||
+        email.includes(q) ||
+        (qDigits && cpf.includes(qDigits))
+      );
     });
-  }, [dados, busca, normaliza]);
+  }, [busca, dados]);
 
-  // ministats
   const stats = useMemo(() => {
     const agora = new Date();
+
     let presentes = 0;
     let aguardando = 0;
     let faltas = 0;
 
-    for (const p of filtrados) {
-      const { presente, passou60min, dentroJanelaConfirmacao } = getStatusFlags(p, agora);
+    for (const registro of filtrados) {
+      const flags = getStatusFlags(registro, agora);
 
-      if (presente) {
+      if (flags.presente) {
         presentes += 1;
-      } else if (!passou60min) {
+      } else if (flags.aguardando) {
         aguardando += 1;
-      } else if (dentroJanelaConfirmacao) {
-        faltas += 1; // falta confirmável
       } else {
-        faltas += 1; // expirado também conta
+        faltas += 1;
       }
     }
 
-    return { total: filtrados.length, presentes, aguardando, faltas };
+    return {
+      total: filtrados.length,
+      presentes,
+      aguardando,
+      faltas,
+    };
   }, [filtrados]);
 
   const confirmarPresencaManual = useCallback(
-    async (usuario_id, turma_id, data_referencia, nome) => {
-      try {
-        const btnId = `${usuario_id}-${data_referencia}`;
-        setConfirmandoId(btnId);
-        setLive(`Confirmando presença de ${nome || "usuário"}…`);
+    async (registro) => {
+      const usuario_id = toPositiveInt(registro?.usuario_id);
+      const data_presenca = ymd(registro?.data_referencia);
 
-        await apiPost("/api/presencas/confirmar-simples", {
-          turma_id: Number(turma_id),
+      if (!usuario_id || !turmaIdSeguro || !data_presenca) {
+        notifyError("Dados insuficientes para confirmar presença.");
+        return;
+      }
+
+      const btnId = `${usuario_id}-${data_presenca}`;
+
+      try {
+        setConfirmandoId(btnId);
+        setLive(`Confirmando presença de ${registro?.nome || "participante"}.`);
+
+        await api.presenca.confirmarorganizador({
           usuario_id,
-          data: data_referencia, // unificado (date-only)
+          turma_id: turmaIdSeguro,
+          data_presenca,
         });
 
-        toast.success("✅ Presença confirmada!");
-        setLive("Presença confirmada.");
-
-        // update otimista
         setDados((prev) =>
-          prev.map((item) =>
-            item.usuario_id === usuario_id &&
-            item.turma_id === turma_id &&
-            item.data_referencia === data_referencia
-              ? { ...item, data_presenca: data_referencia, presente: true }
-              : item
-          )
+          prev.map((item) => {
+            if (
+              toPositiveInt(item?.usuario_id) === usuario_id &&
+              ymd(item?.data_referencia) === data_presenca
+            ) {
+              return {
+                ...item,
+                data_presenca,
+                presente: true,
+              };
+            }
+
+            return item;
+          })
         );
-      } catch (e) {
-        console.error(e);
-        toast.error("❌ Erro ao confirmar presença.");
+
+        notifySuccess("Presença confirmada com sucesso.");
+        setLive("Presença confirmada.");
+      } catch (error) {
+        notifyError(
+          getErrorMessage(error, "Não foi possível confirmar presença.")
+        );
         setLive("Falha ao confirmar presença.");
       } finally {
         setConfirmandoId(null);
       }
     },
-    [setLive]
+    [setLive, turmaIdSeguro]
   );
 
   const limparBusca = useCallback(() => {
@@ -315,7 +765,7 @@ export default function PresencasPorTurma() {
     inputBuscaRef.current?.focus?.();
   }, [setLive]);
 
-  const motionWrap = useMemo(
+  const motionConfig = useMemo(
     () => ({
       initial: reduceMotion ? false : { opacity: 0, y: 10 },
       animate: reduceMotion ? {} : { opacity: 1, y: 0 },
@@ -325,220 +775,185 @@ export default function PresencasPorTurma() {
     [reduceMotion]
   );
 
-  const renderStatus = useCallback(
-    (p) => {
-      const agora = new Date();
-      const { presente, passou60min, dentroJanelaConfirmacao } = getStatusFlags(p, agora);
-
-      if (presente) {
-        return (
-          <span className="inline-flex items-center gap-2 bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200 px-2.5 py-1 rounded-full font-semibold text-xs">
-            ✅ Presente
-          </span>
-        );
-      }
-
-      if (!passou60min) {
-        return (
-          <span className="inline-flex items-center gap-2 bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200 px-2.5 py-1 rounded-full font-semibold text-xs">
-            🟡 Aguardando
-          </span>
-        );
-      }
-
-      if (dentroJanelaConfirmacao) {
-        const btnId = `${p.usuario_id}-${p.data_referencia}`;
-        const loading = confirmandoId === btnId;
-
-        return (
-          <div className="flex flex-wrap items-center gap-2 justify-end">
-            <span className="inline-flex items-center gap-2 bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-200 px-2.5 py-1 rounded-full font-semibold text-xs">
-              🟥 Faltou
-            </span>
-
-            <button
-              type="button"
-              onClick={() =>
-                confirmarPresencaManual(p.usuario_id, p.turma_id, p.data_referencia, p.nome)
-              }
-              className="inline-flex items-center gap-2 text-xs bg-sky-700 text-white px-2.5 py-1.5 rounded-lg hover:bg-sky-800 disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-sky-700"
-              disabled={loading}
-              aria-label={`Confirmar presença de ${p.nome} em ${formatarDataBrasileira(p.data_referencia)}`}
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  Confirmando…
-                </>
-              ) : (
-                "Confirmar"
-              )}
-            </button>
-          </div>
-        );
-      }
-
-      return (
-        <span className="inline-flex items-center gap-2 bg-rose-200 text-rose-900 dark:bg-rose-900/40 dark:text-rose-100 px-2.5 py-1 rounded-full font-semibold text-xs">
-          🟥 Faltou (Expirado)
-        </span>
-      );
-    },
-    [confirmandoId, confirmarPresencaManual]
-  );
-
   return (
-    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
-      <HeaderHero turmaId={turmaId} onRefresh={carregar} carregando={carregando} />
+    <div className="flex min-h-dvh flex-col bg-slate-50 text-slate-950 dark:bg-slate-950 dark:text-white">
+      <HeaderHero
+        turma_id={turma_id}
+        onRefresh={carregar}
+        carregando={carregando}
+      />
+
+      {carregando && (
+        <div
+          className="sticky top-0 z-40 h-1 w-full bg-amber-100 dark:bg-amber-950"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Carregando presenças"
+        >
+          <div className="h-full w-1/3 animate-pulse bg-amber-700 dark:bg-amber-500" />
+        </div>
+      )}
 
       <main
         id="conteudo"
         role="main"
-        className="flex-1 px-3 sm:px-4 py-6"
+        className="flex-1 px-3 py-6 sm:px-4 lg:px-6"
         aria-busy={carregando ? "true" : "false"}
       >
-        {/* live region acessível */}
-        <p ref={liveRef} className="sr-only" aria-live="polite" />
+        <p
+          ref={liveRef}
+          className="sr-only"
+          aria-live="polite"
+          aria-atomic="true"
+        />
 
-        <section className="max-w-5xl mx-auto">
-          {/* busca + mini-stats */}
-          <div className="rounded-2xl border border-slate-200 dark:border-zinc-700 bg-white/70 dark:bg-zinc-900/40 backdrop-blur p-3 sm:p-4 shadow-sm">
-            <div className="flex flex-col gap-3 sm:gap-4">
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                <div className="relative flex-1">
-                  <Search
-                    className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
-                    aria-hidden="true"
-                  />
-                  <input
-                    ref={inputBuscaRef}
-                    type="text"
-                    value={busca}
-                    onChange={(e) => setBusca(e.target.value)}
-                    placeholder="Buscar por nome ou CPF…"
-                    className="w-full pl-10 pr-24 py-2.5 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 focus:outline-none focus:ring-2 focus:ring-amber-600"
-                    aria-label="Buscar por nome ou CPF"
-                    inputMode="search"
-                    autoComplete="off"
-                  />
-                  {busca ? (
-                    <button
-                      type="button"
-                      onClick={limparBusca}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 rounded-lg text-xs bg-slate-100 hover:bg-slate-200 dark:bg-zinc-700 dark:hover:bg-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-700"
-                      aria-label="Limpar busca"
-                      title="Limpar"
-                    >
-                      Limpar
-                    </button>
-                  ) : null}
-                </div>
+        <section className="mx-auto max-w-5xl space-y-5">
+          <ToolbarBusca
+            busca={busca}
+            setBusca={setBusca}
+            limparBusca={limparBusca}
+            inputRef={inputBuscaRef}
+            carregando={carregando}
+            onRefresh={carregar}
+          />
 
-                <button
-                  type="button"
-                  onClick={carregar}
-                  className="inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700 disabled:opacity-70 disabled:cursor-not-allowed"
-                  aria-label="Atualizar presenças"
-                  title="Atualizar"
-                  disabled={carregando}
-                >
-                  {carregando ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                  Atualizar
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
-                <MiniStat icon={Users} label="Total (filtrado)" value={stats.total} tone="neutral" />
-                <MiniStat icon={UserCheck} label="Presentes" value={stats.presentes} tone="ok" />
-                <MiniStat icon={Hourglass} label="Aguardando" value={stats.aguardando} tone="warn" />
-                <MiniStat icon={UserX} label="Faltas" value={stats.faltas} tone="bad" />
-              </div>
-            </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
+            <MiniStat
+              icon={Users}
+              label="Total filtrado"
+              value={stats.total}
+              tone="neutral"
+            />
+            <MiniStat
+              icon={UserCheck}
+              label="Presentes"
+              value={stats.presentes}
+              tone="ok"
+            />
+            <MiniStat
+              icon={Hourglass}
+              label="Aguardando"
+              value={stats.aguardando}
+              tone="warn"
+            />
+            <MiniStat
+              icon={UserX}
+              label="Faltas"
+              value={stats.faltas}
+              tone="bad"
+            />
           </div>
 
-          {/* conteúdo */}
-          <div className="mt-5">
-            <AnimatePresence mode="wait">
-              {carregando ? (
-                <motion.div key="loading" {...motionWrap}>
-                  <CarregandoSkeleton texto="Carregando presenças..." linhas={6} />
-                </motion.div>
-              ) : erro ? (
-                <motion.div key="error" {...motionWrap}>
-                  <div className="rounded-2xl border border-rose-200/60 dark:border-rose-900/40 bg-rose-50 dark:bg-rose-900/15 p-4 shadow-sm">
-                    <div className="flex items-start gap-3">
-                      <AlertTriangle className="w-5 h-5 mt-0.5" aria-hidden="true" />
-                      <div className="flex-1">
-                        <ErroCarregamento mensagem={erro} />
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={carregar}
-                            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-rose-700 hover:bg-rose-800 text-white text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-rose-700"
-                          >
-                            <RefreshCw className="w-4 h-4" />
-                            Tentar novamente
-                          </button>
+          <AnimatePresence mode="wait">
+            {carregando ? (
+              <motion.div key="loading" {...motionConfig}>
+                <CarregandoSkeleton texto="Carregando presenças..." linhas={6} />
+              </motion.div>
+            ) : erro ? (
+              <motion.section
+                key="error"
+                {...motionConfig}
+                className="rounded-[2rem] border border-rose-200 bg-rose-50 p-5 shadow-sm dark:border-rose-900/50 dark:bg-rose-950/30"
+                role="alert"
+              >
+                <div className="flex items-start gap-3">
+                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-200">
+                    <AlertTriangle className="h-5 w-5" aria-hidden="true" />
+                  </span>
 
-                          <button
-                            type="button"
-                            onClick={() => navigate(-1)}
-                            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-slate-400"
-                          >
-                            Voltar
-                          </button>
-                        </div>
-                      </div>
+                  <div className="min-w-0 flex-1">
+                    <ErroCarregamento mensagem={erro} />
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={carregar}
+                        className="inline-flex items-center gap-2 rounded-2xl bg-rose-700 px-4 py-2 text-sm font-black text-white transition hover:bg-rose-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
+                      >
+                        <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                        Tentar novamente
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => navigate(-1)}
+                        className="inline-flex items-center gap-2 rounded-2xl border border-rose-200 bg-white px-4 py-2 text-sm font-black text-rose-800 transition hover:bg-rose-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 dark:border-rose-900/50 dark:bg-slate-950 dark:text-rose-100 dark:hover:bg-rose-950/30"
+                      >
+                        Voltar
+                      </button>
                     </div>
                   </div>
-                </motion.div>
-              ) : !turmaValida ? (
-                <motion.div key="invalid" {...motionWrap}>
-                  <NadaEncontrado titulo="Turma inválida" subtitulo="Verifique o ID na rota /turma/:turmaId." />
-                </motion.div>
-              ) : filtrados?.length ? (
-                <motion.section
-                  key="content"
-                  {...motionWrap}
-                  aria-label={`Lista de presenças da turma ${turmaId || ""}`}
-                  className="space-y-3"
-                >
-                  {filtrados.map((p) => (
-                    <article
-                      key={`${p.usuario_id}-${p.data_referencia}`}
-                      className="border border-slate-200 dark:border-zinc-700 p-4 rounded-2xl bg-white dark:bg-zinc-800 shadow-sm"
-                      aria-label={`Registro de ${p.nome}`}
-                    >
-                      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-lousa dark:text-white font-extrabold tracking-tight truncate">
-                            {p.nome}
-                          </p>
+                </div>
+              </motion.section>
+            ) : !turmaValida ? (
+              <motion.div key="invalid" {...motionConfig}>
+                <NadaEncontrado
+                  titulo="Turma inválida"
+                  subtitulo="A rota deve informar o parâmetro oficial turma_id."
+                />
+              </motion.div>
+            ) : filtrados.length > 0 ? (
+              <motion.section
+                key="content"
+                {...motionConfig}
+                aria-label={`Lista de presenças da turma ${turma_id || ""}`}
+                className="space-y-3"
+              >
+                {filtrados.map((registro) => {
+                  const btnId = `${registro.usuario_id}-${registro.data_referencia}`;
+                  const loading = confirmandoId === btnId;
 
-                          <div className="mt-1 flex flex-col gap-1 text-sm text-slate-600 dark:text-slate-300">
-                            <p>CPF: {p.cpf ? formatarCPF(p.cpf) : "—"}</p>
+                  return (
+                    <article
+                      key={btnId}
+                      className="rounded-[1.5rem] border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md dark:border-slate-800 dark:bg-slate-900"
+                      aria-label={`Registro de ${registro.nome}`}
+                    >
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <h2 className="break-words text-base font-black tracking-tight text-slate-950 dark:text-white">
+                            {registro.nome}
+                          </h2>
+
+                          <div className="mt-2 flex flex-col gap-1 text-sm text-slate-600 dark:text-slate-300">
+                            <p>CPF: {cpfProtegido(registro.cpf)}</p>
                             <p>
-                              Data: {formatarDataBrasileira(p.data_referencia)} —{" "}
-                              {p.horario_inicio || "—"} às {p.horario_fim || "—"}
+                              Data: {formatarDataBR(registro.data_referencia)}
                             </p>
+                            {registro.email ? <p>E-mail: {registro.email}</p> : null}
                           </div>
                         </div>
 
-                        <div className="shrink-0 mt-1 sm:mt-0">{renderStatus(p)}</div>
+                        <div className="shrink-0 sm:mt-1">
+                          <StatusRegistro
+                            registro={registro}
+                            loading={loading}
+                            onConfirmar={() => confirmarPresencaManual(registro)}
+                          />
+                        </div>
                       </div>
                     </article>
-                  ))}
-                </motion.section>
-              ) : (
-                <motion.div key="empty" {...motionWrap}>
-                  <NadaEncontrado
-                    titulo={busca ? "Nenhum registro corresponde à busca" : "Nenhum registro encontrado"}
-                    subtitulo={busca ? "Tente outro termo ou limpe a busca." : "Essa turma não possui registros."}
-                  />
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+                  );
+                })}
+              </motion.section>
+            ) : (
+              <motion.div key="empty" {...motionConfig}>
+                <NadaEncontrado
+                  titulo={
+                    busca
+                      ? "Nenhum registro corresponde à busca"
+                      : "Nenhum registro encontrado"
+                  }
+                  subtitulo={
+                    busca
+                      ? "Tente outro termo ou limpe a busca."
+                      : "Esta turma ainda não possui registros retornados pelo sistema."
+                  }
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
         </section>
       </main>
 

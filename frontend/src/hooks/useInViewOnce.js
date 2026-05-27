@@ -1,14 +1,45 @@
-// ✅ src/hooks/useInViewOnce.js — PREMIUM++
-// - SSR-safe
-// - Fallback se IntersectionObserver não existir
-// - Permite threshold / root / rootMargin
-// - triggerOnce=true por padrão
-// - Mantém API simples e compatível
-
+// ✅ src/hooks/useInViewOnce.js — v2.0
 import { useEffect, useRef, useState } from "react";
 
-function canUseIO() {
-  return typeof window !== "undefined" && "IntersectionObserver" in window;
+/**
+ * Hook para detectar quando um elemento entra na viewport.
+ *
+ * Uso:
+ * const { ref, inView } = useInViewOnce();
+ *
+ * <div ref={ref}>
+ *   {inView ? <ComponentePesado /> : null}
+ * </div>
+ *
+ * Observações:
+ * - SSR-safe.
+ * - Fallback para browsers sem IntersectionObserver.
+ * - triggerOnce=true por padrão.
+ * - Útil para lazy render, animações e gráficos.
+ */
+
+function canUseIntersectionObserver() {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.IntersectionObserver === "function"
+  );
+}
+
+function normalizeThreshold(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => Number(item))
+      .filter((item) => Number.isFinite(item))
+      .map((item) => Math.min(Math.max(item, 0), 1));
+  }
+
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return 0;
+  }
+
+  return Math.min(Math.max(number, 0), 1);
 }
 
 export function useInViewOnce({
@@ -19,52 +50,65 @@ export function useInViewOnce({
 } = {}) {
   const ref = useRef(null);
   const observerRef = useRef(null);
+
   const [inView, setInView] = useState(false);
 
   useEffect(() => {
-    // já entrou e é só uma vez
-    if (triggerOnce && inView) return undefined;
+    if (triggerOnce && inView) {
+      return undefined;
+    }
 
-    const el = ref.current;
-    if (!el) return undefined;
+    const element = ref.current;
 
-    // fallback para browsers/ambientes sem IO
-    if (!canUseIO()) {
+    if (!element) {
+      return undefined;
+    }
+
+    if (!canUseIntersectionObserver()) {
       setInView(true);
       return undefined;
     }
 
     observerRef.current?.disconnect();
 
-    observerRef.current = new IntersectionObserver(
+    const observer = new IntersectionObserver(
       (entries) => {
         const visible = entries.some((entry) => entry.isIntersecting);
 
-        if (!visible) return;
+        if (!visible) {
+          return;
+        }
 
         setInView(true);
 
         if (triggerOnce) {
-          observerRef.current?.disconnect();
+          observer.disconnect();
           observerRef.current = null;
         }
       },
       {
         root,
         rootMargin,
-        threshold,
+        threshold: normalizeThreshold(threshold),
       }
     );
 
-    observerRef.current.observe(el);
+    observerRef.current = observer;
+    observer.observe(element);
 
     return () => {
-      observerRef.current?.disconnect();
-      observerRef.current = null;
+      observer.disconnect();
+
+      if (observerRef.current === observer) {
+        observerRef.current = null;
+      }
     };
   }, [inView, root, rootMargin, threshold, triggerOnce]);
 
-  return { ref, inView };
+  return {
+    ref,
+    inView,
+  };
 }
 
 export default useInViewOnce;

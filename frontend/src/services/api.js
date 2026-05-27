@@ -1,16 +1,34 @@
-// ✅ src/services/api.js — PREMIUM++
-// - base URL resiliente
-// - sem bug em produção com same-origin
-// - fetch centralizado com timeout/retry/warmup
-// - helpers de arquivo sem duplicação excessiva
-// - sync de auth + perfil + perfil incompleto
-// - anti-fuso via headers do cliente
-// - compat com estilo axios/default export
+// ✅ frontend/src/services/api.js — v2.2
+// Atualizado em: 19/05/2026
+/* eslint-disable no-console */
+/**
+ * Plataforma Escola da Saúde
+ *
+ * Serviço central oficial de API.
+ *
+ * Contrato:
+ * - VITE_API_BASE_URL é a env oficial.
+ * - Token oficial: localStorage["token"].
+ * - Perfil oficial: localStorage["perfil"] como string única.
+ * - Base de chamadas frontend sem "/api" direto nas páginas/componentes.
+ * - Este service é o único ponto que monta URLs da API.
+ *
+ * Padrão:
+ * - Sem aliases de rota.
+ * - Sem chamadas legadas.
+ * - Sem fallback hardcoded de produção.
+ * - Sem access_token/authToken/user.
+ * - Sem múltiplas formas para o mesmo recurso.
+ * - Rotas preferencialmente em português e singular.
+ * - Headers anti-fuso em todas as requisições.
+ * - Respostas diagnosticáveis.
+ */
 
-// ───────────────────────────────────────────────────────────────────
-// Helpers de ambiente
-// ───────────────────────────────────────────────────────────────────
-const IS_DEV = !!import.meta.env.DEV;
+const IS_DEV = Boolean(import.meta.env.DEV);
+
+/* ─────────────────────────────────────────────────────────────
+   Logs
+────────────────────────────────────────────────────────────── */
 
 function logDev(...args) {
   if (IS_DEV) console.log("[api]", ...args);
@@ -20,108 +38,100 @@ function errorDev(...args) {
   if (IS_DEV) console.error("[api]", ...args);
 }
 
-function isLocalHost(h) {
-  return /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(h || "");
+/* ─────────────────────────────────────────────────────────────
+   Ambiente / URL
+────────────────────────────────────────────────────────────── */
+
+function isLocalHost(host) {
+  return /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(String(host || ""));
 }
 
-function isHttpUrl(u) {
-  return /^http:\/\//i.test(u || "");
+function isHttpUrl(url) {
+  return /^http:\/\//i.test(String(url || ""));
 }
 
-function isAbsoluteUrl(u) {
-  return /^https?:\/\//i.test(u || "");
+function isAbsoluteUrl(url) {
+  return /^https?:\/\//i.test(String(url || ""));
 }
 
-function isVercelHost(host = "") {
-  const h = String(host || "").toLowerCase();
-  return h.endsWith(".vercel.app") || h.includes("vercel.app");
+function stripTrailingSlash(value) {
+  return String(value || "").replace(/\/+$/, "");
 }
 
-// ───────────────────────────────────────────────────────────────────
-// Path / Base normalizers
-// ───────────────────────────────────────────────────────────────────
 function normalizePath(path) {
-  if (!path) return "/";
-  if (/^https?:\/\//i.test(path)) return path;
+  const raw = String(path || "/").trim();
 
-  let p = String(path).trim();
-  if (!p.startsWith("/")) p = `/${p}`;
-  return p;
-}
+  if (!raw) return "/";
+  if (isAbsoluteUrl(raw)) return raw;
 
-// ✅ Garante exatamente um "/api"
-function ensureApi(base, path) {
-  const baseNoSlash = String(base || "").replace(/\/+$/, "");
-  let p = String(path || "").trim();
-
-  if (!p.startsWith("/")) p = `/${p}`;
-
-  const baseHasApi = /\/api$/i.test(baseNoSlash);
-  const pathHasApi = /^\/api(\/|$)/i.test(p);
-
-  if (baseHasApi && pathHasApi) {
-    p = p.replace(/^\/api(\/|$)/i, "/");
-  } else if (!baseHasApi && !pathHasApi) {
-    p = `/api${p}`;
-  }
-
-  return baseNoSlash + p;
+  return raw.startsWith("/") ? raw : `/${raw}`;
 }
 
 function computeBase() {
-  const raw = (import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
-  if (raw) return raw; // prioridade explícita
+  const envBase = stripTrailingSlash(import.meta.env.VITE_API_BASE_URL || "");
 
-  // DEV: usa proxy/same-origin
+  if (envBase) return envBase;
+
   if (IS_DEV) return "";
 
-  const host = typeof window !== "undefined" ? window.location.host : "";
-
-  // Front em Vercel sem rewrite para /api -> backend direto
-  if (isVercelHost(host)) return "https://escola-saude-api.onrender.com";
-
-  // Produção com reverse proxy no mesmo domínio
-  if (host && !isLocalHost(host)) return "";
-
-  // fallback final
-  return "https://escola-saude-api.onrender.com";
+  throw new Error(
+    "VITE_API_BASE_URL não configurada. Defina a URL oficial da API no ambiente de produção."
+  );
 }
 
 let API_BASE_URL = computeBase();
 
-// 🔒 força https apenas em hosts externos
 try {
-  if (
-    isHttpUrl(API_BASE_URL) &&
-    !(
-      typeof window !== "undefined" &&
-      isAbsoluteUrl(API_BASE_URL) &&
-      isLocalHost(new URL(API_BASE_URL).host)
-    )
-  ) {
-    API_BASE_URL = API_BASE_URL.replace(/^http:\/\//i, "https://");
+  if (isHttpUrl(API_BASE_URL)) {
+    const host = new URL(API_BASE_URL).host;
+
+    if (!isLocalHost(host)) {
+      API_BASE_URL = API_BASE_URL.replace(/^http:\/\//i, "https://");
+    }
   }
 } catch {
   // noop
 }
 
-// ✅ Corrigido: same-origin em produção é permitido
-(() => {
-  if (API_BASE_URL == null) {
-    throw new Error("Falha ao resolver API_BASE_URL.");
+if (API_BASE_URL == null) {
+  throw new Error("Falha ao resolver API_BASE_URL.");
+}
+
+function ensureApi(base, path) {
+  const baseNoSlash = stripTrailingSlash(base);
+  let normalizedPath = normalizePath(path);
+
+  if (isAbsoluteUrl(normalizedPath)) return normalizedPath;
+
+  const baseHasApi = /\/api$/i.test(baseNoSlash);
+  const pathHasApi = /^\/api(\/|$)/i.test(normalizedPath);
+
+  if (baseHasApi && pathHasApi) {
+    normalizedPath = normalizedPath.replace(/^\/api(\/|$)/i, "/");
+  } else if (!baseHasApi && !pathHasApi) {
+    normalizedPath = `/api${normalizedPath}`;
   }
-})();
 
-const API_BASE_ROOT = ensureApi(API_BASE_URL, "/").replace(/\/+$/, "");
+  return `${baseNoSlash}${normalizedPath}`;
+}
 
-export function makeApiUrl(path, query) {
-  const safePath = normalizePath(path);
-  const url = ensureApi(API_BASE_URL, safePath) + qs(query);
+function ensureRoot(base, path) {
+  const baseNoSlash = stripTrailingSlash(base);
+  const normalizedPath = normalizePath(path);
 
+  if (isAbsoluteUrl(normalizedPath)) return normalizedPath;
+
+  return `${baseNoSlash}${normalizedPath}`;
+}
+
+function enforceHttpsExternal(url) {
   try {
     if (isHttpUrl(url)) {
       const host = new URL(url).host;
-      if (!isLocalHost(host)) return url.replace(/^http:\/\//i, "https://");
+
+      if (!isLocalHost(host)) {
+        return url.replace(/^http:\/\//i, "https://");
+      }
     }
   } catch {
     // noop
@@ -130,44 +140,105 @@ export function makeApiUrl(path, query) {
   return url;
 }
 
-// ───────────────────────────────────────────────────────────────────
-// Token & auth/session
-// ───────────────────────────────────────────────────────────────────
-const AUTH_STORAGE_KEYS = ["token", "authToken", "access_token"];
-const USER_STORAGE_KEYS = ["usuario", "perfil", "user"];
+function isBadParamValue(value) {
+  if (value === null || value === undefined || value === "") return true;
+  if (typeof value === "number" && Number.isNaN(value)) return true;
+
+  if (typeof value === "string" && value.trim().toLowerCase() === "nan") {
+    return true;
+  }
+
+  return false;
+}
+
+export function qs(params = {}) {
+  const query = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value.forEach((item) => {
+        if (!isBadParamValue(item)) query.append(key, item);
+      });
+      return;
+    }
+
+    if (!isBadParamValue(value)) {
+      query.append(key, value);
+    }
+  });
+
+  const serialized = query.toString();
+
+  return serialized ? `?${serialized}` : "";
+}
+
+export function makeApiUrl(path, query) {
+  const url = ensureApi(API_BASE_URL, normalizePath(path)) + qs(query);
+  return enforceHttpsExternal(url);
+}
+
+function makeRootUrl(path, query) {
+  const url = ensureRoot(API_BASE_URL, normalizePath(path)) + qs(query);
+  return enforceHttpsExternal(url);
+}
+
+const API_BASE_ROOT = ensureApi(API_BASE_URL, "/").replace(/\/+$/, "");
+
+/* ─────────────────────────────────────────────────────────────
+   Sessão oficial
+────────────────────────────────────────────────────────────── */
+
+const STORAGE_TOKEN_KEY = "token";
+const STORAGE_USUARIO_KEY = "usuario";
+const STORAGE_PERFIL_KEY = "perfil";
 
 const PERFIL_CHANGE_EVENT = "escola-perfil-change";
 const AUTH_CHANGE_EVENT = "auth:changed";
 
-const getTokenRaw = () => {
+export function getToken() {
   try {
-    for (const key of AUTH_STORAGE_KEYS) {
-      const value = localStorage.getItem(key);
-      if (value) return value;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-};
+    const raw = localStorage.getItem(STORAGE_TOKEN_KEY);
 
-const getToken = () => {
-  try {
-    const raw = getTokenRaw();
     if (!raw) return null;
-    return raw.startsWith("Bearer ") ? raw.slice(7).trim() : raw.trim();
+
+    return String(raw).replace(/^Bearer\s+/i, "").trim() || null;
   } catch {
     return null;
   }
-};
+}
 
-function emitPerfilRolesChange(storageKey = "perfil", value = null) {
+export function getUsuarioLocal() {
+  try {
+    const raw = localStorage.getItem(STORAGE_USUARIO_KEY);
+
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getPerfilLocal() {
+  try {
+    return String(localStorage.getItem(STORAGE_PERFIL_KEY) || "").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function emitPerfilChange(value = null) {
   if (typeof window === "undefined") return;
 
   try {
     window.dispatchEvent(
       new CustomEvent(PERFIL_CHANGE_EVENT, {
-        detail: { storageKey, value },
+        detail: {
+          storageKey: STORAGE_PERFIL_KEY,
+          value,
+        },
       })
     );
   } catch {
@@ -179,25 +250,29 @@ export function clearAuthSession(options = {}) {
   const { emitEvent = true } = options;
 
   try {
-    const hadSomething =
-      AUTH_STORAGE_KEYS.some((key) => !!localStorage.getItem(key)) ||
-      USER_STORAGE_KEYS.some((key) => !!localStorage.getItem(key));
+    const hadSession =
+      Boolean(localStorage.getItem(STORAGE_TOKEN_KEY)) ||
+      Boolean(localStorage.getItem(STORAGE_USUARIO_KEY)) ||
+      Boolean(localStorage.getItem(STORAGE_PERFIL_KEY));
 
-    AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
-    USER_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+    localStorage.removeItem(STORAGE_TOKEN_KEY);
+    localStorage.removeItem(STORAGE_USUARIO_KEY);
+    localStorage.removeItem(STORAGE_PERFIL_KEY);
+
     setPerfilIncompletoFlag(null);
+    emitPerfilChange(null);
 
-    emitPerfilRolesChange("perfil", null);
-
-    if (emitEvent && hadSomething && typeof window !== "undefined") {
+    if (emitEvent && hadSession && typeof window !== "undefined") {
       window.dispatchEvent(
         new CustomEvent(AUTH_CHANGE_EVENT, {
-          detail: { authenticated: false },
+          detail: {
+            authenticated: false,
+          },
         })
       );
     }
 
-    logDev("sessão limpa", { emitEvent, hadSomething });
+    logDev("sessão limpa", { emitEvent, hadSession });
   } catch (error) {
     errorDev("erro ao limpar sessão", error);
   }
@@ -211,42 +286,28 @@ export function persistAuthSession(token, usuario = null, options = {}) {
       ? String(token).replace(/^Bearer\s+/i, "").trim()
       : null;
 
-    const prevToken =
-      localStorage.getItem("token") ||
-      localStorage.getItem("authToken") ||
-      localStorage.getItem("access_token") ||
-      null;
-
-    const prevUsuarioRaw = localStorage.getItem("usuario");
-    const nextUsuarioRaw = usuario ? JSON.stringify(usuario) : null;
+    const prevToken = localStorage.getItem(STORAGE_TOKEN_KEY);
+    const prevUsuario = localStorage.getItem(STORAGE_USUARIO_KEY);
+    const nextUsuario = usuario ? JSON.stringify(usuario) : null;
 
     let changed = false;
 
     if (normalizedToken && prevToken !== normalizedToken) {
-      localStorage.setItem("token", normalizedToken);
-      localStorage.setItem("authToken", normalizedToken);
-      localStorage.setItem("access_token", normalizedToken);
+      localStorage.setItem(STORAGE_TOKEN_KEY, normalizedToken);
       changed = true;
     }
 
-    if (nextUsuarioRaw && prevUsuarioRaw !== nextUsuarioRaw) {
-      localStorage.setItem("usuario", nextUsuarioRaw);
-      localStorage.setItem("user", nextUsuarioRaw);
+    if (nextUsuario && prevUsuario !== nextUsuario) {
+      localStorage.setItem(STORAGE_USUARIO_KEY, nextUsuario);
       changed = true;
     }
 
     if (usuario?.perfil) {
-      const perfis = Array.isArray(usuario.perfil)
-        ? usuario.perfil
-        : String(usuario.perfil)
-            .split(",")
-            .map((p) => p.trim())
-            .filter(Boolean);
+      const perfil = String(usuario.perfil || "").trim();
 
-      const perfisJoined = perfis.join(",");
-      if (localStorage.getItem("perfil") !== perfisJoined) {
-        localStorage.setItem("perfil", perfisJoined);
-        emitPerfilRolesChange("perfil", perfisJoined);
+      if (perfil && localStorage.getItem(STORAGE_PERFIL_KEY) !== perfil) {
+        localStorage.setItem(STORAGE_PERFIL_KEY, perfil);
+        emitPerfilChange(perfil);
         changed = true;
       }
     }
@@ -254,31 +315,43 @@ export function persistAuthSession(token, usuario = null, options = {}) {
     if (emitEvent && changed && typeof window !== "undefined") {
       window.dispatchEvent(
         new CustomEvent(AUTH_CHANGE_EVENT, {
-          detail: { authenticated: true, usuario },
+          detail: {
+            authenticated: true,
+            usuario,
+          },
         })
       );
     }
 
     logDev("sessão persistida", {
       changed,
-      hasToken: !!normalizedToken,
-      usuarioId: usuario?.id || usuario?.usuario_id || null,
+      hasToken: Boolean(normalizedToken),
+      usuarioId: usuario?.id || null,
+      perfil: usuario?.perfil || null,
     });
   } catch (error) {
     errorDev("erro ao persistir sessão", error);
   }
 }
 
+export function isLoggedIn() {
+  return Boolean(getToken());
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Rotas públicas / redirecionamento
+────────────────────────────────────────────────────────────── */
+
 function isPublicAppPath(pathname = "") {
   const path = String(pathname || "");
+
   return (
     path === "/" ||
     path.startsWith("/login") ||
     path.startsWith("/cadastro") ||
-    path.startsWith("/recuperar-senha") ||
     path.startsWith("/esqueci-senha") ||
     path.startsWith("/redefinir-senha") ||
-    path.startsWith("/validar") ||
+    path.startsWith("/validar-certificado") ||
     path.startsWith("/presenca") ||
     path.startsWith("/historico") ||
     path.startsWith("/privacidade")
@@ -287,14 +360,14 @@ function isPublicAppPath(pathname = "") {
 
 function currentPathWithQuery() {
   if (typeof window === "undefined") return "/";
+
   const { pathname, search, hash } = window.location;
+
   return pathname + (search || "") + (hash || "");
 }
 
 function redirectToLogin(nextPath = null) {
   if (typeof window === "undefined") return;
-
-  const current = nextPath || currentPathWithQuery();
 
   if (isPublicAppPath(window.location.pathname)) {
     logDev("redirectToLogin ignorado em rota pública", {
@@ -303,27 +376,27 @@ function redirectToLogin(nextPath = null) {
     return;
   }
 
+  const current = nextPath || currentPathWithQuery();
   const next = encodeURIComponent(current || "/");
   const target = `/login?next=${next}`;
 
-  logDev("redirectToLogin executado", {
-    from: current,
-    to: target,
-  });
-
+  logDev("redirectToLogin executado", { from: current, to: target });
   window.location.replace(target);
 }
 
-// ───────────────────────────────────────────────────────────────────
-// Request id / client context
-// ───────────────────────────────────────────────────────────────────
+/* ─────────────────────────────────────────────────────────────
+   Headers anti-fuso / request id
+────────────────────────────────────────────────────────────── */
+
 function newRequestId() {
   try {
-    const u = crypto.randomUUID?.();
-    if (u) return u;
+    const uuid = crypto.randomUUID?.();
+
+    if (uuid) return uuid;
   } catch {
     // noop
   }
+
   return `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
@@ -344,9 +417,12 @@ function getClientOffsetMinutes() {
 }
 
 function todayLocalYMD() {
-  const d = new Date();
-  const p = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  const date = new Date();
+  const pad = (number) => String(number).padStart(2, "0");
+
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+    date.getDate()
+  )}`;
 }
 
 function buildClientContextHeaders() {
@@ -360,9 +436,6 @@ function buildClientContextHeaders() {
   };
 }
 
-// ───────────────────────────────────────────────────────────────────
-// Debug de conflitos
-// ───────────────────────────────────────────────────────────────────
 const DEBUG_CONF_KEY = "debug_conflitos";
 
 export function setDebugConflitos(on = true) {
@@ -381,15 +454,12 @@ function getDebugConflitos() {
   }
 }
 
-// ───────────────────────────────────────────────────────────────────
-// Headers
-// ───────────────────────────────────────────────────────────────────
 function buildHeaders(
   auth = true,
   extra = {},
   { contentType = "application/json" } = {}
 ) {
-  const jwt = getToken();
+  const token = getToken();
 
   const base = {
     ...buildClientContextHeaders(),
@@ -399,42 +469,16 @@ function buildHeaders(
 
   return {
     ...base,
-    ...(auth && jwt ? { Authorization: `Bearer ${jwt}` } : {}),
+    ...(auth && token ? { Authorization: `Bearer ${token}` } : {}),
     ...extra,
   };
 }
 
-// ───────────────────────────────────────────────────────────────────
-// Querystring
-// ───────────────────────────────────────────────────────────────────
-function isBadParamValue(v) {
-  if (v === null || v === undefined || v === "") return true;
-  if (typeof v === "number" && Number.isNaN(v)) return true;
-  if (typeof v === "string" && v.trim().toLowerCase() === "nan") return true;
-  return false;
-}
+/* ─────────────────────────────────────────────────────────────
+   Erro de API
+────────────────────────────────────────────────────────────── */
 
-export function qs(params = {}) {
-  const q = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([k, v]) => {
-    if (Array.isArray(v)) {
-      v.forEach((vi) => {
-        if (!isBadParamValue(vi)) q.append(k, vi);
-      });
-    } else {
-      if (!isBadParamValue(v)) q.append(k, v);
-    }
-  });
-
-  const s = q.toString();
-  return s ? `?${s}` : "";
-}
-
-// ───────────────────────────────────────────────────────────────────
-// Erro enriquecido
-// ───────────────────────────────────────────────────────────────────
-class ApiError extends Error {
+export class ApiError extends Error {
   constructor(message, { status, url, data } = {}) {
     super(message);
     this.name = "ApiError";
@@ -444,20 +488,35 @@ class ApiError extends Error {
   }
 }
 
-// ───────────────────────────────────────────────────────────────────
-// Perfil incompleto
-// ───────────────────────────────────────────────────────────────────
+/* ─────────────────────────────────────────────────────────────
+   Perfil incompleto
+────────────────────────────────────────────────────────────── */
+
 const PERFIL_HEADER = "X-Perfil-Incompleto";
 const PERFIL_FLAG_KEY = "perfil_incompleto";
 const PERFIL_EVENT = "perfil:flag";
-
 const PERFIL_BC_NAME = "perfil:bc";
+
+const REQUIRED_PROFILE_FIELDS = [
+  "cargo_id",
+  "unidade_id",
+  "escolaridade_id",
+  "deficiencia_id",
+  "data_nascimento",
+];
+
 let perfilBC = null;
 
 function getPerfilBC() {
   try {
-    if (typeof window === "undefined" || !("BroadcastChannel" in window)) return null;
-    if (!perfilBC) perfilBC = new BroadcastChannel(PERFIL_BC_NAME);
+    if (typeof window === "undefined" || !("BroadcastChannel" in window)) {
+      return null;
+    }
+
+    if (!perfilBC) {
+      perfilBC = new BroadcastChannel(PERFIL_BC_NAME);
+    }
+
     return perfilBC;
   } catch {
     return null;
@@ -466,125 +525,149 @@ function getPerfilBC() {
 
 export function getPerfilIncompletoFlag() {
   try {
-    const v = sessionStorage.getItem(PERFIL_FLAG_KEY);
-    return v === null ? null : v === "1";
+    const value = sessionStorage.getItem(PERFIL_FLAG_KEY);
+
+    return value === null ? null : value === "1";
   } catch {
     return null;
   }
 }
 
-export function setPerfilIncompletoFlag(val) {
+export function setPerfilIncompletoFlag(value) {
   try {
-    const prev = getPerfilIncompletoFlag();
+    const previous = getPerfilIncompletoFlag();
 
-    if (val === null || typeof val === "undefined") {
+    if (value === null || typeof value === "undefined") {
       sessionStorage.removeItem(PERFIL_FLAG_KEY);
     } else {
-      sessionStorage.setItem(PERFIL_FLAG_KEY, val ? "1" : "0");
+      sessionStorage.setItem(PERFIL_FLAG_KEY, value ? "1" : "0");
     }
 
-    const next = val === null ? null : !!val;
+    const next =
+      value === null || typeof value === "undefined" ? null : Boolean(value);
 
-    if (prev !== next) {
+    if (previous !== next) {
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent(PERFIL_EVENT, { detail: next }));
       }
 
-      const bc = getPerfilBC();
-      bc?.postMessage({ type: "perfil_flag", value: next });
+      const channel = getPerfilBC();
+      channel?.postMessage({ type: "perfil_flag", value: next });
     }
   } catch {
     // noop
   }
 }
 
-export function subscribePerfilFlag(cb) {
-  if (typeof cb !== "function") return () => {};
+export function subscribePerfilFlag(callback) {
+  if (typeof callback !== "function") return () => {};
 
-  const handler = (e) => cb(e.detail);
+  const windowHandler = (event) => callback(event.detail);
 
   if (typeof window !== "undefined") {
-    window.addEventListener(PERFIL_EVENT, handler);
+    window.addEventListener(PERFIL_EVENT, windowHandler);
   }
 
-  const bc = getPerfilBC();
-  const bcHandler = (ev) => {
-    if (ev?.data?.type === "perfil_flag") cb(ev.data.value);
+  const channel = getPerfilBC();
+
+  const channelHandler = (event) => {
+    if (event?.data?.type === "perfil_flag") {
+      callback(event.data.value);
+    }
   };
-  bc?.addEventListener?.("message", bcHandler);
+
+  channel?.addEventListener?.("message", channelHandler);
 
   return () => {
     if (typeof window !== "undefined") {
-      window.removeEventListener(PERFIL_EVENT, handler);
+      window.removeEventListener(PERFIL_EVENT, windowHandler);
     }
-    bc?.removeEventListener?.("message", bcHandler);
+
+    channel?.removeEventListener?.("message", channelHandler);
   };
 }
 
-function syncPerfilHeader(res) {
+function syncPerfilHeader(response) {
   try {
-    const val = res?.headers?.get?.(PERFIL_HEADER);
-    if (val === "1") setPerfilIncompletoFlag(true);
-    else if (val === "0") setPerfilIncompletoFlag(false);
+    const value = response?.headers?.get?.(PERFIL_HEADER);
+
+    if (value === "1") setPerfilIncompletoFlag(true);
+    else if (value === "0") setPerfilIncompletoFlag(false);
     else setPerfilIncompletoFlag(null);
   } catch {
     // noop
   }
 }
 
-// ───────────────────────────────────────────────────────────────────
-// Warmup
-// ───────────────────────────────────────────────────────────────────
-const WARMUP_PUBLIC = "/health";
+function inferPerfilIncompleto(usuario) {
+  if (!usuario || typeof usuario !== "object") return true;
+
+  return REQUIRED_PROFILE_FIELDS.some(
+    (key) =>
+      usuario?.[key] === null ||
+      usuario?.[key] === undefined ||
+      usuario?.[key] === ""
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Warmup
+────────────────────────────────────────────────────────────── */
+
+const WARMUP_PUBLIC_ROOT = "/__ping";
 const WARMUP_AUTH = "/perfil/me";
 
 async function warmup(authNeeded) {
-  const path = authNeeded ? WARMUP_AUTH : WARMUP_PUBLIC;
-  const url = ensureApi(API_BASE_URL, path);
-  const jwt = getToken();
+  const token = getToken();
+  const path = authNeeded ? WARMUP_AUTH : WARMUP_PUBLIC_ROOT;
+  const url = authNeeded ? ensureApi(API_BASE_URL, path) : makeRootUrl(path);
 
   try {
-    const res = await fetch(url, {
+    const response = await fetch(url, {
       method: "GET",
       credentials: "include",
       mode: "cors",
       cache: "no-store",
       headers:
-        authNeeded && jwt
-          ? { Authorization: `Bearer ${jwt}`, ...buildClientContextHeaders() }
+        authNeeded && token
+          ? { Authorization: `Bearer ${token}`, ...buildClientContextHeaders() }
           : buildClientContextHeaders(),
       redirect: "follow",
       referrerPolicy: "strict-origin-when-cross-origin",
       keepalive: true,
     });
 
-    return res.ok;
+    return response.ok;
   } catch {
     return false;
   }
 }
 
-// ───────────────────────────────────────────────────────────────────
-// Response handlers
-// ───────────────────────────────────────────────────────────────────
-async function handle(
-  res,
-  { on401 = "silent", on403 = "silent", on404 = "throw", suppressGlobalError = false } = {}
-) {
-  const url = res?.url || "";
-  const status = res?.status;
+/* ─────────────────────────────────────────────────────────────
+   Response handlers
+────────────────────────────────────────────────────────────── */
 
-  syncPerfilHeader(res);
+async function handle(
+  response,
+  {
+    on401 = "silent",
+    on403 = "silent",
+    on404 = "throw",
+    suppressGlobalError = false,
+  } = {}
+) {
+  const url = response?.url || "";
+  const status = response?.status;
+
+  syncPerfilHeader(response);
+
+  if (status === 404 && on404 === "silent") return null;
 
   let text = "";
   let data = null;
 
-  if (status === 404 && on404 === "silent") {
-    return null;
-  }
-
   try {
-    text = await res.text();
+    text = await response.text();
   } catch {
     // noop
   }
@@ -601,14 +684,19 @@ async function handle(
       redirectToLogin();
     }
 
-    const err = new ApiError(data?.erro || data?.message || "Não autorizado (401)", {
-      status,
-      url,
-      data: data ?? text,
-    });
-    err.code = "AUTH_401";
-    err.sessionExpired = data?.sessionExpired === true;
-    throw err;
+    const error = new ApiError(
+      data?.message || "Não autorizado (401)",
+      {
+        status,
+        url,
+        data: data ?? text,
+      }
+    );
+
+    error.code = data?.code || "AUTH-401";
+    error.sessionExpired = data?.sessionExpired === true;
+
+    throw error;
   }
 
   if (status === 403) {
@@ -620,43 +708,51 @@ async function handle(
       window.location.replace("/painel");
     }
 
-    const err = new ApiError(data?.erro || data?.message || "Sem permissão (403)", {
+    const error = new ApiError(data?.message || "Sem permissão (403)", {
       status,
       url,
       data: data ?? text,
     });
-    err.code = "AUTH_403";
-    throw err;
+
+    error.code = data?.code || "AUTH-403";
+
+    throw error;
   }
 
-  if (!res.ok) {
-    const msg = data?.erro || data?.message || text || `HTTP ${status}`;
-    const err = new ApiError(msg, { status, url, data: data ?? text });
-    if (suppressGlobalError) err.silenced = true;
-    throw err;
+  if (!response.ok) {
+    const message = data?.message || text || `HTTP ${status}`;
+    const error = new ApiError(message, { status, url, data: data ?? text });
+
+    error.code = data?.code || `HTTP-${status}`;
+
+    if (suppressGlobalError) error.silenced = true;
+
+    throw error;
   }
 
   return data;
 }
 
 function throwForAuthStatus(
-  res,
+  response,
   url,
   { on401 = "silent", on403 = "silent" } = {}
 ) {
-  syncPerfilHeader(res);
+  syncPerfilHeader(response);
 
-  if (res.status === 401) {
+  if (response.status === 401) {
     if (on401 === "redirect") {
       clearAuthSession();
       redirectToLogin();
     }
-    const err = new ApiError("Não autorizado (401)", { status: 401, url });
-    err.code = "AUTH_401";
-    throw err;
+
+    const error = new ApiError("Não autorizado (401)", { status: 401, url });
+    error.code = "AUTH-401";
+
+    throw error;
   }
 
-  if (res.status === 403) {
+  if (response.status === 403) {
     if (
       on403 === "redirect" &&
       typeof window !== "undefined" &&
@@ -664,21 +760,24 @@ function throwForAuthStatus(
     ) {
       window.location.replace("/painel");
     }
-    const err = new ApiError("Sem permissão (403)", { status: 403, url });
-    err.code = "AUTH_403";
-    throw err;
+
+    const error = new ApiError("Sem permissão (403)", { status: 403, url });
+    error.code = "AUTH-403";
+
+    throw error;
   }
 }
 
-async function extractErrorMessage(res) {
-  let msg = `HTTP ${res.status}`;
+async function extractErrorMessage(response) {
+  let message = `HTTP ${response.status}`;
 
   try {
-    const txt = await res.text();
-    msg = txt || msg;
+    const text = await response.text();
+    message = text || message;
+
     try {
-      const json = JSON.parse(txt);
-      msg = json?.erro || json?.message || msg;
+      const json = JSON.parse(text);
+      message = json?.message || message;
     } catch {
       // noop
     }
@@ -686,12 +785,13 @@ async function extractErrorMessage(res) {
     // noop
   }
 
-  return msg;
+  return message;
 }
 
-// ───────────────────────────────────────────────────────────────────
-// Fetch centralizado
-// ───────────────────────────────────────────────────────────────────
+/* ─────────────────────────────────────────────────────────────
+   Fetch centralizado
+────────────────────────────────────────────────────────────── */
+
 const DEFAULT_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 15000);
 
 async function rawFetch(
@@ -705,43 +805,43 @@ async function rawFetch(
     signal,
     accept = null,
     contentType = "application/json",
+    apiPrefix = true,
   } = {}
 ) {
   const safePath = normalizePath(path);
 
-  let url = /^https?:\/\//i.test(safePath)
-    ? safePath + qs(query)
-    : ensureApi(API_BASE_URL, safePath) + qs(query);
+  const url = enforceHttpsExternal(
+    isAbsoluteUrl(safePath)
+      ? safePath + qs(query)
+      : apiPrefix
+        ? ensureApi(API_BASE_URL, safePath) + qs(query)
+        : makeRootUrl(safePath, query)
+  );
 
-  try {
-    if (isHttpUrl(url)) {
-      const host = new URL(url).host;
-      if (!isLocalHost(host)) url = url.replace(/^http:\/\//i, "https://");
-    }
-  } catch {
-    // noop
-  }
-
-  const jwt = getToken();
+  const token = getToken();
 
   let finalHeaders;
 
   if (body instanceof FormData) {
     finalHeaders = {
-      ...(auth && jwt ? { Authorization: `Bearer ${jwt}` } : {}),
+      ...(auth && token ? { Authorization: `Bearer ${token}` } : {}),
       ...buildClientContextHeaders(),
       ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}),
       ...(accept ? { Accept: accept } : {}),
       ...(headers || {}),
     };
   } else {
-    finalHeaders = buildHeaders(auth, {
-      ...(accept ? { Accept: accept } : {}),
-      ...(headers || {}),
-    }, { contentType });
+    finalHeaders = buildHeaders(
+      auth,
+      {
+        ...(accept ? { Accept: accept } : {}),
+        ...(headers || {}),
+      },
+      { contentType }
+    );
   }
 
-  const initBase = {
+  const init = {
     method,
     credentials: "include",
     mode: "cors",
@@ -749,15 +849,11 @@ async function rawFetch(
     redirect: "follow",
     referrerPolicy: "strict-origin-when-cross-origin",
     headers: finalHeaders,
-  };
-
-  const init = {
-    ...initBase,
     ...(body instanceof FormData
       ? { body }
       : body !== undefined
-      ? { body: body ? JSON.stringify(body) : undefined }
-      : {}),
+        ? { body: body ? JSON.stringify(body) : undefined }
+        : {}),
   };
 
   async function runOnce() {
@@ -785,6 +881,7 @@ async function rawFetch(
       return await fetch(url, { ...init, signal: controller.signal });
     } finally {
       clearTimeout(timeoutId);
+
       if (signal) {
         try {
           signal.removeEventListener("abort", abortFromOuter);
@@ -795,20 +892,20 @@ async function rawFetch(
     }
   }
 
-  let res;
+  let response;
 
   try {
-    res = await runOnce();
-  } catch (e1) {
+    response = await runOnce();
+  } catch (firstError) {
     if (
-      e1?.name === "AbortError" ||
-      String(e1?.message || "").toLowerCase().includes("aborted") ||
+      firstError?.name === "AbortError" ||
+      String(firstError?.message || "").toLowerCase().includes("aborted") ||
       signal?.aborted
     ) {
-      throw e1;
+      throw firstError;
     }
 
-    const reason = e1?.message || e1?.name || String(e1);
+    const reason = firstError?.message || firstError?.name || String(firstError);
 
     logDev("falha na primeira tentativa, executando warmup", {
       method,
@@ -817,36 +914,39 @@ async function rawFetch(
       reason,
     });
 
-    await warmup(auth && !!jwt);
+    await warmup(auth && Boolean(token));
 
     try {
-      res = await runOnce();
-    } catch (e2) {
+      response = await runOnce();
+    } catch (secondError) {
       if (
-        e2?.name === "AbortError" ||
-        String(e2?.message || "").toLowerCase().includes("aborted") ||
+        secondError?.name === "AbortError" ||
+        String(secondError?.message || "").toLowerCase().includes("aborted") ||
         signal?.aborted
       ) {
-        throw e2;
+        throw secondError;
       }
 
       throw new ApiError(
         String(reason).toLowerCase().includes("timeout")
           ? "Tempo de resposta excedido."
           : "Falha de rede ou CORS",
-        { status: 0, url, data: e2 }
+        { status: 0, url, data: secondError }
       );
     }
   }
 
-  if (res && (res.status === 429 || res.status === 503)) {
-    const retryAfter = Number(res.headers?.get?.("Retry-After")) || 0;
-    const waitMs = retryAfter ? retryAfter * 1000 : 500 + Math.floor(Math.random() * 600);
-    await new Promise((r) => setTimeout(r, waitMs));
-    res = await runOnce();
+  if (response && (response.status === 429 || response.status === 503)) {
+    const retryAfter = Number(response.headers?.get?.("Retry-After")) || 0;
+    const waitMs = retryAfter
+      ? retryAfter * 1000
+      : 500 + Math.floor(Math.random() * 600);
+
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    response = await runOnce();
   }
 
-  return { res, url };
+  return { res: response, url };
 }
 
 async function doFetch(
@@ -862,6 +962,7 @@ async function doFetch(
     on404 = "throw",
     suppressGlobalError = false,
     signal,
+    apiPrefix = true,
   } = {}
 ) {
   const { res } = await rawFetch(path, {
@@ -871,14 +972,21 @@ async function doFetch(
     query,
     body,
     signal,
+    apiPrefix,
   });
 
-  return handle(res, { on401, on403, on404, suppressGlobalError });
+  return handle(res, {
+    on401,
+    on403,
+    on404,
+    suppressGlobalError,
+  });
 }
 
-// ───────────────────────────────────────────────────────────────────
-// Métodos HTTP
-// ───────────────────────────────────────────────────────────────────
+/* ─────────────────────────────────────────────────────────────
+   Métodos HTTP oficiais
+────────────────────────────────────────────────────────────── */
+
 export async function apiGet(path, opts = {}) {
   return doFetch(path, { method: "GET", ...opts });
 }
@@ -905,51 +1013,44 @@ export const apiGetPublic = (path, opts = {}) =>
 export const apiPostPublic = (path, body, opts = {}) =>
   apiPost(path, body, { auth: false, on401: "silent", ...opts });
 
-export async function apiAuthMe(opts = {}) {
-  return apiGet("/auth/me", {
-    auth: true,
-    on401: "silent",
-    on403: "silent",
-    suppressGlobalError: true,
-    ...opts,
-  });
-}
+/* ─────────────────────────────────────────────────────────────
+   HEAD cache/coalescing
+────────────────────────────────────────────────────────────── */
 
-// ───────────────────────────────────────────────────────────────────
-// HEAD cache/coalescing
-// ───────────────────────────────────────────────────────────────────
 const HEAD_CACHE_TTL_MS = Number(import.meta.env.VITE_API_HEAD_TTL_MS || 120_000);
-const __headCache = new Map();
-const __inflightHead = new Map();
+const headCache = new Map();
+const inflightHead = new Map();
 
 function headKeyFromPath(path) {
   return normalizePath(path);
 }
 
 function headCacheGet(key) {
-  const ent = __headCache.get(key);
-  if (!ent) return undefined;
-  if (ent.expires < Date.now()) {
-    __headCache.delete(key);
+  const entry = headCache.get(key);
+
+  if (!entry) return undefined;
+
+  if (entry.expires < Date.now()) {
+    headCache.delete(key);
     return undefined;
   }
-  return ent.value;
+
+  return entry.value;
 }
 
 function headCacheSet(key, value, ttlMs = HEAD_CACHE_TTL_MS) {
-  __headCache.set(key, { value: !!value, expires: Date.now() + ttlMs });
+  headCache.set(key, {
+    value: Boolean(value),
+    expires: Date.now() + ttlMs,
+  });
 }
 
 export function invalidateHeadPrefix(prefixPath) {
   const prefix = headKeyFromPath(prefixPath);
-  for (const k of __headCache.keys()) {
-    if (k.startsWith(prefix)) __headCache.delete(k);
-  }
-}
 
-function isModeloFilePath(p = "") {
-  const s = String(p || "");
-  return /\/chamadas\/\d+\/modelo-(banner|oral)(?:\/download)?$/i.test(s);
+  for (const key of headCache.keys()) {
+    if (key.startsWith(prefix)) headCache.delete(key);
+  }
 }
 
 export async function apiHead(path, opts = {}) {
@@ -961,33 +1062,31 @@ export async function apiHead(path, opts = {}) {
     on403 = "silent",
     ttlMs = HEAD_CACHE_TTL_MS,
     quiet = true,
-    devSuppressModelo404 = (import.meta.env.VITE_API_SUPPRESS_HEAD_404 ?? "1") !== "0",
   } = opts;
-
-  if (IS_DEV && devSuppressModelo404 && isModeloFilePath(path)) {
-    const key = headKeyFromPath(path);
-    const cached = headCacheGet(key);
-    if (typeof cached === "boolean") return cached;
-    headCacheSet(key, false, ttlMs);
-    return false;
-  }
 
   const key = headKeyFromPath(path);
   const cached = headCacheGet(key);
+
   if (typeof cached === "boolean") return cached;
+  if (inflightHead.has(key)) return inflightHead.get(key);
 
-  if (__inflightHead.has(key)) return __inflightHead.get(key);
-
-  const p = (async () => {
+  const promise = (async () => {
     const { res } = await rawFetch(path, {
       method: "HEAD",
       auth,
       headers,
       query,
       contentType: null,
-    }).catch((e) => {
-      if (!quiet) console.warn("[apiHead] erro:", e?.message || e);
-      return { res: { status: 0, ok: false, headers: new Headers() } };
+    }).catch((error) => {
+      if (!quiet) console.warn("[apiHead] erro:", error?.message || error);
+
+      return {
+        res: {
+          status: 0,
+          ok: false,
+          headers: new Headers(),
+        },
+      };
     });
 
     try {
@@ -996,50 +1095,57 @@ export async function apiHead(path, opts = {}) {
       // noop
     }
 
-    const st = res?.status ?? 0;
+    const status = res?.status ?? 0;
 
-    if (st === 401 && on401 !== "silent" && !quiet) console.warn("[apiHead] 401");
-    if (st === 403 && on403 !== "silent" && !quiet) console.warn("[apiHead] 403");
+    if (status === 401 && on401 !== "silent" && !quiet) {
+      console.warn("[apiHead] 401");
+    }
 
-    const exists =
-      res?.ok || st === 200 || st === 204
-        ? true
-        : st === 404 || st === 410 || st === 0
-        ? false
-        : false;
+    if (status === 403 && on403 !== "silent" && !quiet) {
+      console.warn("[apiHead] 403");
+    }
+
+    const exists = res?.ok || status === 200 || status === 204;
 
     headCacheSet(key, exists, ttlMs);
+
     return exists;
   })();
 
-  __inflightHead.set(key, p);
+  inflightHead.set(key, promise);
 
-  p.finally(() => {
-    setTimeout(() => __inflightHead.delete(key), 0);
+  promise.finally(() => {
+    setTimeout(() => inflightHead.delete(key), 0);
   });
 
-  return p;
+  return promise;
 }
 
-// ───────────────────────────────────────────────────────────────────
-// Arquivos / response crua
-// ───────────────────────────────────────────────────────────────────
-function parseContentDispositionFilename(cd = "") {
-  if (!cd) return undefined;
+/* ─────────────────────────────────────────────────────────────
+   Arquivos / response crua
+────────────────────────────────────────────────────────────── */
 
-  const star = cd.match(/filename\*=(?:UTF-8'')?([^;]+)/i);
+function parseContentDispositionFilename(contentDisposition = "") {
+  if (!contentDisposition) return undefined;
+
+  const star = contentDisposition.match(/filename\*=(?:UTF-8'')?([^;]+)/i);
+
   if (star) {
     try {
-      const val = star[1].trim().replace(/^"(.*)"$/, "$1");
-      return decodeURIComponent(val);
+      const value = star[1].trim().replace(/^"(.*)"$/, "$1");
+      return decodeURIComponent(value);
     } catch {
       // noop
     }
   }
 
-  const normal = cd.match(/filename=(?:"([^"]+)"|([^;]+))/i);
+  const normal = contentDisposition.match(/filename=(?:"([^"]+)"|([^;]+))/i);
+
   if (normal) {
-    const raw = (normal[1] || normal[2] || "").trim().replace(/^"(.*)"$/, "$1");
+    const raw = (normal[1] || normal[2] || "")
+      .trim()
+      .replace(/^"(.*)"$/, "$1");
+
     return raw.replace(/^'(.*)'$/, "$1").trim();
   }
 
@@ -1048,6 +1154,7 @@ function parseContentDispositionFilename(cd = "") {
 
 export async function apiGetResponse(path, opts = {}) {
   const { on401 = "silent", on403 = "silent", ...rest } = opts;
+
   const { res, url } = await rawFetch(path, {
     method: "GET",
     ...rest,
@@ -1056,28 +1163,29 @@ export async function apiGetResponse(path, opts = {}) {
   throwForAuthStatus(res, url, { on401, on403 });
 
   if (!res.ok) {
-    const msg = await extractErrorMessage(res);
-    throw new ApiError(msg, { status: res.status, url });
+    const message = await extractErrorMessage(res);
+    throw new ApiError(message, { status: res.status, url });
   }
 
   return res;
 }
 
 export async function apiGetFile(path, opts = {}) {
-  const res = await apiGetResponse(path, {
+  const response = await apiGetResponse(path, {
     accept: "*/*",
     ...opts,
   });
 
-  const blob = await res.blob();
-  const cd = res.headers.get("Content-Disposition") || "";
-  const filename = parseContentDispositionFilename(cd);
+  const blob = await response.blob();
+  const contentDisposition = response.headers.get("Content-Disposition") || "";
+  const filename = parseContentDispositionFilename(contentDisposition);
 
   return { blob, filename };
 }
 
 export async function apiPostFile(path, body, opts = {}) {
   const { on401 = "silent", on403 = "silent", ...rest } = opts;
+
   const { res, url } = await rawFetch(path, {
     method: "POST",
     body,
@@ -1088,167 +1196,225 @@ export async function apiPostFile(path, body, opts = {}) {
   throwForAuthStatus(res, url, { on401, on403 });
 
   if (!res.ok) {
-    const msg = await extractErrorMessage(res);
-    throw new ApiError(msg, { status: res.status, url });
+    const message = await extractErrorMessage(res);
+    throw new ApiError(message, { status: res.status, url });
   }
 
   const blob = await res.blob();
-  const cd = res.headers.get("Content-Disposition") || "";
-  const filename = parseContentDispositionFilename(cd);
+  const contentDisposition = res.headers.get("Content-Disposition") || "";
+  const filename = parseContentDispositionFilename(contentDisposition);
 
   return { blob, filename };
 }
 
-// Upload multipart
 export async function apiUpload(path, formDataOrFile, opts = {}) {
-  let fd;
+  let formData;
 
   if (formDataOrFile instanceof FormData) {
-    fd = formDataOrFile;
+    formData = formDataOrFile;
   } else if (formDataOrFile instanceof Blob) {
-    const fieldName = opts.fieldName || "poster";
-    fd = new FormData();
+    const fieldName = opts.fieldName || "arquivo";
+
+    formData = new FormData();
+
     const fallbackName =
       (formDataOrFile && "name" in formDataOrFile && formDataOrFile.name) ||
-      `${fieldName}${/presentation/i.test(formDataOrFile.type || "") ? ".pptx" : ""}`;
-    fd.append(fieldName, formDataOrFile, fallbackName);
+      fieldName;
+
+    formData.append(fieldName, formDataOrFile, fallbackName);
   } else {
     throw new Error("apiUpload: passe um FormData ou File/Blob.");
   }
 
-  return doFetch(path, { method: "POST", body: fd, ...opts });
-}
-
-export const apiUploadPoster = (submissaoId, fileOrFormData, opts = {}) => {
-  if (!submissaoId) throw new Error("submissaoId é obrigatório");
-  return apiUpload(`/submissao/${submissaoId}/poster`, fileOrFormData, {
+  return doFetch(path, {
+    method: "POST",
+    body: formData,
     ...opts,
-    fieldName: "poster",
   });
-};
-
-// ───────────────────────────────────────────────────────────────────
-// Helpers específicos
-// ───────────────────────────────────────────────────────────────────
-export async function apiGetTurmaDatas(turmaId, via = "datas") {
-  if (!turmaId) throw new Error("turmaId obrigatório");
-  return apiGet(`/turmas/${turmaId}/datas`, { query: { via } });
 }
 
-export async function apiGetTurmaDatasAuto(turmaId) {
-  let out = await apiGetTurmaDatas(turmaId, "datas");
-  if (Array.isArray(out) && out.length) return out;
-
-  out = await apiGetTurmaDatas(turmaId, "presencas");
-  if (Array.isArray(out) && out.length) return out;
-
-  return apiGetTurmaDatas(turmaId, "intervalo");
-}
-
-export async function apiGetMinhasPresencas(opts = {}) {
-  return apiGet("/presencas/minhas", opts);
-}
-
-export async function apiGetMePresencas(opts = {}) {
-  return apiGet("/presencas/me", opts);
-}
-
-export async function apiValidarPresencaPublico({
-  evento,
-  usuario,
-  evento_id,
-  usuario_id,
-} = {}) {
-  const query = { evento: evento ?? evento_id, usuario: usuario ?? usuario_id };
-  return apiGet("/presencas/validar", { auth: false, on401: "silent", query });
-}
-
-export async function apiPresencasTurmaPDF(turmaId) {
-  if (!turmaId) throw new Error("turmaId obrigatório");
-  return apiGetFile(`/presencas/turma/${turmaId}/pdf`);
-}
-
-// ───────────────────────────────────────────────────────────────────
-// Utilitários
-// ───────────────────────────────────────────────────────────────────
-export const onlyDigits = (s) => String(s ?? "").replace(/\D/g, "");
+export const onlyDigitsString = (value) => String(value ?? "").replace(/\D/g, "");
 
 export function downloadBlob(filename = "download", blob) {
   const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename || "download";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  const anchor = document.createElement("a");
+
+  anchor.href = url;
+  anchor.download = filename || "download";
+
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+
   URL.revokeObjectURL(url);
 }
+/* ─────────────────────────────────────────────────────────────
+   Auth público — contrato oficial
+────────────────────────────────────────────────────────────── */
 
-// ───────────────────────────────────────────────────────────────────
-// APIs de Assinaturas/Certificados Avulsos
-// ───────────────────────────────────────────────────────────────────
-export async function apiGetAssinaturas(opts = {}) {
-  return apiGet("/assinaturas", { on401: "silent", on403: "silent", ...opts });
-}
-
-export async function apiCertAvulsoPDF(id, { palestrante = false, assinatura2_id } = {}) {
-  if (!id) throw new Error("id do certificado obrigatório");
-  const query = {
-    ...(palestrante ? { palestrante: "1" } : {}),
-    ...(assinatura2_id ? { assinatura2_id } : {}),
-  };
-  return apiGetFile(`/certificados-avulsos/${id}/pdf`, { query });
-}
-
-// ───────────────────────────────────────────────────────────────────
-// APIs de Perfil
-// ───────────────────────────────────────────────────────────────────
-export async function apiPerfilOpcao(opts = {}) {
-  return apiGet("/perfil/opcao", {
-    auth: true,
+export async function apiAuthLogin(payload, opts = {}) {
+  return apiPostPublic("/login", payload, {
     on401: "silent",
     on403: "silent",
     ...opts,
   });
 }
 
-function inferPerfilIncompleto(me) {
-  const required = [
-    "cargo_id",
-    "unidade_id",
-    "genero_id",
-    "orientacao_sexual_id",
-    "cor_raca_id",
-    "escolaridade_id",
-    "deficiencia_id",
-    "data_nascimento",
-  ];
-  return required.some((k) => me?.[k] === null || me?.[k] === undefined || me?.[k] === "");
+export async function apiAuthGoogle(payload, opts = {}) {
+  return apiPostPublic("/auth/google", payload, {
+    on401: "silent",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiCadastrarUsuario(payload, opts = {}) {
+  return apiPostPublic("/auth/cadastro", payload, opts);
+}
+
+export async function apiEsqueciSenha(payload, opts = {}) {
+  return apiPostPublic("/auth/esqueci-senha", payload, opts);
+}
+
+export async function apiRedefinirSenha(payload, opts = {}) {
+  return apiPostPublic("/auth/redefinir-senha", payload, opts);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Perfil — contrato oficial
+────────────────────────────────────────────────────────────── */
+
+export async function apiPerfilOpcao(opts = {}) {
+  const response = await apiGetPublic("/perfil/opcao", {
+    on401: "silent",
+    on403: "silent",
+    ...opts,
+  });
+
+  return response?.data || {
+    cargos: [],
+    unidades: [],
+    generos: [],
+    orientacoes_sexuais: [],
+    cores_racas: [],
+    escolaridades: [],
+    deficiencias: [],
+  };
 }
 
 export async function apiPerfilMe(opts = {}) {
-  const me = await apiGet("/perfil/me", {
+  const response = await apiGet("/perfil/me", {
     auth: true,
     on401: "silent",
     on403: "silent",
+    suppressGlobalError: true,
     ...opts,
   });
 
+  const usuario = response?.data || null;
+
   try {
     const incompleto =
-      typeof me?.perfil_incompleto === "boolean"
-        ? me.perfil_incompleto
-        : inferPerfilIncompleto(me);
-    setPerfilIncompletoFlag(!!incompleto);
+      typeof usuario?.perfil_incompleto === "boolean"
+        ? usuario.perfil_incompleto
+        : inferPerfilIncompleto(usuario);
+
+    setPerfilIncompletoFlag(Boolean(incompleto));
   } catch {
     // noop
   }
 
-  return me;
+  return usuario;
 }
 
 export async function apiPerfilUpdate(payload, opts = {}) {
-  return apiPut("/perfil/me", payload, {
+  const response = await apiPut("/perfil/me", payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+
+  const usuario = response?.data || null;
+
+  try {
+    const incompleto =
+      typeof usuario?.perfil_incompleto === "boolean"
+        ? usuario.perfil_incompleto
+        : inferPerfilIncompleto(usuario);
+
+    setPerfilIncompletoFlag(Boolean(incompleto));
+  } catch {
+    // noop
+  }
+
+  return usuario;
+}
+
+export async function apiAuthMe(opts = {}) {
+  return apiPerfilMe(opts);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Lookup público — contrato oficial singular
+────────────────────────────────────────────────────────────── */
+
+export async function apiLookupCargo(opts = {}) {
+  return apiGetPublic("/lookup/cargo", opts);
+}
+
+export async function apiLookupUnidade(opts = {}) {
+  return apiGetPublic("/lookup/unidade", opts);
+}
+
+export async function apiLookupGenero(opts = {}) {
+  return apiGetPublic("/lookup/genero", opts);
+}
+
+export async function apiLookupOrientacaoSexual(opts = {}) {
+  return apiGetPublic("/lookup/orientacao-sexual", opts);
+}
+
+export async function apiLookupCorRaca(opts = {}) {
+  return apiGetPublic("/lookup/cor-raca", opts);
+}
+
+export async function apiLookupEscolaridade(opts = {}) {
+  return apiGetPublic("/lookup/escolaridade", opts);
+}
+
+export async function apiLookupDeficiencia(opts = {}) {
+  return apiGetPublic("/lookup/deficiencia", opts);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Usuário — contrato oficial
+────────────────────────────────────────────────────────────── */
+
+export async function apiUsuarioBuscar(params = {}, opts = {}) {
+  return apiGet("/usuario/buscar", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiUsuarioListar(params = {}, opts = {}) {
+  return apiGet("/usuario", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiUsuarioObter(id, opts = {}) {
+  if (!id) throw new Error("ID do usuário é obrigatório.");
+
+  return apiGet(`/usuario/${id}`, {
     auth: true,
     on401: "redirect",
     on403: "silent",
@@ -1256,19 +1422,1875 @@ export async function apiPerfilUpdate(payload, opts = {}) {
   });
 }
 
-export function apiResetCertificadosTurma(turmaId, body = {}) {
-  if (!turmaId) throw new Error("turmaId é obrigatório");
-  return apiPost(`/certificados/admin/turmas/${turmaId}/reset`, body);
+export async function apiUsuarioAtualizarBasico(id, payload, opts = {}) {
+  if (!id) throw new Error("ID do usuário é obrigatório.");
+
+  return apiPatch(`/usuario/${id}/basico`, payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
 }
 
-// ───────────────────────────────────────────────────────────────────
-// Helpers de Modelo de Banner por Chamada
-// ───────────────────────────────────────────────────────────────────
+export async function apiUsuarioAtualizarPerfilInstitucional(
+  id,
+  payload,
+  opts = {}
+) {
+  if (!id) throw new Error("ID do usuário é obrigatório.");
+
+  return apiPatch(`/usuario/${id}/perfil-institucional`, payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiUsuarioAtualizarDadosAdministrativos(
+  id,
+  payload,
+  opts = {}
+) {
+  if (!id) throw new Error("ID do usuário é obrigatório.");
+
+  return apiPatch(`/usuario/${id}/dados-administrativos`, payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiUsuarioAtualizarPerfil(id, payload, opts = {}) {
+  if (!id) throw new Error("ID do usuário é obrigatório.");
+
+  return apiPatch(`/usuario/${id}/perfil`, payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiUsuarioListarorganizador(opts = {}) {
+  return apiGet("/usuario/organizador", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiUsuarioListarAvaliador(params = {}, opts = {}) {
+  return apiGet("/usuario/avaliador", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiUsuarioResumo(id, opts = {}) {
+  if (!id) throw new Error("ID do usuário é obrigatório.");
+
+  return apiGet(`/usuario/${id}/resumo`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiUsuarioEstatistica(opts = {}) {
+  return apiGet("/usuario/estatistica", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiUsuarioEstatisticaDetalhada(opts = {}) {
+  return apiGet("/usuario/estatistica/detalhe", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Dashboard — contrato oficial
+────────────────────────────────────────────────────────────── */
+
+export async function apiDashboardResumo(opts = {}) {
+  return apiGet("/dashboard", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiDashboardAvaliacaoRecenteorganizador(opts = {}) {
+  return apiGet("/dashboard/avaliacao-recente", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiDashboardAnalitico(params = {}, opts = {}) {
+  return apiGet("/dashboard/administrador", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   organizador — contrato oficial v2.0
+────────────────────────────────────────────────────────────── */
+
+export async function apiorganizadorListar(params = {}, opts = {}) {
+  return apiGet("/organizador", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiorganizadorEventosAvaliacao(organizadorId, opts = {}) {
+  if (!organizadorId) throw new Error("organizador_id é obrigatório.");
+
+  return apiGet(`/organizador/${organizadorId}/eventos-avaliacao`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiorganizadorTurmas(organizadorId, opts = {}) {
+  if (!organizadorId) throw new Error("organizador_id é obrigatório.");
+
+  return apiGet(`/organizador/${organizadorId}/turmas`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiorganizadorMinhasTurmas(params = {}, opts = {}) {
+  return apiGet("/organizador/minhas/turmas", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Informação publicada — contrato oficial
+────────────────────────────────────────────────────────────── */
+
+export async function apiInformacaoPublicadaListar(opts = {}) {
+  return apiGet("/informacoes/publicadas", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Notificação — contrato oficial
+────────────────────────────────────────────────────────────── */
+
+export async function apiNotificacaoListar(params = {}, opts = {}) {
+  return apiGet("/notificacao", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiNotificacaoResumo(opts = {}) {
+  return apiGet("/notificacao/resumo", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiNotificacaoMarcarLida(id, opts = {}) {
+  if (!id) throw new Error("ID da notificação é obrigatório.");
+
+  return apiPatch(
+    `/notificacao/${id}/lida`,
+    {},
+    {
+      auth: true,
+      on401: "redirect",
+      on403: "silent",
+      ...opts,
+    }
+  );
+}
+
+export async function apiNotificacaoMarcarTodasLidas(opts = {}) {
+  return apiPatch(
+    "/notificacao/lida/todas",
+    {},
+    {
+      auth: true,
+      on401: "redirect",
+      on403: "silent",
+      ...opts,
+    }
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Evento — contrato oficial
+────────────────────────────────────────────────────────────── */
+
+export async function apiEventoListarAdministrador(params = {}, opts = {}) {
+  return apiGet("/evento/administrador", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiEventoFolderResponse(eventoId, opts = {}) {
+  if (!eventoId) throw new Error("eventoId é obrigatório.");
+
+  return apiGetResponse(`/evento/${eventoId}/folder`, {
+    auth: false,
+    accept: "image/*",
+    on401: "silent",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiEventoProgramacaoResponse(eventoId, opts = {}) {
+  if (!eventoId) throw new Error("eventoId é obrigatório.");
+
+  return apiGetResponse(`/evento/${eventoId}/programacao`, {
+    auth: false,
+    accept: "application/pdf",
+    on401: "silent",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiEventoProgramacaoFile(eventoId, opts = {}) {
+  if (!eventoId) throw new Error("eventoId é obrigatório.");
+
+  return apiGetFile(`/evento/${eventoId}/programacao`, {
+    auth: false,
+    accept: "application/pdf",
+    on401: "silent",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Turma — contrato oficial
+────────────────────────────────────────────────────────────── */
+
+export async function apiTurmaListarPorEvento(eventoId, opts = {}) {
+  if (!eventoId) throw new Error("evento_id é obrigatório.");
+
+  return apiGet(`/turma/evento/${eventoId}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiTurmaListarPorEventoSimples(eventoId, opts = {}) {
+  if (!eventoId) throw new Error("evento_id é obrigatório.");
+
+  return apiGet(`/turma/evento/${eventoId}/simples`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiTurmaListarAdministrador(opts = {}) {
+  return apiGet("/turma/administrador", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiTurmaListarComUsuario(opts = {}) {
+  return apiGet("/turma/com-usuario", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiTurmaObter(turmaId, opts = {}) {
+  if (!turmaId) throw new Error("turma_id é obrigatório.");
+
+  return apiGet(`/turma/${turmaId}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiTurmaCriar(payload, opts = {}) {
+  return apiPost("/turma", payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiTurmaAtualizar(turmaId, payload, opts = {}) {
+  if (!turmaId) throw new Error("turma_id é obrigatório.");
+
+  return apiPut(`/turma/${turmaId}`, payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiTurmaExcluir(turmaId, opts = {}) {
+  if (!turmaId) throw new Error("turma_id é obrigatório.");
+
+  return apiDelete(`/turma/${turmaId}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiTurmaDatas(turmaId, opts = {}) {
+  if (!turmaId) throw new Error("turma_id é obrigatório.");
+
+  return apiGet(`/turma/${turmaId}/data`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiTurmaOcorrencias(turmaId, opts = {}) {
+  if (!turmaId) throw new Error("turma_id é obrigatório.");
+
+  return apiGet(`/turma/${turmaId}/ocorrencia`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiTurmaDetalhe(turmaId, opts = {}) {
+  if (!turmaId) throw new Error("turma_id é obrigatório.");
+
+  return apiGet(`/turma/${turmaId}/detalhe`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiTurmaListarOrganizadores(turmaId, opts = {}) {
+  if (!turmaId) throw new Error("turma_id é obrigatório.");
+
+  return apiGet(`/turma/${turmaId}/organizador`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiTurmaAdicionarOrganizador(turmaId, organizadores, opts = {}) {
+  if (!turmaId) throw new Error("turma_id é obrigatório.");
+
+  return apiPost(
+    `/turma/${turmaId}/organizador`,
+    { organizadores },
+    {
+      auth: true,
+      on401: "redirect",
+      on403: "silent",
+      ...opts,
+    }
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Inscrição — contrato oficial
+────────────────────────────────────────────────────────────── */
+
+export async function apiInscricaoMinhas(opts = {}) {
+  return apiGet("/inscricao/minha", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiInscricaoListarPorTurma(turmaId, opts = {}) {
+  if (!turmaId) throw new Error("turma_id é obrigatório.");
+
+  return apiGet(`/inscricao/turma/${turmaId}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiInscricaoCriar(turmaId, opts = {}) {
+  if (!turmaId) throw new Error("turma_id é obrigatório.");
+
+  return apiPost(
+    "/inscricao",
+    { turma_id: Number(turmaId) },
+    {
+      auth: true,
+      on401: "redirect",
+      on403: "silent",
+      ...opts,
+    }
+  );
+}
+
+export async function apiInscricaoCancelar(inscricaoId, opts = {}) {
+  if (!inscricaoId) throw new Error("inscricao_id é obrigatório.");
+
+  return apiDelete(`/inscricao/${inscricaoId}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiInscricaoCancelarMinhaPorTurma(turmaId, opts = {}) {
+  if (!turmaId) throw new Error("turma_id é obrigatório.");
+
+  return apiDelete(`/inscricao/minha/turma/${turmaId}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiInscricaoCancelarUsuarioNaTurma(
+  turmaId,
+  usuarioId,
+  opts = {}
+) {
+  if (!turmaId) throw new Error("turma_id é obrigatório.");
+  if (!usuarioId) throw new Error("usuario_id é obrigatório.");
+
+  return apiDelete(`/inscricao/turma/${turmaId}/usuario/${usuarioId}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiInscricaoConflito(turmaId, opts = {}) {
+  if (!turmaId) throw new Error("turma_id é obrigatório.");
+
+  return apiGet(`/inscricao/conflito/${turmaId}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Avaliação — contrato oficial
+────────────────────────────────────────────────────────────── */
+
+export async function apiAvaliacaoListarPorTurma(turmaId, opts = {}) {
+  if (!turmaId) throw new Error("turma_id é obrigatório.");
+
+  return apiGet(`/avaliacao/turma/${turmaId}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiAvaliacaoDisponiveis(opts = {}) {
+  return apiGet("/avaliacao/disponivel", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiQuestionarioDisponiveis(opts = {}) {
+  return apiGet("/questionario/disponivel", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiQuestionarioIniciar(
+  { questionario_id, turma_id } = {},
+  opts = {}
+) {
+  if (!questionario_id) throw new Error("questionario_id é obrigatório.");
+  if (!turma_id) throw new Error("turma_id é obrigatório.");
+
+  return apiPost(
+    `/questionario/${questionario_id}/iniciar/turma/${turma_id}`,
+    {},
+    {
+      auth: true,
+      on401: "redirect",
+      on403: "silent",
+      ...opts,
+    }
+  );
+}
+
+export async function apiQuestionarioResponder(
+  { questionario_id, turma_id } = {},
+  opts = {}
+) {
+  if (!questionario_id) throw new Error("questionario_id é obrigatório.");
+  if (!turma_id) throw new Error("turma_id é obrigatório.");
+
+  return apiGet(`/questionario/${questionario_id}/responder/turma/${turma_id}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiQuestionarioEnviar(
+  { questionario_id, turma_id, respostas } = {},
+  opts = {}
+) {
+  if (!questionario_id) throw new Error("questionario_id é obrigatório.");
+  if (!turma_id) throw new Error("turma_id é obrigatório.");
+
+  return apiPost(
+    `/questionario/${questionario_id}/enviar/turma/${turma_id}`,
+    { respostas: Array.isArray(respostas) ? respostas : [] },
+    {
+      auth: true,
+      on401: "redirect",
+      on403: "silent",
+      ...opts,
+    }
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Presença — contrato oficial
+────────────────────────────────────────────────────────────── */
+
+export async function apiPresencaValidarPublico({
+  evento_id,
+  usuario_id,
+  data_presenca,
+} = {}) {
+  return apiGetPublic("/presenca/validar", {
+    query: {
+      evento_id,
+      usuario_id,
+      data_presenca,
+    },
+    on401: "silent",
+  });
+}
+
+export async function apiPresencaMinhas(opts = {}) {
+  return apiGet("/presenca/minha", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPresencaMinhaResumo(opts = {}) {
+  return apiGet("/presenca/minha/resumo", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPresencaRegistrar(payload = {}, opts = {}) {
+  return apiPost("/presenca", payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPresencaConfirmarQr(turmaId, opts = {}) {
+  if (!turmaId) throw new Error("turma_id é obrigatório.");
+
+  return apiPost(
+    "/presenca/qr",
+    { turma_id: Number(turmaId) },
+    {
+      auth: true,
+      on401: "redirect",
+      on403: "silent",
+      ...opts,
+    }
+  );
+}
+
+export async function apiPresencaConfirmarToken(token, opts = {}) {
+  const tokenSeguro = String(token || "").trim();
+
+  if (!tokenSeguro) throw new Error("token é obrigatório.");
+
+  return apiPost(
+    "/presenca/token",
+    { token: tokenSeguro },
+    {
+      auth: true,
+      on401: "redirect",
+      on403: "silent",
+      ...opts,
+    }
+  );
+}
+
+export async function apiPresencaTurmasorganizador(opts = {}) {
+  return apiGet("/presenca/organizador/turma", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPresencaTurmaDetalhe(turmaId, opts = {}) {
+  if (!turmaId) throw new Error("turma_id é obrigatório.");
+
+  return apiGet(`/presenca/turma/${turmaId}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPresencaDetalhesTurma(turmaId, opts = {}) {
+  if (!turmaId) throw new Error("turma_id é obrigatório.");
+
+  return apiGet(`/presenca/turma/${turmaId}/detalhes`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPresencaTurmaFrequencia(turmaId, opts = {}) {
+  if (!turmaId) throw new Error("turma_id é obrigatório.");
+
+  return apiGet(`/presenca/turma/${turmaId}/frequencia`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPresencasTurmaPDF(turmaId, opts = {}) {
+  if (!turmaId) throw new Error("turma_id é obrigatório.");
+
+  return apiGetFile(`/presenca/turma/${turmaId}/pdf`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPresencaRegistrarManual(payload = {}, opts = {}) {
+  return apiPost("/presenca/manual", payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPresencaConfirmarManualHoje(payload = {}, opts = {}) {
+  return apiPost("/presenca/manual/hoje", payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPresencaValidarManual(payload = {}, opts = {}) {
+  return apiPut("/presenca/manual/validar", payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPresencaConfirmarorganizador(payload = {}, opts = {}) {
+  return apiPost("/presenca/organizador/confirmar", payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPresencaAdministrador(opts = {}) {
+  return apiGet("/presenca/administrador", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Assinatura — contrato oficial singular
+────────────────────────────────────────────────────────────── */
+
+export async function apiAssinaturaObter(opts = {}) {
+  return apiGet("/assinatura", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    suppressGlobalError: true,
+    ...opts,
+  });
+}
+
+export async function apiAssinaturaSalvar(payload, opts = {}) {
+  return apiPost("/assinatura", payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiAssinaturaAuto(opts = {}) {
+  return apiPost(
+    "/assinatura/auto",
+    {},
+    {
+      auth: true,
+      on401: "redirect",
+      on403: "silent",
+      suppressGlobalError: true,
+      ...opts,
+    }
+  );
+}
+
+export async function apiAssinaturaListar(opts = {}) {
+  return apiGet("/assinatura/lista", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Certificado — contrato oficial
+────────────────────────────────────────────────────────────── */
+
+export async function apiCertAvulsoPDF(
+  id,
+  { palestrante = false, assinatura2_id } = {}
+) {
+  if (!id) throw new Error("ID do certificado é obrigatório.");
+
+  const query = {
+    ...(palestrante ? { palestrante: "1" } : {}),
+    ...(assinatura2_id ? { assinatura2_id } : {}),
+  };
+
+  return apiGetFile(`/certificado/avulso/${id}/pdf`, {
+    query,
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+  });
+}
+
+export async function apiCertificadoAdminArvore(params = {}, opts = {}) {
+  return apiGet("/certificado/admin/arvore", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiCertificadoProcessarPendentesPorTurma(
+  turmaId,
+  opts = {}
+) {
+  if (!turmaId) throw new Error("turma_id é obrigatório.");
+
+  return apiPost(
+    `/certificado/admin/turma/${turmaId}/processar-pendentes`,
+    {},
+    {
+      auth: true,
+      on401: "redirect",
+      on403: "silent",
+      ...opts,
+    }
+  );
+}
+
+export async function apiCertificadoDownload(certificadoId, opts = {}) {
+  if (!certificadoId) throw new Error("certificado_id é obrigatório.");
+
+  return apiGetFile(`/certificado/${certificadoId}/download`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiCertificadoElegivel(opts = {}) {
+  return apiGet("/certificado/meus", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiCertificadoGerar(payload = {}, opts = {}) {
+  return apiPost("/certificado/gerar", payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiCertificadoValidarPublico(codigoValidacao, opts = {}) {
+  const codigo = String(codigoValidacao || "").trim();
+
+  if (!codigo) throw new Error("codigo_validacao é obrigatório.");
+
+  return apiGetPublic(`/certificado/validar/${encodeURIComponent(codigo)}`, {
+    on401: "silent",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Calendário Anual de EPS — contrato oficial v2.0
+────────────────────────────────────────────────────────────── */
+
+export async function apiCalendarioEPSListar(params = {}, opts = {}) {
+  return apiGet("/calendario-eps", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiCalendarioEPSDepartamentos(opts = {}) {
+  return apiGet("/calendario-eps/departamentos", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiCalendarioEPSTipos(opts = {}) {
+  return apiGet("/calendario-eps/tipos", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiCalendarioEPSResumoMensal(
+  { ano, mes } = {},
+  opts = {}
+) {
+  if (!ano) throw new Error("ano é obrigatório.");
+  if (!mes) throw new Error("mes é obrigatório.");
+
+  return apiGet("/calendario-eps/resumo-mensal", {
+    auth: true,
+    query: {
+      ano,
+      mes,
+    },
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiCalendarioEPSResumoAnual({ ano } = {}, opts = {}) {
+  if (!ano) throw new Error("ano é obrigatório.");
+
+  return apiGet("/calendario-eps/resumo-anual", {
+    auth: true,
+    query: {
+      ano,
+    },
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiCalendarioEPSCriar(payload = {}, opts = {}) {
+  return apiPost("/calendario-eps", payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiCalendarioEPSAtualizar(id, payload = {}, opts = {}) {
+  if (!id) throw new Error("id da programação de EPS é obrigatório.");
+
+  return apiPut(`/calendario-eps/${id}`, payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiCalendarioEPSExcluir(id, opts = {}) {
+  if (!id) throw new Error("id da programação de EPS é obrigatório.");
+
+  return apiDelete(`/calendario-eps/${id}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Cursos Online — contrato oficial v2.0
+────────────────────────────────────────────────────────────── */
+
+export async function apiCursoOnlineListarPublicados(params = {}, opts = {}) {
+  return apiGet("/curso-online/publicado", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiCursoOnlineObter(id, opts = {}) {
+  if (!id) throw new Error("id do curso online é obrigatório.");
+
+  return apiGet(`/curso-online/${id}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiCursoOnlineListarAdmin(params = {}, opts = {}) {
+  return apiGet("/curso-online/admin", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiCursoOnlineCriar(payload = {}, opts = {}) {
+  return apiPost("/curso-online/admin", payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiCursoOnlineAtualizar(id, payload = {}, opts = {}) {
+  if (!id) throw new Error("id do curso online é obrigatório.");
+
+  return apiPut(`/curso-online/admin/${id}`, payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiCursoOnlineAlterarStatus(id, status, opts = {}) {
+  if (!id) throw new Error("id do curso online é obrigatório.");
+  if (!status) throw new Error("status do curso online é obrigatório.");
+
+  return apiPatch(
+    `/curso-online/admin/${id}/status`,
+    { status },
+    {
+      auth: true,
+      on401: "redirect",
+      on403: "silent",
+      ...opts,
+    }
+  );
+}
+
+export async function apiCursoOnlineExcluir(id, opts = {}) {
+  if (!id) throw new Error("id do curso online é obrigatório.");
+
+  return apiDelete(`/curso-online/admin/${id}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Pesquisas — contrato oficial v2.0
+────────────────────────────────────────────────────────────── */
+
+export async function apiPesquisaListarPublicadas(params = {}, opts = {}) {
+  return apiGet("/pesquisa/publicada", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPesquisaObter(id, opts = {}) {
+  if (!id) throw new Error("id da pesquisa é obrigatório.");
+
+  return apiGet(`/pesquisa/${id}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPesquisaResponder(id, payload = {}, opts = {}) {
+  if (!id) throw new Error("id da pesquisa é obrigatório.");
+
+  return apiPost(`/pesquisa/${id}/responder`, payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPesquisaListarAdmin(params = {}, opts = {}) {
+  return apiGet("/pesquisa/admin", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPesquisaCriar(payload = {}, opts = {}) {
+  return apiPost("/pesquisa/admin", payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPesquisaObterAdmin(id, opts = {}) {
+  if (!id) throw new Error("id da pesquisa é obrigatório.");
+
+  return apiGet(`/pesquisa/admin/${id}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPesquisaAtualizar(id, payload = {}, opts = {}) {
+  if (!id) throw new Error("id da pesquisa é obrigatório.");
+
+  return apiPut(`/pesquisa/admin/${id}`, payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPesquisaAlterarStatus(id, status, opts = {}) {
+  if (!id) throw new Error("id da pesquisa é obrigatório.");
+  if (!status) throw new Error("status da pesquisa é obrigatório.");
+
+  return apiPatch(
+    `/pesquisa/admin/${id}/status`,
+    { status },
+    {
+      auth: true,
+      on401: "redirect",
+      on403: "silent",
+      ...opts,
+    }
+  );
+}
+
+export async function apiPesquisaRespostas(id, opts = {}) {
+  if (!id) throw new Error("id da pesquisa é obrigatório.");
+
+  return apiGet(`/pesquisa/admin/${id}/resposta`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPesquisaResultado(id, opts = {}) {
+  if (!id) throw new Error("id da pesquisa é obrigatório.");
+
+  return apiGet(`/pesquisa/admin/${id}/resultado`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPesquisaExcluir(id, opts = {}) {
+  if (!id) throw new Error("id da pesquisa é obrigatório.");
+
+  return apiDelete(`/pesquisa/admin/${id}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Interações — contrato oficial v2.0
+────────────────────────────────────────────────────────────── */
+
+export async function apiInteracaoListarPublicadas(params = {}, opts = {}) {
+  return apiGet("/interacao/publicada", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiInteracaoObter(id, opts = {}) {
+  if (!id) throw new Error("id da interação é obrigatório.");
+
+  return apiGet(`/interacao/${id}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiInteracaoResponder(id, payload = {}, opts = {}) {
+  if (!id) throw new Error("id da interação é obrigatório.");
+
+  return apiPost(`/interacao/${id}/responder`, payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiInteracaoListarAdmin(params = {}, opts = {}) {
+  return apiGet("/interacao/admin", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiInteracaoCriar(payload = {}, opts = {}) {
+  return apiPost("/interacao/admin", payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiInteracaoObterAdmin(id, opts = {}) {
+  if (!id) throw new Error("id da interação é obrigatório.");
+
+  return apiGet(`/interacao/admin/${id}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiInteracaoAtualizar(id, payload = {}, opts = {}) {
+  if (!id) throw new Error("id da interação é obrigatório.");
+
+  return apiPut(`/interacao/admin/${id}`, payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiInteracaoAlterarStatus(id, status, opts = {}) {
+  if (!id) throw new Error("id da interação é obrigatório.");
+  if (!status) throw new Error("status da interação é obrigatório.");
+
+  return apiPatch(
+    `/interacao/admin/${id}/status`,
+    { status },
+    {
+      auth: true,
+      on401: "redirect",
+      on403: "silent",
+      ...opts,
+    }
+  );
+}
+
+export async function apiInteracaoExcluir(id, opts = {}) {
+  if (!id) throw new Error("id da interação é obrigatório.");
+
+  return apiDelete(`/interacao/admin/${id}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiInteracaoIniciarExecucao(id, opts = {}) {
+  if (!id) throw new Error("id da interação é obrigatório.");
+
+  return apiPost(
+    `/interacao/admin/${id}/execucao/iniciar`,
+    {},
+    {
+      auth: true,
+      on401: "redirect",
+      on403: "silent",
+      ...opts,
+    }
+  );
+}
+
+export async function apiInteracaoAbrirPergunta(id, perguntaId, opts = {}) {
+  if (!id) throw new Error("id da interação é obrigatório.");
+  if (!perguntaId) throw new Error("pergunta_id é obrigatório.");
+
+  return apiPost(
+    `/interacao/admin/${id}/pergunta/abrir`,
+    { pergunta_id: Number(perguntaId) },
+    {
+      auth: true,
+      on401: "redirect",
+      on403: "silent",
+      ...opts,
+    }
+  );
+}
+
+export async function apiInteracaoFecharPergunta(id, perguntaId, opts = {}) {
+  if (!id) throw new Error("id da interação é obrigatório.");
+  if (!perguntaId) throw new Error("pergunta_id é obrigatório.");
+
+  return apiPost(
+    `/interacao/admin/${id}/pergunta/fechar`,
+    { pergunta_id: Number(perguntaId) },
+    {
+      auth: true,
+      on401: "redirect",
+      on403: "silent",
+      ...opts,
+    }
+  );
+}
+
+export async function apiInteracaoExibirGabarito(id, perguntaId, opts = {}) {
+  if (!id) throw new Error("id da interação é obrigatório.");
+  if (!perguntaId) throw new Error("pergunta_id é obrigatório.");
+
+  return apiPost(
+    `/interacao/admin/${id}/pergunta/gabarito`,
+    { pergunta_id: Number(perguntaId) },
+    {
+      auth: true,
+      on401: "redirect",
+      on403: "silent",
+      ...opts,
+    }
+  );
+}
+
+export async function apiInteracaoResultado(id, opts = {}) {
+  if (!id) throw new Error("id da interação é obrigatório.");
+
+  return apiGet(`/interacao/admin/${id}/resultado`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiInteracaoApresentacao(id, opts = {}) {
+  if (!id) throw new Error("id da interação é obrigatório.");
+
+  return apiGet(`/interacao/admin/${id}/resultado`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Auditoria — contrato oficial v2.0
+────────────────────────────────────────────────────────────── */
+
+export async function apiAuditoriaListar(params = {}, opts = {}) {
+  return apiGet("/auditoria", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiAuditoriaResumo(params = {}, opts = {}) {
+  return apiGet("/auditoria/resumo", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiAuditoriaObterPorId(id, opts = {}) {
+  if (!id) throw new Error("id do evento de auditoria é obrigatório.");
+
+  return apiGet(`/auditoria/${id}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Caixa de Mensagens Institucional — contrato oficial v2.0
+────────────────────────────────────────────────────────────── */
+
+export async function apiMensagemMinhas(params = {}, opts = {}) {
+  return apiGet("/mensagem/minhas", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiMensagemCriar(payload = {}, opts = {}) {
+  return apiPost("/mensagem", payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiMensagemObterUsuario(id, opts = {}) {
+  if (!id) throw new Error("id da conversa é obrigatório.");
+
+  return apiGet(`/mensagem/${id}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiMensagemResponderUsuario(id, payload = {}, opts = {}) {
+  if (!id) throw new Error("id da conversa é obrigatório.");
+
+  return apiPost(`/mensagem/${id}/resposta`, payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiMensagemListarAdmin(params = {}, opts = {}) {
+  return apiGet("/mensagem/admin", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiMensagemResumoAdmin(params = {}, opts = {}) {
+  return apiGet("/mensagem/admin/resumo", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiMensagemObterAdmin(id, opts = {}) {
+  if (!id) throw new Error("id da conversa é obrigatório.");
+
+  return apiGet(`/mensagem/admin/${id}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiMensagemResponderAdmin(id, payload = {}, opts = {}) {
+  if (!id) throw new Error("id da conversa é obrigatório.");
+
+  return apiPost(`/mensagem/admin/${id}/resposta`, payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiMensagemAlterarStatus(id, status, opts = {}) {
+  if (!id) throw new Error("id da conversa é obrigatório.");
+  if (!status) throw new Error("status da conversa é obrigatório.");
+
+  return apiPatch(
+    `/mensagem/admin/${id}/status`,
+    { status },
+    {
+      auth: true,
+      on401: "redirect",
+      on403: "silent",
+      ...opts,
+    }
+  );
+}
+
+export async function apiMensagemAtribuir(id, atribuido_para, opts = {}) {
+  if (!id) throw new Error("id da conversa é obrigatório.");
+
+  return apiPatch(
+    `/mensagem/admin/${id}/atribuir`,
+    { atribuido_para },
+    {
+      auth: true,
+      on401: "redirect",
+      on403: "silent",
+      ...opts,
+    }
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Pendências Administrativas — contrato oficial v2.0
+────────────────────────────────────────────────────────────── */
+
+export async function apiPendenciaListar(params = {}, opts = {}) {
+  return apiGet("/pendencia", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPendenciaResumo(params = {}, opts = {}) {
+  return apiGet("/pendencia/resumo", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiPendenciaObterPorId(pendenciaId, opts = {}) {
+  if (!pendenciaId) throw new Error("pendencia_id é obrigatório.");
+
+  return apiGet(`/pendencia/${encodeURIComponent(pendenciaId)}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Saúde da Plataforma — contrato oficial v2.0
+────────────────────────────────────────────────────────────── */
+
+export async function apiSaudePlataformaListar(params = {}, opts = {}) {
+  return apiGet("/saude-plataforma", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiSaudePlataformaResumo(params = {}, opts = {}) {
+  return apiGet("/saude-plataforma/resumo", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiSaudePlataformaDiagnostico(opts = {}) {
+  return apiGet("/saude-plataforma/diagnostico", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiSaudePlataformaObterPorId(indicadorId, opts = {}) {
+  if (!indicadorId) throw new Error("indicador_id é obrigatório.");
+
+  return apiGet(`/saude-plataforma/${encodeURIComponent(indicadorId)}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Suporte — contrato oficial v2.0
+────────────────────────────────────────────────────────────── */
+
+export async function apiSuporteResumo(opts = {}) {
+  return apiGet("/suporte/resumo", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiSuporteMinhaSessaoAtiva(opts = {}) {
+  return apiGet("/suporte/minha-sessao-ativa", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiSuporteIniciarSessao(payload = {}, opts = {}) {
+  return apiPost("/suporte/sessao", payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiSuporteListarSessoes(params = {}, opts = {}) {
+  return apiGet("/suporte/sessao", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiSuporteObterSessao(id, opts = {}) {
+  if (!id) throw new Error("id da sessão de suporte é obrigatório.");
+
+  return apiGet(`/suporte/sessao/${id}`, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiSuporteEncerrarSessao(id, payload = {}, opts = {}) {
+  if (!id) throw new Error("id da sessão de suporte é obrigatório.");
+
+  return apiPatch(`/suporte/sessao/${id}/encerrar`, payload, {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Relatório — contrato oficial v2.0
+────────────────────────────────────────────────────────────── */
+
+export async function apiRelatorioResumoGeral(params = {}, opts = {}) {
+  return apiGet("/relatorio/resumo-geral", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiRelatorioEventos(params = {}, opts = {}) {
+  return apiGet("/relatorio/eventos", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiRelatorioPresencas(params = {}, opts = {}) {
+  return apiGet("/relatorio/presencas", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiRelatorioAvaliacoes(params = {}, opts = {}) {
+  return apiGet("/relatorio/avaliacoes", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiRelatorioorganizadores(params = {}, opts = {}) {
+  return apiGet("/relatorio/organizadores", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiRelatorioCertificados(params = {}, opts = {}) {
+  return apiGet("/relatorio/certificados", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiRelatorioCertificadosPendencias(
+  params = {},
+  opts = {}
+) {
+  return apiGet("/relatorio/certificados/pendencias", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiRelatorioUsuarios(params = {}, opts = {}) {
+  return apiGet("/relatorio/usuarios", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiRelatorioSalas(params = {}, opts = {}) {
+  return apiGet("/relatorio/salas", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiRelatorioNotificacoes(params = {}, opts = {}) {
+  return apiGet("/relatorio/notificacoes", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiRelatorioSaudePlataforma(params = {}, opts = {}) {
+  return apiGet("/relatorio/saude-plataforma", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiRelatorioExportarXlsx(tipo, params = {}, opts = {}) {
+  const safeTipo = String(tipo || "").trim();
+
+  if (!safeTipo) throw new Error("tipo de relatório é obrigatório.");
+
+  return apiGetFile(`/relatorio/exportar/${safeTipo}.xlsx`, {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Submissão / chamada — contrato oficial singular
+────────────────────────────────────────────────────────────── */
+
+export const apiUploadPoster = (submissaoId, fileOrFormData, opts = {}) => {
+  if (!submissaoId) throw new Error("submissaoId é obrigatório.");
+
+  return apiUpload(`/submissao/${submissaoId}/poster`, fileOrFormData, {
+    ...opts,
+    fieldName: "poster",
+  });
+};
+
 export async function apiChamadaModeloExists(chamadaId) {
-  if (!chamadaId && chamadaId !== 0) throw new Error("chamadaId é obrigatório");
+  if (!chamadaId && chamadaId !== 0) {
+    throw new Error("chamadaId é obrigatório.");
+  }
+
   const idNum = Number(chamadaId);
-  if (!Number.isFinite(idNum)) throw new Error("chamadaId inválido");
-  return apiHead(`/chamadas/${chamadaId}/modelo-banner`, {
+
+  if (!Number.isFinite(idNum)) {
+    throw new Error("chamadaId inválido.");
+  }
+
+  return apiHead(`/chamada/${chamadaId}/modelo-banner`, {
     auth: true,
     on401: "silent",
     on403: "silent",
@@ -1276,10 +3298,17 @@ export async function apiChamadaModeloExists(chamadaId) {
 }
 
 export async function apiChamadaModeloDownload(chamadaId) {
-  if (!chamadaId && chamadaId !== 0) throw new Error("chamadaId é obrigatório");
+  if (!chamadaId && chamadaId !== 0) {
+    throw new Error("chamadaId é obrigatório.");
+  }
+
   const idNum = Number(chamadaId);
-  if (!Number.isFinite(idNum)) throw new Error("chamadaId inválido");
-  return apiGetResponse(`/chamadas/${chamadaId}/modelo-banner`, {
+
+  if (!Number.isFinite(idNum)) {
+    throw new Error("chamadaId inválido.");
+  }
+
+  return apiGetResponse(`/chamada/${chamadaId}/modelo-banner`, {
     auth: true,
     on401: "silent",
     on403: "silent",
@@ -1287,42 +3316,56 @@ export async function apiChamadaModeloDownload(chamadaId) {
 }
 
 export async function apiChamadaModeloUpload(chamadaId, fileOrFormData) {
-  if (!chamadaId && chamadaId !== 0) throw new Error("chamadaId é obrigatório");
-  const idNum = Number(chamadaId);
-  if (!Number.isFinite(idNum)) throw new Error("chamadaId inválido");
+  if (!chamadaId && chamadaId !== 0) {
+    throw new Error("chamadaId é obrigatório.");
+  }
 
-  const resp = await apiUpload(`/chamadas/${chamadaId}/modelo-banner`, fileOrFormData, {
-    fieldName: "file",
-  });
+  const idNum = Number(chamadaId);
+
+  if (!Number.isFinite(idNum)) {
+    throw new Error("chamadaId inválido.");
+  }
+
+  const response = await apiUpload(
+    `/chamada/${chamadaId}/modelo-banner`,
+    fileOrFormData,
+    {
+      fieldName: "file",
+    }
+  );
 
   try {
-    invalidateHeadPrefix(`/chamadas/${chamadaId}/modelo-banner`);
+    invalidateHeadPrefix(`/chamada/${chamadaId}/modelo-banner`);
   } catch {
     // noop
   }
 
-  return resp;
+  return response;
 }
 
 export async function apiChamadaModeloAdminMeta(chamadaId) {
-  if (!chamadaId && chamadaId !== 0) throw new Error("chamadaId é obrigatório");
+  if (!chamadaId && chamadaId !== 0) {
+    throw new Error("chamadaId é obrigatório.");
+  }
+
   const idNum = Number(chamadaId);
-  if (!Number.isFinite(idNum)) throw new Error("chamadaId inválido");
-  return apiGet(`/admin/chamadas/${chamadaId}/modelo-banner`, {
+
+  if (!Number.isFinite(idNum)) {
+    throw new Error("chamadaId inválido.");
+  }
+
+  return apiGet(`/chamada/admin/${chamadaId}/modelo-banner`, {
     auth: true,
     on401: "silent",
     on403: "silent",
   });
 }
 
-// ───────────────────────────────────────────────────────────────────
-// Compat: facade estilo axios + default export
-// ───────────────────────────────────────────────────────────────────
-export { API_BASE_URL, API_BASE_ROOT };
+/* ─────────────────────────────────────────────────────────────
+   Facade estilo axios
+────────────────────────────────────────────────────────────── */
 
-export function isLoggedIn() {
-  return !!getToken();
-}
+export { API_BASE_URL, API_BASE_ROOT };
 
 export const api = {
   defaults: {
@@ -1334,18 +3377,366 @@ export const api = {
   put: (path, body, opts) => apiPut(path, body, opts),
   patch: (path, body, opts) => apiPatch(path, body, opts),
   delete: (path, opts) => apiDelete(path, opts),
-  upload: (path, formDataOrFile, opts) => apiUpload(path, formDataOrFile, opts),
+
+request: ({ url, method = "GET", data, params, responseType, ...opts } = {}) => {
+  if (!url) throw new Error("api.request: url é obrigatória.");
+
+  if (responseType === "blob") {
+    if (method && String(method).toUpperCase() !== "GET") {
+      return apiPostFile(url, data, {
+        query: params,
+        ...opts,
+      });
+    }
+
+    return apiGetFile(url, {
+      query: params,
+      ...opts,
+    });
+  }
+
+  return doFetch(url, {
+    method,
+    body: data,
+    query: params,
+    ...opts,
+  });
+},
+
+  upload: (path, formDataOrFile, opts) =>
+    apiUpload(path, formDataOrFile, opts),
+
   uploadPoster: (submissaoId, fileOrFormData, opts) =>
     apiUploadPoster(submissaoId, fileOrFormData, opts),
-  request: ({ url, method = "GET", data, ...opts } = {}) =>
-    doFetch(url, { method, body: data, ...opts }),
-  authMe: (opts) => apiAuthMe(opts),
+
   clearSession: () => clearAuthSession(),
   persistSession: (token, usuario) => persistAuthSession(token, usuario),
+  authMe: (opts) => apiAuthMe(opts),
+
+ auth: {
+  login: (payload, opts) => apiAuthLogin(payload, opts),
+  google: (payload, opts) => apiAuthGoogle(payload, opts),
+  cadastrar: (payload, opts) => apiCadastrarUsuario(payload, opts),
+  esqueciSenha: (payload, opts) => apiEsqueciSenha(payload, opts),
+  redefinirSenha: (payload, opts) => apiRedefinirSenha(payload, opts),
+  me: (opts) => apiPerfilMe(opts),
+},
+
+  perfil: {
+    opcao: (opts) => apiPerfilOpcao(opts),
+    me: (opts) => apiPerfilMe(opts),
+    update: (payload, opts) => apiPerfilUpdate(payload, opts),
+  },
+
+  lookup: {
+    cargo: (opts) => apiLookupCargo(opts),
+    unidade: (opts) => apiLookupUnidade(opts),
+    genero: (opts) => apiLookupGenero(opts),
+    orientacaoSexual: (opts) => apiLookupOrientacaoSexual(opts),
+    corRaca: (opts) => apiLookupCorRaca(opts),
+    escolaridade: (opts) => apiLookupEscolaridade(opts),
+    deficiencia: (opts) => apiLookupDeficiencia(opts),
+  },
+
+  usuario: {
+    buscar: (params, opts) => apiUsuarioBuscar(params, opts),
+    listar: (params, opts) => apiUsuarioListar(params, opts),
+    obter: (id, opts) => apiUsuarioObter(id, opts),
+    atualizarBasico: (id, payload, opts) =>
+      apiUsuarioAtualizarBasico(id, payload, opts),
+    atualizarPerfilInstitucional: (id, payload, opts) =>
+      apiUsuarioAtualizarPerfilInstitucional(id, payload, opts),
+    atualizarDadosAdministrativos: (id, payload, opts) =>
+      apiUsuarioAtualizarDadosAdministrativos(id, payload, opts),
+    atualizarPerfil: (id, payload, opts) =>
+      apiUsuarioAtualizarPerfil(id, payload, opts),
+    listarorganizador: (opts) => apiUsuarioListarorganizador(opts),
+    listarAvaliador: (params, opts) => apiUsuarioListarAvaliador(params, opts),
+    resumo: (id, opts) => apiUsuarioResumo(id, opts),
+    estatistica: (opts) => apiUsuarioEstatistica(opts),
+    estatisticaDetalhada: (opts) => apiUsuarioEstatisticaDetalhada(opts),
+  },
+
+  dashboard: {
+    resumo: (opts) => apiDashboardResumo(opts),
+    avaliacaoRecenteorganizador: (opts) =>
+      apiDashboardAvaliacaoRecenteorganizador(opts),
+    analitico: (params, opts) => apiDashboardAnalitico(params, opts),
+  },
+
+ organizador: {
+  listar: (params, opts) => apiorganizadorListar(params, opts),
+  eventosAvaliacao: (organizadorId, opts) =>
+    apiorganizadorEventosAvaliacao(organizadorId, opts),
+  turmas: (organizadorId, opts) => apiorganizadorTurmas(organizadorId, opts),
+  minhasTurmas: (params, opts) => apiorganizadorMinhasTurmas(params, opts),
+},
+
+  informacao: {
+    publicadaListar: (opts) => apiInformacaoPublicadaListar(opts),
+  },
+
+  notificacao: {
+    listar: (params, opts) => apiNotificacaoListar(params, opts),
+    resumo: (opts) => apiNotificacaoResumo(opts),
+    marcarLida: (id, opts) => apiNotificacaoMarcarLida(id, opts),
+    marcarTodasLidas: (opts) => apiNotificacaoMarcarTodasLidas(opts),
+  },
+
+  evento: {
+    listarAdministrador: (params, opts) =>
+      apiEventoListarAdministrador(params, opts),
+    folderResponse: (eventoId, opts) =>
+      apiEventoFolderResponse(eventoId, opts),
+    programacaoResponse: (eventoId, opts) =>
+      apiEventoProgramacaoResponse(eventoId, opts),
+    programacaoFile: (eventoId, opts) =>
+      apiEventoProgramacaoFile(eventoId, opts),
+  },
+
+  calendarioEPS: {
+    listar: (params, opts) => apiCalendarioEPSListar(params, opts),
+    departamentos: (opts) => apiCalendarioEPSDepartamentos(opts),
+    tipos: (opts) => apiCalendarioEPSTipos(opts),
+    resumoMensal: (params, opts) =>
+      apiCalendarioEPSResumoMensal(params, opts),
+    resumoAnual: (params, opts) =>
+      apiCalendarioEPSResumoAnual(params, opts),
+    criar: (payload, opts) => apiCalendarioEPSCriar(payload, opts),
+    atualizar: (id, payload, opts) =>
+      apiCalendarioEPSAtualizar(id, payload, opts),
+    excluir: (id, opts) => apiCalendarioEPSExcluir(id, opts),
+  },
+
+    cursoOnline: {
+    listarPublicados: (params, opts) =>
+      apiCursoOnlineListarPublicados(params, opts),
+    obter: (id, opts) => apiCursoOnlineObter(id, opts),
+    listarAdmin: (params, opts) => apiCursoOnlineListarAdmin(params, opts),
+    criar: (payload, opts) => apiCursoOnlineCriar(payload, opts),
+    atualizar: (id, payload, opts) =>
+      apiCursoOnlineAtualizar(id, payload, opts),
+    alterarStatus: (id, status, opts) =>
+      apiCursoOnlineAlterarStatus(id, status, opts),
+    excluir: (id, opts) => apiCursoOnlineExcluir(id, opts),
+  },
+
+    pesquisa: {
+    listarPublicadas: (params, opts) =>
+      apiPesquisaListarPublicadas(params, opts),
+    obter: (id, opts) => apiPesquisaObter(id, opts),
+    responder: (id, payload, opts) => apiPesquisaResponder(id, payload, opts),
+
+    listarAdmin: (params, opts) => apiPesquisaListarAdmin(params, opts),
+    criar: (payload, opts) => apiPesquisaCriar(payload, opts),
+    obterAdmin: (id, opts) => apiPesquisaObterAdmin(id, opts),
+    atualizar: (id, payload, opts) =>
+      apiPesquisaAtualizar(id, payload, opts),
+    alterarStatus: (id, status, opts) =>
+      apiPesquisaAlterarStatus(id, status, opts),
+    respostas: (id, opts) => apiPesquisaRespostas(id, opts),
+    resultado: (id, opts) => apiPesquisaResultado(id, opts),
+    excluir: (id, opts) => apiPesquisaExcluir(id, opts),
+  },
+
+interacao: {
+  listarPublicadas: (params, opts) =>
+    apiInteracaoListarPublicadas(params, opts),
+  obter: (id, opts) => apiInteracaoObter(id, opts),
+  responder: (id, payload, opts) =>
+    apiInteracaoResponder(id, payload, opts),
+
+  listarAdmin: (params, opts) => apiInteracaoListarAdmin(params, opts),
+  criar: (payload, opts) => apiInteracaoCriar(payload, opts),
+  obterAdmin: (id, opts) => apiInteracaoObterAdmin(id, opts),
+  adminObterPorId: (id, opts) => apiInteracaoObterAdmin(id, opts),
+  obterPorId: (id, opts) => apiInteracaoObter(id, opts),
+  atualizar: (id, payload, opts) =>
+    apiInteracaoAtualizar(id, payload, opts),
+  alterarStatus: (id, status, opts) =>
+    apiInteracaoAlterarStatus(id, status, opts),
+  excluir: (id, opts) => apiInteracaoExcluir(id, opts),
+
+  iniciarExecucao: (id, opts) => apiInteracaoIniciarExecucao(id, opts),
+  abrirPergunta: (id, perguntaId, opts) =>
+    apiInteracaoAbrirPergunta(id, perguntaId, opts),
+  fecharPergunta: (id, perguntaId, opts) =>
+    apiInteracaoFecharPergunta(id, perguntaId, opts),
+  exibirGabarito: (id, perguntaId, opts) =>
+    apiInteracaoExibirGabarito(id, perguntaId, opts),
+  resultado: (id, opts) => apiInteracaoResultado(id, opts),
+  resultadoAdmin: (id, opts) => apiInteracaoResultado(id, opts),
+  apresentacao: (id, opts) => apiInteracaoApresentacao(id, opts),
+},
+
+auditoria: {
+  listar: (params, opts) => apiAuditoriaListar(params, opts),
+  resumo: (params, opts) => apiAuditoriaResumo(params, opts),
+  obterPorId: (id, opts) => apiAuditoriaObterPorId(id, opts),
+},
+
+mensagem: {
+  minhas: (params, opts) => apiMensagemMinhas(params, opts),
+  criar: (payload, opts) => apiMensagemCriar(payload, opts),
+  obterUsuario: (id, opts) => apiMensagemObterUsuario(id, opts),
+  responderUsuario: (id, payload, opts) =>
+    apiMensagemResponderUsuario(id, payload, opts),
+
+  listarAdmin: (params, opts) => apiMensagemListarAdmin(params, opts),
+  resumoAdmin: (params, opts) => apiMensagemResumoAdmin(params, opts),
+  obterAdmin: (id, opts) => apiMensagemObterAdmin(id, opts),
+  responderAdmin: (id, payload, opts) =>
+    apiMensagemResponderAdmin(id, payload, opts),
+  alterarStatus: (id, status, opts) =>
+    apiMensagemAlterarStatus(id, status, opts),
+  atribuir: (id, atribuido_para, opts) =>
+    apiMensagemAtribuir(id, atribuido_para, opts),
+},
+
+pendencia: {
+  listar: (params, opts) => apiPendenciaListar(params, opts),
+  resumo: (params, opts) => apiPendenciaResumo(params, opts),
+  obterPorId: (pendenciaId, opts) =>
+    apiPendenciaObterPorId(pendenciaId, opts),
+},
+
+saudePlataforma: {
+  listar: (params, opts) => apiSaudePlataformaListar(params, opts),
+  resumo: (params, opts) => apiSaudePlataformaResumo(params, opts),
+  diagnostico: (opts) => apiSaudePlataformaDiagnostico(opts),
+  obterPorId: (indicadorId, opts) =>
+    apiSaudePlataformaObterPorId(indicadorId, opts),
+},
+
+suporte: {
+  resumo: (opts) => apiSuporteResumo(opts),
+  minhaSessaoAtiva: (opts) => apiSuporteMinhaSessaoAtiva(opts),
+  iniciarSessao: (payload, opts) => apiSuporteIniciarSessao(payload, opts),
+  listarSessoes: (params, opts) => apiSuporteListarSessoes(params, opts),
+  obterSessao: (id, opts) => apiSuporteObterSessao(id, opts),
+  encerrarSessao: (id, payload, opts) =>
+    apiSuporteEncerrarSessao(id, payload, opts),
+},
+
+turma: {
+  listarAdministrador: (opts) => apiTurmaListarAdministrador(opts),
+  listarComUsuario: (opts) => apiTurmaListarComUsuario(opts),
+
+  listarPorEvento: (eventoId, opts) =>
+    apiTurmaListarPorEvento(eventoId, opts),
+  listarPorEventoSimples: (eventoId, opts) =>
+    apiTurmaListarPorEventoSimples(eventoId, opts),
+
+  obter: (turmaId, opts) => apiTurmaObter(turmaId, opts),
+  criar: (payload, opts) => apiTurmaCriar(payload, opts),
+  atualizar: (turmaId, payload, opts) =>
+    apiTurmaAtualizar(turmaId, payload, opts),
+  excluir: (turmaId, opts) => apiTurmaExcluir(turmaId, opts),
+
+  datas: (turmaId, opts) => apiTurmaDatas(turmaId, opts),
+  datasAuto: (turmaId, opts) => apiTurmaDatas(turmaId, opts),
+  ocorrencias: (turmaId, opts) => apiTurmaOcorrencias(turmaId, opts),
+  detalhe: (turmaId, opts) => apiTurmaDetalhe(turmaId, opts),
+
+  listarOrganizadores: (turmaId, opts) =>
+    apiTurmaListarOrganizadores(turmaId, opts),
+  adicionarOrganizador: (turmaId, organizadores, opts) =>
+    apiTurmaAdicionarOrganizador(turmaId, organizadores, opts),
+},
+
+inscricao: {
+  minhas: (opts) => apiInscricaoMinhas(opts),
+  listarPorTurma: (turmaId, opts) =>
+    apiInscricaoListarPorTurma(turmaId, opts),
+  porTurma: (turmaId, opts) => apiInscricaoListarPorTurma(turmaId, opts),
+  criar: (turmaId, opts) => apiInscricaoCriar(turmaId, opts),
+  cancelar: (inscricaoId, opts) => apiInscricaoCancelar(inscricaoId, opts),
+  cancelarMinhaPorTurma: (turmaId, opts) =>
+    apiInscricaoCancelarMinhaPorTurma(turmaId, opts),
+  cancelarUsuarioNaTurma: (turmaId, usuarioId, opts) =>
+    apiInscricaoCancelarUsuarioNaTurma(turmaId, usuarioId, opts),
+  conflito: (turmaId, opts) => apiInscricaoConflito(turmaId, opts),
+},
+
+avaliacao: {
+  listarPorTurma: (turmaId, opts) =>
+    apiAvaliacaoListarPorTurma(turmaId, opts),
+  porTurma: (turmaId, opts) => apiAvaliacaoListarPorTurma(turmaId, opts),
+  disponiveis: apiAvaliacaoDisponiveis,
+},
+
+questionario: {
+  disponiveis: apiQuestionarioDisponiveis,
+  iniciar: apiQuestionarioIniciar,
+  responder: apiQuestionarioResponder,
+  enviar: apiQuestionarioEnviar,
+},
+
+presenca: {
+  validarPublico: (params, opts) => apiPresencaValidarPublico(params, opts),
+  minhas: (opts) => apiPresencaMinhas(opts),
+  minhaResumo: (opts) => apiPresencaMinhaResumo(opts),
+  registrar: (payload, opts) => apiPresencaRegistrar(payload, opts),
+  confirmarQr: (turmaId, opts) => apiPresencaConfirmarQr(turmaId, opts),
+  confirmarToken: (token, opts) => apiPresencaConfirmarToken(token, opts),
+  turmasorganizador: (opts) => apiPresencaTurmasorganizador(opts),
+  turmaDetalhe: (turmaId, opts) => apiPresencaTurmaDetalhe(turmaId, opts),
+  detalhesTurma: (turmaId, opts) => apiPresencaDetalhesTurma(turmaId, opts),
+  turmaFrequencia: (turmaId, opts) =>
+    apiPresencaTurmaFrequencia(turmaId, opts),
+  turmaPdf: (turmaId, opts) => apiPresencasTurmaPDF(turmaId, opts),
+  registrarManual: (payload, opts) => apiPresencaRegistrarManual(payload, opts),
+  confirmarManualHoje: (payload, opts) =>
+    apiPresencaConfirmarManualHoje(payload, opts),
+  validarManual: (payload, opts) => apiPresencaValidarManual(payload, opts),
+  confirmarorganizador: (payload, opts) =>
+    apiPresencaConfirmarorganizador(payload, opts),
+  administrador: (opts) => apiPresencaAdministrador(opts),
+},
+
+assinatura: {
+  obter: (opts) => apiAssinaturaObter(opts),
+  minha: (opts) => apiAssinaturaObter(opts),
+  salvar: (payload, opts) => apiAssinaturaSalvar(payload, opts),
+  auto: (opts) => apiAssinaturaAuto(opts),
+  listar: (opts) => apiAssinaturaListar(opts),
+},
+
+certificado: {
+  avulsoPdf: (id, opts) => apiCertAvulsoPDF(id, opts),
+  adminArvore: (params, opts) => apiCertificadoAdminArvore(params, opts),
+  processarPendentesPorTurma: (turmaId, opts) =>
+    apiCertificadoProcessarPendentesPorTurma(turmaId, opts),
+  download: (certificadoId, opts) =>
+    apiCertificadoDownload(certificadoId, opts),
+  elegivel: apiCertificadoElegivel,
+  gerar: apiCertificadoGerar,
+  validarPublico: (codigoValidacao, opts) =>
+    apiCertificadoValidarPublico(codigoValidacao, opts),
+},
+
+relatorio: {
+  resumoGeral: (params, opts) => apiRelatorioResumoGeral(params, opts),
+  eventos: (params, opts) => apiRelatorioEventos(params, opts),
+  presencas: (params, opts) => apiRelatorioPresencas(params, opts),
+  avaliacoes: (params, opts) => apiRelatorioAvaliacoes(params, opts),
+  organizadores: (params, opts) => apiRelatorioorganizadores(params, opts),
+  certificados: (params, opts) => apiRelatorioCertificados(params, opts),
+  certificadosPendencias: (params, opts) =>
+    apiRelatorioCertificadosPendencias(params, opts),
+  usuarios: (params, opts) => apiRelatorioUsuarios(params, opts),
+  salas: (params, opts) => apiRelatorioSalas(params, opts),
+  notificacoes: (params, opts) => apiRelatorioNotificacoes(params, opts),
+  saudePlataforma: (params, opts) =>
+    apiRelatorioSaudePlataforma(params, opts),
+  exportarXlsx: (tipo, params, opts) =>
+    apiRelatorioExportarXlsx(tipo, params, opts),
+},
+
   chamadaModelo: {
     exists: (id) => apiChamadaModeloExists(id),
     download: (id) => apiChamadaModeloDownload(id),
-    upload: (id, fileOrFD) => apiChamadaModeloUpload(id, fileOrFD),
+    upload: (id, fileOrFormData) => apiChamadaModeloUpload(id, fileOrFormData),
     adminMeta: (id) => apiChamadaModeloAdminMeta(id),
   },
 };

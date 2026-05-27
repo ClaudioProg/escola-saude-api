@@ -1,13 +1,5 @@
-// 📁 src/hooks/useEscolaTheme.js — PREMIUM++
-// - Fonte única: src/theme/escolaTheme.js
-// - Resolve bug “só muda tema no F5” (mesma aba) via CustomEvent
-// - Sincroniza entre abas via storage event
-// - “system” acompanha o SO em tempo real
-// - SSR-safe, StrictMode-safe
-// - Evita listeners recriados desnecessariamente
-// - Evita reaplicações redundantes
-
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+// 📁 src/hooks/useEscolaTheme.js — v2.0
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ESCOLA_THEME_KEY,
   applyThemeToHtml,
@@ -18,16 +10,16 @@ import {
 } from "../theme/escolaTheme";
 
 /**
- * Evento padrão do projeto para broadcast de tema (mesma aba).
- * Deve ser disparado pelo motor (escolaTheme.js) quando tema mudar.
+ * Evento oficial do projeto para sincronização de tema na mesma aba.
  */
 const THEME_EVENT = "escola-theme-change";
 
-const VALID = new Set(["light", "dark", "system"]);
+const THEME_VALIDO = new Set(["light", "dark", "system"]);
 
-function normalizeTheme(v) {
-  const t = String(v || "").toLowerCase();
-  return VALID.has(t) ? t : "system";
+function normalizeTheme(value) {
+  const theme = String(value || "").trim().toLowerCase();
+
+  return THEME_VALIDO.has(theme) ? theme : "system";
 }
 
 function canUseWindow() {
@@ -35,108 +27,128 @@ function canUseWindow() {
 }
 
 export default function useEscolaTheme() {
-  // SSR-safe init
-  const [theme, _setTheme] = useState(() =>
+  const [theme, setThemeState] = useState(() =>
     normalizeTheme(getStoredTheme() || "system")
   );
 
-  // refs para evitar closures antigas e loops
   const themeRef = useRef(theme);
   const lastAppliedRef = useRef(null);
   const systemUnsubRef = useRef(null);
 
-  // mantém ref sincronizada com o state atual
   useEffect(() => {
     themeRef.current = theme;
   }, [theme]);
 
   /**
-   * Aplica no DOM + persiste apenas se necessário.
-   * Evita duplicidade em StrictMode e eventos em cascata.
+   * Aplica tema no DOM e persiste no storage.
+   *
+   * Importante:
+   * - O controle de redundância usa theme + effectiveTheme.
+   * - Isso corrige o caso em que theme = "system", mas o SO muda de light para dark.
    */
-  const commitTheme = useCallback((nextTheme) => {
+  const commitTheme = useCallback((nextTheme, options = {}) => {
+    const { force = false, persist = true } = options;
+
     const normalized = normalizeTheme(nextTheme);
+    const effective = getEffectiveTheme(normalized);
+    const appliedKey = `${normalized}:${effective}`;
 
-    if (lastAppliedRef.current === normalized) return;
+    if (!force && lastAppliedRef.current === appliedKey) {
+      return;
+    }
 
-    lastAppliedRef.current = normalized;
+    lastAppliedRef.current = appliedKey;
+
     applyThemeToHtml(normalized);
-    setStoredTheme(normalized);
+
+    if (persist) {
+      setStoredTheme(normalized);
+    }
+  }, []);
+
+  const dispatchThemeEvent = useCallback((nextTheme, source = "hook") => {
+    if (!canUseWindow()) {
+      return;
+    }
+
+    try {
+      window.dispatchEvent(
+        new CustomEvent(THEME_EVENT, {
+          detail: {
+            theme: normalizeTheme(nextTheme),
+            source,
+          },
+        })
+      );
+    } catch {
+      // não bloquear a interface por falha de evento
+    }
   }, []);
 
   /**
-   * Setter premium:
-   * - normaliza
-   * - ignora se já está igual
-   * - aplica e persiste imediatamente
-   * - atualiza React state
-   * - dispara evento de mesma aba (fallback)
+   * Setter oficial.
    */
   const setTheme = useCallback(
-    (next) => {
-      const normalized = normalizeTheme(next);
+    (nextTheme) => {
+      const normalized = normalizeTheme(nextTheme);
 
-      if (themeRef.current === normalized) {
-        // Mesmo assim garante consistência DOM/storage
-        commitTheme(normalized);
-        return;
+      commitTheme(normalized, {
+        force: normalized === "system",
+        persist: true,
+      });
+
+      if (themeRef.current !== normalized) {
+        themeRef.current = normalized;
+        setThemeState(normalized);
       }
 
-      commitTheme(normalized);
-      themeRef.current = normalized;
-      _setTheme(normalized);
-
-      if (canUseWindow()) {
-        try {
-          window.dispatchEvent(
-            new CustomEvent(THEME_EVENT, {
-              detail: { theme: normalized, source: "hook" },
-            })
-          );
-        } catch {
-          /* noop */
-        }
-      }
+      dispatchThemeEvent(normalized, "hook");
     },
-    [commitTheme]
+    [commitTheme, dispatchThemeEvent]
   );
 
-  // 1) Ao montar: sincroniza estado React com storage/boot do HTML
+  /**
+   * Montagem inicial:
+   * - lê storage;
+   * - sincroniza estado React;
+   * - aplica no HTML.
+   */
   useEffect(() => {
     const stored = normalizeTheme(getStoredTheme() || "system");
+
     themeRef.current = stored;
-    _setTheme(stored);
-    commitTheme(stored);
+    setThemeState(stored);
+
+    commitTheme(stored, {
+      force: true,
+      persist: true,
+    });
   }, [commitTheme]);
 
-  // 2) Quando theme mudar, garante DOM/storage e watcher do system
+  /**
+   * Observa mudanças do modo "system".
+   */
   useEffect(() => {
     const normalized = normalizeTheme(theme);
 
-    commitTheme(normalized);
+    commitTheme(normalized, {
+      force: normalized === "system",
+      persist: true,
+    });
 
-    // limpa watcher anterior
     if (systemUnsubRef.current) {
       systemUnsubRef.current();
       systemUnsubRef.current = null;
     }
 
-    // acompanha SO em tempo real apenas quando "system"
     if (normalized === "system") {
       systemUnsubRef.current = watchSystemTheme(() => {
-        commitTheme("system");
+        commitTheme("system", {
+          force: true,
+          persist: true,
+        });
 
-        if (canUseWindow()) {
-          try {
-            window.dispatchEvent(
-              new CustomEvent(THEME_EVENT, {
-                detail: { theme: "system", source: "system" },
-              })
-            );
-          } catch {
-            /* noop */
-          }
-        }
+        dispatchThemeEvent("system", "system");
       });
     }
 
@@ -146,57 +158,77 @@ export default function useEscolaTheme() {
         systemUnsubRef.current = null;
       }
     };
-  }, [theme, commitTheme]);
+  }, [theme, commitTheme, dispatchThemeEvent]);
 
-  // 3) Listener: mesma aba (CustomEvent)
+  /**
+   * Sincronização na mesma aba.
+   */
   useEffect(() => {
-    if (!canUseWindow()) return undefined;
+    if (!canUseWindow()) {
+      return undefined;
+    }
 
-    const onTheme = (ev) => {
-      const incoming = normalizeTheme(ev?.detail?.theme);
+    const onTheme = (event) => {
+      const incoming = normalizeTheme(event?.detail?.theme);
 
-      if (incoming === themeRef.current) {
-        commitTheme(incoming);
-        return;
+      commitTheme(incoming, {
+        force: incoming === "system",
+        persist: true,
+      });
+
+      if (incoming !== themeRef.current) {
+        themeRef.current = incoming;
+        setThemeState(incoming);
       }
-
-      themeRef.current = incoming;
-      _setTheme(incoming);
     };
 
     window.addEventListener(THEME_EVENT, onTheme);
-    return () => window.removeEventListener(THEME_EVENT, onTheme);
+
+    return () => {
+      window.removeEventListener(THEME_EVENT, onTheme);
+    };
   }, [commitTheme]);
 
-  // 4) Listener: outras abas (storage)
+  /**
+   * Sincronização entre abas.
+   */
   useEffect(() => {
-    if (!canUseWindow()) return undefined;
+    if (!canUseWindow()) {
+      return undefined;
+    }
 
-    const onStorage = (e) => {
-      if (e.key !== ESCOLA_THEME_KEY) return;
-
-      const incoming = normalizeTheme(e.newValue);
-
-      if (incoming === themeRef.current) {
-        commitTheme(incoming);
+    const onStorage = (event) => {
+      if (event.key !== ESCOLA_THEME_KEY) {
         return;
       }
 
-      themeRef.current = incoming;
-      _setTheme(incoming);
+      const incoming = normalizeTheme(event.newValue);
+
+      commitTheme(incoming, {
+        force: incoming === "system",
+        persist: false,
+      });
+
+      if (incoming !== themeRef.current) {
+        themeRef.current = incoming;
+        setThemeState(incoming);
+      }
     };
 
     window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
+
+    return () => {
+      window.removeEventListener("storage", onStorage);
+    };
   }, [commitTheme]);
 
   const effectiveTheme = useMemo(() => getEffectiveTheme(theme), [theme]);
   const isDark = effectiveTheme === "dark";
 
   return {
-    theme, // "light" | "dark" | "system"
+    theme,
     setTheme,
-    effectiveTheme, // "light" | "dark"
+    effectiveTheme,
     isDark,
     STORAGE_KEY: ESCOLA_THEME_KEY,
     EVENT_NAME: THEME_EVENT,

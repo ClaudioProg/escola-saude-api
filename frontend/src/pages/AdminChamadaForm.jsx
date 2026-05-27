@@ -1,99 +1,475 @@
-// 📁 src/pages/AdminChamadaForm.jsx — versão premium com melhorias de UX/A11y e download do modelo ORAL
-import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import {
-  Settings2, Save, Plus, Trash2, Pencil, Eye, EyeOff,
-  CheckCircle2, XCircle, X, Loader2, FileText, AlertCircle, Upload, Download
-} from "lucide-react";
-import Footer from "../components/Footer";
-import {
-  datetimeLocalToBrWall, wallToDatetimeLocal, isIsoWithTz, isWallDateTime,
-  isoToDatetimeLocalInZone, fmtWallDateTime, fmtDataHora
-} from "../utils/dateTime";
-import {
-  apiGet, apiPost, apiPut, apiDelete, apiUpload as apiUploadSvc,
-  apiGetFile, downloadBlob
-} from "../services/api";
+// 📁 src/pages/AdminChamadaForm.jsx
+// Atualizado em: 15/05/2026
+//
+// Plataforma Escola da Saúde — v2.0
+//
+// Página administrativa exclusiva de CHAMADAS DE TRABALHOS.
+//
+// Contratos oficiais:
+// - GET    /api/chamada/admin
+// - POST   /api/chamada/admin
+// - GET    /api/chamada/:id
+// - PUT    /api/chamada/admin/:id
+// - PATCH  /api/chamada/admin/:id/publicacao
+// - DELETE /api/chamada/admin/:id
+// - GET    /api/chamada/admin/:id/modelo-banner/meta
+// - GET    /api/chamada/admin/:id/modelo-banner/download
+// - POST   /api/chamada/admin/:id/modelo-banner        campo multipart: arquivo
+// - GET    /api/chamada/admin/:id/modelo-oral/meta
+// - GET    /api/chamada/admin/:id/modelo-oral/download
+// - POST   /api/chamada/admin/:id/modelo-oral          campo multipart: arquivo
+//
+// Diretrizes aplicadas:
+// - contrato único;
+// - sem rotas legadas plural/singular;
+// - sem fieldName "file";
+// - sem "admin/chamadas";
+// - anti-fuso: datetime-local convertido para "YYYY-MM-DD HH:mm:ss";
+// - UX/UI premium real;
+// - mobile-first;
+// - acessibilidade;
+// - estados vazios úteis;
+// - mensagens orientativas;
+// - dark mode.
+
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useParams } from "react-router-dom";
+import {
+  AlertCircle,
+  Archive,
+  CalendarClock,
+  CheckCircle2,
+  ClipboardList,
+  Download,
+  Eye,
+  EyeOff,
+  FileText,
+  Filter,
+  Layers3,
+  Loader2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Save,
+  Search,
+  Settings2,
+  ShieldCheck,
+  Sparkles,
+  Trash2,
+  Upload,
+  Users,
+  X,
+  XCircle,
+} from "lucide-react";
 
-/* ─── utils ─── */
-const pad2 = (n) => String(n).padStart(2, "0");
-const nowLocalDatetimeLocal = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+import Footer from "../components/layout/Footer";
+import * as apiSvc from "../services/api";
+
+/* =========================================================================
+   API local — centraliza contrato da página
+=========================================================================== */
+
+const apiGet = apiSvc.apiGet;
+const apiPost = apiSvc.apiPost;
+const apiPut = apiSvc.apiPut;
+const apiDelete = apiSvc.apiDelete;
+const apiUpload = apiSvc.apiUpload;
+const apiGetFile = apiSvc.apiGetFile;
+const downloadBlob = apiSvc.downloadBlob;
+
+const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || "").replace(
+  /\/+$/,
+  ""
+);
+
+function getToken() {
+  return localStorage.getItem("token") || "";
+}
+
+async function apiPatchLocal(path, payload) {
+  if (typeof apiSvc.apiPatch === "function") {
+    return apiSvc.apiPatch(path, payload);
+  }
+
+  if (apiSvc.api?.request) {
+    return apiSvc.api.request(path, {
+      method: "PATCH",
+      body: payload,
+    });
+  }
+
+  const url = `${API_BASE_URL}/${String(path).replace(/^\/+/, "")}`;
+
+  const response = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
+    },
+    body: JSON.stringify(payload || {}),
+  });
+
+  const text = await response.text();
+  const json = text ? JSON.parse(text) : null;
+
+  if (!response.ok) {
+    const err = new Error(json?.message || json?.erro || "Falha na requisição.");
+    err.status = response.status;
+    err.data = json;
+    throw err;
+  }
+
+  return json;
+}
+
+function unwrap(response, fallback = null) {
+  if (response && typeof response === "object" && "ok" in response && "data" in response) {
+    return response.data;
+  }
+
+  return response ?? fallback;
+}
+
+function unwrapArray(response) {
+  const data = unwrap(response, response);
+  return Array.isArray(data) ? data : [];
+}
+
+const chamadaApi = {
+  listarAdmin: async () => unwrapArray(await apiGet("chamada/admin")),
+
+  obter: async (id) => unwrap(await apiGet(`chamada/${id}`), null),
+
+  criar: async (payload) => unwrap(await apiPost("chamada/admin", payload), null),
+
+  atualizar: async (id, payload) =>
+    unwrap(await apiPut(`chamada/admin/${id}`, payload), null),
+
+  publicar: async (id, publicado) =>
+    unwrap(
+      await apiPatchLocal(`chamada/admin/${id}/publicacao`, {
+        publicado: Boolean(publicado),
+      }),
+      null
+    ),
+
+  remover: async (id) => apiDelete(`chamada/admin/${id}`),
+
+  modeloBannerMeta: async (id) =>
+    unwrap(await apiGet(`chamada/admin/${id}/modelo-banner/meta`), null),
+
+  modeloOralMeta: async (id) =>
+    unwrap(await apiGet(`chamada/admin/${id}/modelo-oral/meta`), null),
+
+  importarModeloBanner: async (id, file) =>
+    apiUpload(`chamada/admin/${id}/modelo-banner`, file, {
+      fieldName: "arquivo",
+    }),
+
+  importarModeloOral: async (id, file) =>
+    apiUpload(`chamada/admin/${id}/modelo-oral`, file, {
+      fieldName: "arquivo",
+    }),
+
+  baixarModeloBanner: async (id) =>
+    apiGetFile(`chamada/admin/${id}/modelo-banner/download`),
+
+  baixarModeloOral: async (id) =>
+    apiGetFile(`chamada/admin/${id}/modelo-oral/download`),
 };
-const toCodigo = (s) =>
-  (s || "")
-    .normalize("NFD").replace(/\p{Diacritic}/gu, "")
-    .toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "")
-    .slice(0, 30) || "LINHA";
 
-/** Formata bytes em KB/MB/GB legível */
-const formatBytes = (bytes) => {
-  if (!Number.isFinite(bytes) || bytes < 0) return "";
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${(bytes / Math.pow(k, i)).toFixed(i === 0 ? 0 : 2)} ${sizes[i]}`;
-};
+/* =========================================================================
+   Helpers
+=========================================================================== */
 
-/* 🔢 Limites globais (UI) e compat backend */
 const LIMIT_MIN = 1;
 const LIMIT_MAX = 5000;
-const BACKEND_MIN = 50;
-const BACKEND_MAX = 20000;
-const clampUi = (n) => Math.max(LIMIT_MIN, Math.min(LIMIT_MAX, Number(n) || LIMIT_MIN));
-const enforceBackend = (n) => Math.max(BACKEND_MIN, Math.min(BACKEND_MAX, Number(n) || BACKEND_MIN));
 
-/* ─── UI helpers ─── */
-const Card = ({ children, className = "" }) => (
-  <div className={`rounded-2xl border bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-6 ${className}`}>{children}</div>
-);
-const Field = ({ label, hint, error, children, htmlFor }) => (
-  <div className="mb-4">
-    {label && <label htmlFor={htmlFor} className="mb-1 block text-sm font-medium text-zinc-800 dark:text-zinc-100">{label}</label>}
-    {children}
-    {hint && <div className="mt-1 text-xs text-zinc-500">{hint}</div>}
-    {error && <div role="alert" className="mt-1 text-xs text-red-600">{error}</div>}
-  </div>
-);
-const Badge = ({ children, tone = "indigo" }) => {
-  const tones = {
-    indigo: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-200",
-    emerald: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200",
-    rose: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200",
-    zinc: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200",
-    amber: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
-  };
-  return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs ${tones[tone]}`}>{children}</span>;
-};
-const Counter = ({ value, max }) => {
-  const len = (value || "").length;
-  const over = max ? len > max : false;
-  return <span className={`text-xs ${over ? "text-red-600" : "text-zinc-500"}`}>{len}{max ? `/${max}` : ""}</span>;
-};
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
 
-/* Mini-stat card */
-const StatCard = ({ label, value, icon, tone = "default" }) => {
-  const tones = {
-    default: "border-white/20",
-    success: "border-emerald-400/50",
-    warning: "border-amber-400/50",
-    info: "border-cyan-400/50",
-  };
+function nowDatetimeLocal() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(
+    d.getHours()
+  )}:${pad2(d.getMinutes())}`;
+}
+
+function wallToDatetimeLocal(value) {
+  const text = String(value || "").trim();
+
+  const match = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::\d{2})?/.exec(text);
+  if (match) return `${match[1]}T${match[2]}`;
+
+  if (/[zZ]$|[+\-]\d{2}:\d{2}$/.test(text)) {
+    const d = new Date(text);
+    if (!Number.isNaN(d.getTime())) {
+      const parts = new Intl.DateTimeFormat("sv-SE", {
+        timeZone: "America/Sao_Paulo",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(d);
+
+      return parts.replace(" ", "T");
+    }
+  }
+
+  return nowDatetimeLocal();
+}
+
+function datetimeLocalToWall(value) {
+  const text = String(value || "").trim();
+
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(text)) {
+    return "";
+  }
+
+  return `${text.replace("T", " ")}:00`;
+}
+
+function fmtPrazo(value) {
+  const text = String(value || "").trim();
+  if (!text) return "—";
+
+  const wall = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(text);
+  if (wall) {
+    return `${wall[3]}/${wall[2]}/${wall[1]} às ${wall[4]}:${wall[5]}`;
+  }
+
+  const date = new Date(text);
+  if (!Number.isNaN(date.getTime())) {
+    return new Intl.DateTimeFormat("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      dateStyle: "short",
+      timeStyle: "short",
+    }).format(date);
+  }
+
+  return text;
+}
+
+function fmtYYYYMM(value) {
+  const match = /^(\d{4})-(\d{2})$/.exec(String(value || ""));
+  if (!match) return "—";
+
+  const meses = [
+    "jan",
+    "fev",
+    "mar",
+    "abr",
+    "mai",
+    "jun",
+    "jul",
+    "ago",
+    "set",
+    "out",
+    "nov",
+    "dez",
+  ];
+
+  return `${meses[Number(match[2]) - 1]}/${match[1]}`;
+}
+
+function toCodigo(value) {
   return (
-    <div className={`rounded-2xl border ${tones[tone]} bg-white/10 px-3 py-3 text-left backdrop-blur-sm`}>
-      <div className="flex items-center justify-between">
-        <span className="text-xs uppercase tracking-wide text-white/80">{label}</span>
-        <span className="opacity-90">{icon}</span>
+    String(value || "")
+      .normalize("NFD")
+      .replace(/\p{Diacritic}/gu, "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "_")
+      .replace(/^_|_$/g, "")
+      .slice(0, 30) || "LINHA"
+  );
+}
+
+function formatBytes(bytes) {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n < 0) return "—";
+  if (n === 0) return "0 B";
+
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.min(Math.floor(Math.log(n) / Math.log(k)), sizes.length - 1);
+
+  return `${(n / Math.pow(k, i)).toFixed(i === 0 ? 0 : 1)} ${sizes[i]}`;
+}
+
+function clampLimit(value) {
+  const n = Number(value);
+  if (!Number.isInteger(n)) return LIMIT_MIN;
+  return Math.max(LIMIT_MIN, Math.min(LIMIT_MAX, n));
+}
+
+function parseYYYYMM(value) {
+  const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(String(value || ""));
+  return match ? { y: Number(match[1]), m: Number(match[2]) } : null;
+}
+
+function compareYYYYMM(a, b) {
+  return String(a || "").localeCompare(String(b || ""));
+}
+
+function getMessage(error, fallback) {
+  return (
+    error?.data?.message ||
+    error?.response?.data?.message ||
+    error?.message ||
+    fallback
+  );
+}
+
+/* =========================================================================
+   UI primitives
+=========================================================================== */
+
+function cx(...classes) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function PageShell({ children }) {
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-950 dark:bg-slate-950">
+      <div className="fixed inset-0 -z-10 overflow-hidden">
+        <div className="absolute left-[-10%] top-[-10%] h-96 w-96 rounded-full bg-cyan-500/20 blur-3xl" />
+        <div className="absolute right-[-10%] top-20 h-96 w-96 rounded-full bg-violet-500/20 blur-3xl" />
+        <div className="absolute bottom-[-15%] left-[25%] h-96 w-96 rounded-full bg-emerald-500/20 blur-3xl" />
       </div>
-      <div className="mt-1 font-bold text-lg sm:text-2xl text-white">{value}</div>
+
+      <div className="min-h-screen bg-slate-50/95 dark:bg-slate-950/80 dark:text-slate-50">
+        {children}
+      </div>
     </div>
   );
-};
+}
 
-/* ─── A11y: Live regions ─── */
+function GlassCard({ children, className = "" }) {
+  return (
+    <div
+      className={cx(
+        "rounded-[1.75rem] border border-white/70 bg-white/90 shadow-xl shadow-slate-200/60 backdrop-blur-xl",
+        "dark:border-white/10 dark:bg-slate-900/80 dark:shadow-black/20",
+        className
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+function Field({ label, hint, error, children, htmlFor, required = false }) {
+  return (
+    <div className="space-y-1.5">
+      {label ? (
+        <label
+          htmlFor={htmlFor}
+          className="flex items-center gap-1 text-sm font-semibold text-slate-800 dark:text-slate-100"
+        >
+          {label}
+          {required ? <span className="text-rose-500">*</span> : null}
+        </label>
+      ) : null}
+
+      {children}
+
+      {hint ? <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">{hint}</p> : null}
+      {error ? <p className="text-xs font-medium text-rose-600">{error}</p> : null}
+    </div>
+  );
+}
+
+function Badge({ children, tone = "slate", icon: Icon }) {
+  const tones = {
+    slate:
+      "border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200",
+    emerald:
+      "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200",
+    rose:
+      "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200",
+    amber:
+      "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200",
+    cyan:
+      "border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-200",
+    violet:
+      "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200",
+  };
+
+  return (
+    <span
+      className={cx(
+        "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-semibold",
+        tones[tone] || tones.slate
+      )}
+    >
+      {Icon ? <Icon className="h-3.5 w-3.5" aria-hidden="true" /> : null}
+      {children}
+    </span>
+  );
+}
+
+function Button({
+  children,
+  tone = "slate",
+  size = "md",
+  className = "",
+  loading = false,
+  icon: Icon,
+  ...props
+}) {
+  const tones = {
+    primary:
+      "bg-gradient-to-r from-cyan-600 via-violet-600 to-emerald-600 text-white shadow-lg shadow-cyan-900/20 hover:brightness-110",
+    slate:
+      "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800",
+    danger:
+      "bg-rose-600 text-white shadow-lg shadow-rose-900/20 hover:bg-rose-700",
+    success:
+      "bg-emerald-600 text-white shadow-lg shadow-emerald-900/20 hover:bg-emerald-700",
+    warning:
+      "bg-amber-500 text-white shadow-lg shadow-amber-900/20 hover:bg-amber-600",
+    ghost:
+      "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800",
+  };
+
+  const sizes = {
+    sm: "px-3 py-2 text-xs",
+    md: "px-4 py-2.5 text-sm",
+    lg: "px-5 py-3 text-sm",
+  };
+
+  return (
+    <button
+      type="button"
+      className={cx(
+        "inline-flex items-center justify-center gap-2 rounded-2xl font-semibold transition",
+        "focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 disabled:pointer-events-none disabled:opacity-60",
+        sizes[size],
+        tones[tone],
+        className
+      )}
+      disabled={loading || props.disabled}
+      {...props}
+    >
+      {loading ? (
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+      ) : Icon ? (
+        <Icon className="h-4 w-4" aria-hidden="true" />
+      ) : null}
+      {children}
+    </button>
+  );
+}
+
 function LiveRegion({ message, type = "polite" }) {
   if (!message) return null;
   return (
@@ -103,415 +479,217 @@ function LiveRegion({ message, type = "polite" }) {
   );
 }
 
-/* ─── Confirm Dialog ─── */
-function ConfirmDialog({ open, title = "Confirmar", description, onConfirm, onCancel }) {
+function Counter({ value, max }) {
+  const len = String(value || "").length;
+  const over = max && len > max;
+
+  return (
+    <span className={cx("text-xs", over ? "text-rose-600" : "text-slate-400")}>
+      {len}
+      {max ? `/${max}` : ""}
+    </span>
+  );
+}
+
+/* =========================================================================
+   Modal
+=========================================================================== */
+
+function Modal({ open, onClose, title, subtitle, children, footer, size = "max-w-6xl" }) {
+  const dialogRef = useRef(null);
+  const lastFocusRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    lastFocusRef.current = document.activeElement;
+    document.body.style.overflow = "hidden";
+
+    window.setTimeout(() => {
+      dialogRef.current?.querySelector?.("[data-autofocus]")?.focus?.();
+    }, 0);
+
+    return () => {
+      document.body.style.overflow = "";
+      lastFocusRef.current?.focus?.();
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+
+    function onKeyDown(event) {
+      if (event.key === "Escape") onClose?.();
+    }
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
+
+  function onBackdrop(event) {
+    if (event.target === event.currentTarget) onClose?.();
+  }
+
+  return (
+    <AnimatePresence>
+      {open ? (
+        <motion.div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm sm:p-6"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-title"
+          onMouseDown={onBackdrop}
+        >
+          <motion.div
+            ref={dialogRef}
+            className={cx(
+              "flex max-h-[92vh] w-full flex-col overflow-hidden rounded-[2rem] border border-white/20 bg-white shadow-2xl dark:bg-slate-950",
+              size
+            )}
+            initial={{ opacity: 0, y: 18, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 18, scale: 0.98 }}
+            transition={{ duration: 0.18 }}
+          >
+            <header className="relative overflow-hidden border-b border-white/10 bg-slate-950 p-5 text-white sm:p-6">
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(34,211,238,.25),transparent_35%),radial-gradient(circle_at_80%_0%,rgba(139,92,246,.25),transparent_35%),radial-gradient(circle_at_70%_80%,rgba(16,185,129,.22),transparent_35%)]" />
+              <div className="relative flex items-start justify-between gap-4">
+                <div>
+                  <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold text-white/90">
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    Gestão institucional v2.0
+                  </div>
+                  <h2 id="modal-title" className="text-xl font-black tracking-tight sm:text-2xl">
+                    {title}
+                  </h2>
+                  {subtitle ? (
+                    <p className="mt-1 max-w-3xl text-sm leading-relaxed text-white/70">
+                      {subtitle}
+                    </p>
+                  ) : null}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={onClose}
+                  data-autofocus
+                  className="rounded-2xl p-2 text-white/80 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-300"
+                  aria-label="Fechar"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </header>
+
+            <div className="flex-1 overflow-y-auto bg-slate-50 p-4 dark:bg-slate-950 sm:p-6">
+              {children}
+            </div>
+
+            <footer className="flex flex-wrap items-center justify-end gap-3 border-t border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950">
+              {footer}
+            </footer>
+          </motion.div>
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
+  );
+}
+
+function ConfirmDialog({ open, title, description, onCancel, onConfirm, busy }) {
   return (
     <Modal
       open={open}
       onClose={onCancel}
       title={title}
-      size="sm"
+      subtitle={description}
+      size="max-w-lg"
       footer={
         <>
-          <button type="button" onClick={onCancel} className="rounded-xl px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">Cancelar</button>
-          <button type="button" onClick={onConfirm} className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-white hover:bg-rose-700">
-            <Trash2 className="h-4 w-4" aria-hidden="true" /> Excluir
-          </button>
+          <Button tone="ghost" onClick={onCancel}>
+            Cancelar
+          </Button>
+          <Button tone="danger" icon={Trash2} loading={busy} onClick={onConfirm}>
+            Excluir
+          </Button>
         </>
       }
     >
-      <div className="text-sm text-zinc-700 dark:text-zinc-200">{description}</div>
+      <div className="rounded-3xl border border-rose-200 bg-rose-50 p-4 text-sm leading-relaxed text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+        Esta ação só deve ser usada para chamadas sem submissões vinculadas. Se houver histórico, o backend bloqueará a exclusão para preservar rastreabilidade institucional.
+      </div>
     </Modal>
   );
 }
 
-/* ─── Modal ─── */
-function Modal({ open, onClose, title, children, footer, size = "lg", labelledById, describedById }) {
-  const dialogRef = useRef(null);
-  const lastFocusRef = useRef(null);
+/* =========================================================================
+   Month picker
+=========================================================================== */
 
-  // Focus trap + restore + scroll lock
-  useEffect(() => {
-    if (open) {
-      lastFocusRef.current = document.activeElement;
-      document.body.style.overflow = "hidden";
-      setTimeout(() => dialogRef.current?.querySelector?.("[data-autofocus]")?.focus?.(), 0);
-    } else {
-      document.body.style.overflow = "";
-      lastFocusRef.current?.focus?.();
-    }
-    return () => { document.body.style.overflow = ""; };
-  }, [open]);
+const MONTHS_PT = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 
-  // Escape
-  useEffect(() => {
-    function onKey(e) { if (e.key === "Escape") onClose?.(); }
-    if (open) document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
-  const sizes = { sm: "max-w-md", md: "max-w-2xl", lg: "max-w-4xl" };
-
-  // Close on backdrop click (but not on content)
-  const onBackdrop = (e) => { if (e.target === e.currentTarget) onClose?.(); };
-
-  return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
-          aria-modal="true" role="dialog"
-          aria-labelledby={labelledById} aria-describedby={describedById}
-          onMouseDown={onBackdrop}
-        >
-          <motion.div
-            ref={dialogRef}
-            initial={{ y: 12, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 12, opacity: 0 }}
-            className={`relative w-full ${sizes[size]} overflow-hidden rounded-2xl border bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900`}
-          >
-            <div className="flex items-center justify-between bg-gradient-to-r from-cyan-700 via-violet-700 to-emerald-700 px-4 py-3 text-white">
-              <div className="flex items-center gap-2">
-                <FileText className="h-5 w-5" aria-hidden="true" />
-                <h3 id={labelledById} className="text-lg font-semibold">{title}</h3>
-                <Badge tone="emerald">Admin</Badge>
-              </div>
-              <button type="button" onClick={onClose} className="rounded-xl p-2 hover:bg-white/10" aria-label="Fechar" data-autofocus>
-                <X className="h-5 w-5" aria-hidden="true" />
-              </button>
-            </div>
-
-            <div className="max-h-[75vh] overflow-y-auto p-4 sm:p-6">{children}</div>
-
-            <div className="flex flex-wrap items-center justify-end gap-3 border-t bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/50">
-              {footer}
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
-  );
-}
-
-/* ─── Header (gradiente exclusivo desta página) ─── */
-function HeaderHero({ counts = { total: "—", abertas: "—", encerradas: "—", publicadas: "—" } }) {
-  return (
-    <motion.header
-      initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
-      className="w-full text-white"
-    >
-      <div className="bg-gradient-to-br from-cyan-900 via-violet-800 to-emerald-700">
-        <div className="mx-auto max-w-screen-xl px-4 py-8 sm:px-6 lg:px-8">
-          {/* Título + ícone na MESMA LINHA */}
-          <div className="flex flex-col items-center gap-3 text-center">
-            <div className="flex items-center gap-3">
-              <Settings2 className="h-8 w-8 sm:h-9 sm:w-9" aria-hidden="true" />
-              <h1 className="text-2xl font-extrabold leading-tight sm:text-3xl">
-                Submissão de Trabalhos — Administração
-              </h1>
-            </div>
-            <p className="mt-0.5 text-sm opacity-90 sm:text-base">
-              Gerencie chamadas: criar/editar, publicar/despublicar e excluir. Edição em modal com visual limpo e acessível.
-            </p>
-
-            {/* Mini-stats no header */}
-            <div className="grid w-full max-w-3xl grid-cols-2 gap-3 sm:grid-cols-4 mt-2">
-              <StatCard label="Chamadas"   value={counts.total}      icon={<FileText className="w-4 h-4" />} tone="info" />
-              <StatCard label="Abertas"    value={counts.abertas}    icon={<Eye className="w-4 h-4" />} tone="success" />
-              <StatCard label="Encerradas" value={counts.encerradas} icon={<EyeOff className="w-4 h-4" />} tone="warning" />
-              <StatCard label="Publicadas" value={counts.publicadas} icon={<CheckCircle2 className="w-4 h-4" />} tone="success" />
-            </div>
-          </div>
-        </div>
-      </div>
-    </motion.header>
-  );
-}
-
-
-/* ─── Skeleton Item ─── */
-function ChamadaSkeleton() {
-  return (
-    <div className="relative overflow-hidden rounded-xl border p-3 dark:border-zinc-800">
-      <div className="absolute left-0 top-0 h-1 w-full bg-gradient-to-r from-indigo-400 via-violet-400 to-cyan-400" />
-      <div className="animate-pulse">
-        <div className="h-4 w-1/2 rounded bg-zinc-200 dark:bg-zinc-700" />
-        <div className="mt-2 flex items-center gap-2">
-          <div className="h-4 w-24 rounded bg-zinc-200 dark:bg-zinc-700" />
-          <div className="h-4 w-20 rounded bg-zinc-200 dark:bg-zinc-700" />
-          <div className="h-4 w-40 rounded bg-zinc-200 dark:bg-zinc-700" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ─── Painel ─── */
-function ChamadasPainel({ onEditar, onNova, refreshSignal, onCountsChange }) {
-  const reduceMotion = useReducedMotion();
-  const [lista, setLista] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState("");
-  const [filtro, setFiltro] = useState("abertas");
-  const [mutatingId, setMutatingId] = useState(null);
-  const [confirmId, setConfirmId] = useState(null);
-
-  const load = useCallback(async () => {
-    setErr(""); setLoading(true);
-    try {
-      const rows = await apiGet("admin/chamadas");
-      setLista(Array.isArray(rows) ? rows : []);
-    } catch (e) {
-      setErr(e?.message || "Falha ao carregar chamadas.");
-    } finally { setLoading(false); }
-  }, []);
-  useEffect(() => { load(); }, [load]);
-  useEffect(() => { if (refreshSignal !== undefined) load(); }, [refreshSignal, load]);
-
-  // Contadores para mini-stats
-  const counts = useMemo(() => {
-    const total = lista.length;
-    const abertas = lista.filter((c) => c.dentro_prazo === true).length;
-    const encerradas = lista.filter((c) => c.dentro_prazo === false).length;
-    const publicadas = lista.filter((c) => c.publicado === true).length;
-    return { total, abertas, encerradas, publicadas };
-  }, [lista]);
-
-  // Avisa o topo quando os contadores mudarem
-  useEffect(() => { onCountsChange?.(counts); }, [counts, onCountsChange]);
-
-  const visiveis = useMemo(() => {
-    if (filtro === "todas") return lista;
-    if (filtro === "encerradas") return lista.filter((c) => c.dentro_prazo === false);
-    return lista.filter((c) => c.dentro_prazo === true);
-  }, [lista, filtro]);
-
-  const publicar = async (id, valor) => {
-    setMutatingId(id);
-    try {
-      await apiPut(`admin/chamadas/${id}/publicar`, { publicado: !!valor });
-      setLista((xs) => xs.map((c) => (c.id === id ? { ...c, publicado: !!valor } : c)));
-    } catch (e) {
-      setErr(e?.message || "Erro ao alterar publicação.");
-    } finally { setMutatingId(null); }
-  };
-  const excluir = async (id) => {
-    setMutatingId(id);
-    try {
-      await apiDelete(`admin/chamadas/${id}`);
-      setLista((xs) => xs.filter((c) => c.id !== id));
-    } catch (e) {
-      setErr(e?.message || "Erro ao excluir chamada.");
-    } finally { setMutatingId(null); }
+function MonthYearPicker({ value, onChange, min, max, label }) {
+  const minParsed = parseYYYYMM(min);
+  const maxParsed = parseYYYYMM(max);
+  const current = parseYYYYMM(value) || {
+    y: new Date().getFullYear(),
+    m: new Date().getMonth() + 1,
   };
 
-  const renderPrazo = (valor) => {
-    if (!valor) return "—";
-    if (isWallDateTime(valor)) return fmtWallDateTime(valor);
-    if (isIsoWithTz(valor)) return fmtDataHora(valor, "America/Sao_Paulo");
-    return String(valor);
-  };
+  const yearStart = minParsed?.y ?? current.y - 6;
+  const yearEnd = maxParsed?.y ?? current.y + 6;
 
-  // cor da barrinha no topo do card
-  const barColor = (c) => {
-    if (c.dentro_prazo === false) return "from-rose-600 via-rose-500 to-rose-400";
-    if (c.publicado) return "from-emerald-600 via-emerald-500 to-emerald-400";
-    return "from-indigo-600 via-violet-500 to-cyan-500";
-  };
+  const years = [];
+  for (let y = yearStart; y <= yearEnd; y += 1) years.push(y);
 
-  return (
-    <Card>
-      {/* barra fina global durante carregamento */}
-      {loading && (
-        <div
-          className="sticky top-0 left-0 -mx-4 sm:-mx-6 mb-3 h-1 bg-indigo-100"
-          role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-label="Carregando chamadas"
-        >
-          <div className={`h-full bg-indigo-600 w-1/3 ${reduceMotion ? "" : "animate-pulse"}`} />
-        </div>
-      )}
-
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        {/* Filtro como toggle group acessível */}
-        <div role="group" aria-label="Filtro de chamadas" className="flex items-center gap-2">
-          {["abertas", "encerradas", "todas"].map((key) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setFiltro(key)}
-              aria-pressed={filtro === key}
-              className={`rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500
-                ${filtro === key ? "bg-indigo-600 text-white" : "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100"}`}
-            >
-              {key[0].toUpperCase() + key.slice(1)}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button type="button" onClick={load}
-            className="rounded-xl border px-3 py-1.5 text-sm hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:hover:bg-zinc-800">
-            Recarregar
-          </button>
-          <button type="button" onClick={onNova}
-            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-1.5 text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-            <Plus className="h-4 w-4" aria-hidden="true" /> Nova chamada
-          </button>
-        </div>
-      </div>
-
-      {/* Live error */}
-      <LiveRegion message={err} type="assertive" />
-      {err && <div className="mb-3 text-sm text-red-600">{err}</div>}
-
-      {loading ? (
-        <div className="grid gap-2">
-          {Array.from({ length: 3 }).map((_, i) => <ChamadaSkeleton key={i} />)}
-        </div>
-      ) : visiveis.length === 0 ? (
-        <div className="text-sm text-zinc-600">Nenhuma chamada no filtro atual.</div>
-      ) : (
-        <div className="grid gap-2">
-          {visiveis.map((c) => (
-            <div
-              key={c.id}
-              className="relative overflow-hidden rounded-xl border p-3 text-sm dark:border-zinc-800 md:flex md:items-center md:justify-between"
-            >
-              {/* 🔹 Barrinha no topo do card (status) */}
-              <div className={`pointer-events-none absolute left-0 top-0 h-1 w-full bg-gradient-to-r ${barColor(c)}`} />
-
-              <div className="min-w-0 pr-1">
-                <div className="truncate font-medium">{c.titulo}</div>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-                  {c.publicado ? (
-                    <Badge tone="emerald"><CheckCircle2 className="mr-1 h-3 w-3" aria-hidden="true" />Publicado</Badge>
-                  ) : (
-                    <Badge tone="zinc"><XCircle className="mr-1 h-3 w-3" aria-hidden="true" />Rascunho</Badge>
-                  )}
-                  {c.dentro_prazo ? (
-                    <Badge tone="indigo">Aberta</Badge>
-                  ) : (
-                    <Badge tone="rose">Encerrada</Badge>
-                  )}
-                  <span>Prazo: {renderPrazo(c.prazo_final_br)}</span>
-                </div>
-              </div>
-
-              <div className="mt-2 flex flex-wrap items-center gap-2 md:mt-0">
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:hover:bg-zinc-800"
-                  onClick={() => onEditar?.(c.id)} title="Editar" aria-label={`Editar chamada ${c.titulo}`}
-                >
-                  <Pencil className="h-4 w-4" aria-hidden="true" /> Editar
-                </button>
-
-                {c.publicado ? (
-                  <button
-                    type="button"
-                    disabled={mutatingId === c.id}
-                    className="inline-flex items-center gap-1 rounded-lg bg-zinc-100 px-2.5 py-1.5 hover:bg-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-zinc-800 dark:hover:bg-zinc-700"
-                    onClick={() => publicar(c.id, false)} title="Despublicar" aria-label={`Despublicar chamada ${c.titulo}`}
-                  >
-                    <EyeOff className="h-4 w-4" aria-hidden="true" /> Despublicar
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={mutatingId === c.id}
-                    className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    onClick={() => publicar(c.id, true)} title="Publicar" aria-label={`Publicar chamada ${c.titulo}`}
-                  >
-                    <Eye className="h-4 w-4" aria-hidden="true" /> Publicar
-                  </button>
-                )}
-
-                <button
-                  type="button"
-                  disabled={mutatingId === c.id}
-                  className="inline-flex items-center gap-1 rounded-lg bg-rose-600 px-2.5 py-1.5 text-white hover:bg-rose-700 focus:outline-none focus:ring-2 focus:ring-rose-500"
-                  onClick={() => setConfirmId(c.id)} title="Excluir" aria-label={`Excluir chamada ${c.titulo}`}
-                >
-                  <Trash2 className="h-4 w-4" aria-hidden="true" /> Excluir
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <ConfirmDialog
-        open={confirmId != null}
-        title="Excluir chamada"
-        description="Confirma excluir esta chamada? Esta ação não pode ser desfeita."
-        onCancel={() => setConfirmId(null)}
-        onConfirm={() => { const id = confirmId; setConfirmId(null); excluir(id); }}
-      />
-    </Card>
-  );
-}
-
-/* ───────── Month/Year Picker ───────── */
-const MONTHS_PT = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
-function parseYYYYMM(s) {
-  const m = String(s || "").match(/^(\d{4})-(0[1-9]|1[0-2])$/);
-  return m ? { y: +m[1], m: +m[2] } : null;
-}
-function clampYearMonth(v, min, max) {
-  if (!v) return null;
-  const n = v.y * 100 + v.m;
-  const nMin = min ? min.y * 100 + min.m : null;
-  const nMax = max ? max.y * 100 + max.m : null;
-  if (nMin !== null && n < nMin) return min;
-  if (nMax !== null && n > nMax) return max;
-  return v;
-}
-function MonthYearPicker({
-  value, onChange, min, max, className = "", selectClass = "",
-  ariaLabelAno = "Ano", ariaLabelMes = "Mês", yearPad = 7,
-}) {
-  const minP = parseYYYYMM(min);
-  const maxP = parseYYYYMM(max);
-  const now = new Date();
-  const cur = parseYYYYMM(value) || minP || { y: now.getFullYear(), m: now.getMonth() + 1 };
-
-  const yearStart = minP ? minP.y : cur.y - yearPad;
-  const yearEnd   = maxP ? maxP.y : cur.y + yearPad;
-  const years = []; for (let y = yearStart; y <= yearEnd; y++) years.push(y);
-
+  const monthMin = minParsed && current.y === minParsed.y ? minParsed.m : 1;
+  const monthMax = maxParsed && current.y === maxParsed.y ? maxParsed.m : 12;
   const months = [];
-  const minMonth = (minP && cur.y === minP.y) ? minP.m : 1;
-  const maxMonth = (maxP && cur.y === maxP.y) ? maxP.m : 12;
-  for (let m = minMonth; m <= maxMonth; m++) months.push(m);
+  for (let m = monthMin; m <= monthMax; m += 1) months.push(m);
 
-  const baseSel = selectClass || "w-full rounded-xl border px-3 py-2 dark:border-zinc-700 dark:bg-zinc-800";
+  function emit(next) {
+    let y = next.y;
+    let m = next.m;
+
+    if (minParsed && y * 100 + m < minParsed.y * 100 + minParsed.m) {
+      y = minParsed.y;
+      m = minParsed.m;
+    }
+
+    if (maxParsed && y * 100 + m > maxParsed.y * 100 + maxParsed.m) {
+      y = maxParsed.y;
+      m = maxParsed.m;
+    }
+
+    onChange?.(`${y}-${pad2(m)}`);
+  }
 
   return (
-    <div className={`grid grid-cols-2 gap-2 ${className}`} role="group" aria-label="Seletor de mês e ano">
+    <div className="grid grid-cols-2 gap-2" role="group" aria-label={label}>
       <select
-        className={baseSel}
-        aria-label={ariaLabelAno}
-        value={cur.y}
-        onChange={(e) => {
-          const next = clampYearMonth({ y: +e.target.value, m: cur.m }, minP, maxP);
-          onChange?.(`${next.y}-${String(next.m).padStart(2,"0")}`);
-        }}
+        className="h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-medium outline-none transition focus:ring-2 focus:ring-cyan-500 dark:border-slate-700 dark:bg-slate-900"
+        value={current.y}
+        onChange={(event) => emit({ y: Number(event.target.value), m: current.m })}
+        aria-label={`${label} — ano`}
       >
-        {years.map((y) => <option key={y} value={y}>{y}</option>)}
+        {years.map((year) => (
+          <option key={year} value={year}>
+            {year}
+          </option>
+        ))}
       </select>
 
       <select
-        className={baseSel}
-        aria-label={ariaLabelMes}
-        value={cur.m}
-        onChange={(e) => {
-          const next = clampYearMonth({ y: cur.y, m: +e.target.value }, minP, maxP);
-          onChange?.(`${next.y}-${String(next.m).padStart(2,"0")}`);
-        }}
+        className="h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-medium outline-none transition focus:ring-2 focus:ring-cyan-500 dark:border-slate-700 dark:bg-slate-900"
+        value={current.m}
+        onChange={(event) => emit({ y: current.y, m: Number(event.target.value) })}
+        aria-label={`${label} — mês`}
       >
-        {months.map((m) => (
-          <option key={m} value={m}>
-            {String(m).padStart(2,"0")} — {MONTHS_PT[m-1]}
+        {months.map((month) => (
+          <option key={month} value={month}>
+            {pad2(month)} — {MONTHS_PT[month - 1]}
           </option>
         ))}
       </select>
@@ -519,719 +697,1306 @@ function MonthYearPicker({
   );
 }
 
-/* ─── Modal Criar/Editar ─── */
-function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
-  const isEdit = !!chamadaId;
-  const [form, setForm] = useState({
-    titulo: "",
-    descricao_markdown: "",
-    periodo_experiencia_inicio: "2023-01",
-    periodo_experiencia_fim: "2025-07",
-    prazo_final_br: nowLocalDatetimeLocal(),
-    aceita_poster: true,
-    link_modelo_poster: "",
-    max_coautores: 10,
-    publicado: false,
-    linhas: [],
-    criterios: [],
-    criterios_orais: [],
-    limites: { titulo: 100, introducao: 2000, objetivos: 1000, metodo: 1500, resultados: 1500, consideracao: 1000 },
-    criterios_outros: "",
-    oral_outros: "",
-    premiacao_texto: "",
-    disposicao_finais_texto: "",
-  });
+/* =========================================================================
+   Header
+=========================================================================== */
+
+function Hero({ counts, onNova }) {
+  return (
+    <header className="relative overflow-hidden bg-slate-950 text-white">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_10%_20%,rgba(34,211,238,.30),transparent_30%),radial-gradient(circle_at_80%_10%,rgba(139,92,246,.28),transparent_30%),radial-gradient(circle_at_55%_90%,rgba(16,185,129,.25),transparent_28%)]" />
+      <div className="relative mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+        <div className="grid gap-6 lg:grid-cols-[1.2fr_.8fr] lg:items-end">
+          <div>
+            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold text-white/85 backdrop-blur">
+              <Sparkles className="h-3.5 w-3.5 text-cyan-200" />
+              Chamadas de trabalhos — administração v2.0
+            </div>
+
+            <h1 className="max-w-4xl text-3xl font-black tracking-tight sm:text-4xl lg:text-5xl">
+              Gestão premium de chamadas, critérios e modelos institucionais.
+            </h1>
+
+            <p className="mt-4 max-w-3xl text-sm leading-relaxed text-white/72 sm:text-base">
+              Crie chamadas, controle prazos, linhas temáticas, limites de submissão,
+              critérios de avaliação escrita e oral, publicação e modelos oficiais de banner/apresentação.
+            </p>
+
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Button tone="primary" icon={Plus} onClick={onNova} size="lg">
+                Nova chamada
+              </Button>
+
+              <div className="inline-flex items-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-4 py-3 text-sm text-white/80 backdrop-blur">
+                <ShieldCheck className="h-4 w-4 text-emerald-200" />
+                Sem rotas legadas. Sem compatibilidade paralela.
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Metric label="Chamadas" value={counts.total} icon={ClipboardList} />
+            <Metric label="Abertas" value={counts.abertas} icon={Eye} tone="emerald" />
+            <Metric label="Encerradas" value={counts.encerradas} icon={EyeOff} tone="amber" />
+            <Metric label="Publicadas" value={counts.publicadas} icon={CheckCircle2} tone="cyan" />
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function Metric({ label, value, icon: Icon, tone = "violet" }) {
+  const tones = {
+    violet: "from-violet-400/25 to-white/5",
+    emerald: "from-emerald-400/25 to-white/5",
+    amber: "from-amber-400/25 to-white/5",
+    cyan: "from-cyan-400/25 to-white/5",
+  };
+
+  return (
+    <div className={cx("rounded-3xl border border-white/15 bg-gradient-to-br p-4 backdrop-blur", tones[tone])}>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs font-semibold uppercase tracking-wide text-white/65">
+          {label}
+        </span>
+        <Icon className="h-4 w-4 text-white/70" />
+      </div>
+      <div className="mt-2 text-3xl font-black">{value ?? "—"}</div>
+    </div>
+  );
+}
+
+/* =========================================================================
+   Cards/listagem
+=========================================================================== */
+
+function statusChamada(chamada) {
+  if (chamada.dentro_prazo === false) {
+    return { label: "Encerrada", tone: "rose", icon: EyeOff };
+  }
+
+  if (chamada.publicado) {
+    return { label: "Aberta", tone: "emerald", icon: Eye };
+  }
+
+  return { label: "Rascunho", tone: "slate", icon: XCircle };
+}
+
+function ChamadaCard({ chamada, onEditar, onPublicar, onExcluir, busy }) {
+  const status = statusChamada(chamada);
+
+  return (
+    <motion.article
+      layout
+      className="group overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-xl hover:shadow-slate-200/60 dark:border-slate-800 dark:bg-slate-900 dark:hover:shadow-black/20"
+    >
+      <div
+        className={cx(
+          "h-1.5 bg-gradient-to-r",
+          chamada.dentro_prazo === false
+            ? "from-rose-500 via-orange-400 to-amber-400"
+            : chamada.publicado
+              ? "from-emerald-500 via-cyan-400 to-sky-500"
+              : "from-slate-400 via-violet-400 to-cyan-400"
+        )}
+      />
+
+      <div className="p-4 sm:p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <Badge tone={status.tone} icon={status.icon}>
+                {status.label}
+              </Badge>
+              <Badge tone={chamada.publicado ? "emerald" : "slate"} icon={chamada.publicado ? CheckCircle2 : XCircle}>
+                {chamada.publicado ? "Publicada" : "Não publicada"}
+              </Badge>
+            </div>
+
+            <h3 className="line-clamp-2 text-lg font-black text-slate-900 dark:text-white">
+              {chamada.titulo || "Chamada sem título"}
+            </h3>
+
+            <div className="mt-3 grid gap-2 text-sm text-slate-500 dark:text-slate-400 sm:grid-cols-3">
+              <InfoPill icon={CalendarClock} label="Prazo" value={fmtPrazo(chamada.prazo_final_br)} />
+              <InfoPill
+                icon={Archive}
+                label="Experiência"
+                value={`${fmtYYYYMM(chamada.periodo_experiencia_inicio)} — ${fmtYYYYMM(
+                  chamada.periodo_experiencia_fim
+                )}`}
+              />
+              <InfoPill icon={Users} label="Coautores" value={`${chamada.max_coautores ?? 0}`} />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2 lg:justify-end">
+            <Button tone="slate" size="sm" icon={Pencil} onClick={() => onEditar(chamada.id)}>
+              Editar
+            </Button>
+
+            <Button
+              tone={chamada.publicado ? "warning" : "success"}
+              size="sm"
+              icon={chamada.publicado ? EyeOff : Eye}
+              loading={busy}
+              onClick={() => onPublicar(chamada.id, !chamada.publicado)}
+            >
+              {chamada.publicado ? "Despublicar" : "Publicar"}
+            </Button>
+
+            <Button tone="danger" size="sm" icon={Trash2} loading={busy} onClick={() => onExcluir(chamada.id)}>
+              Excluir
+            </Button>
+          </div>
+        </div>
+      </div>
+    </motion.article>
+  );
+}
+
+function InfoPill({ icon: Icon, label, value }) {
+  return (
+    <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/60">
+      <div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+        <Icon className="h-3.5 w-3.5" />
+        {label}
+      </div>
+      <div className="truncate text-sm font-semibold text-slate-700 dark:text-slate-200">
+        {value || "—"}
+      </div>
+    </div>
+  );
+}
+
+function SkeletonList() {
+  return (
+    <div className="grid gap-3">
+      {Array.from({ length: 4 }).map((_, index) => (
+        <div
+          key={index}
+          className="h-40 animate-pulse rounded-[1.75rem] border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
+        >
+          <div className="h-1.5 rounded-t-[1.75rem] bg-slate-200 dark:bg-slate-800" />
+          <div className="space-y-3 p-5">
+            <div className="h-5 w-32 rounded bg-slate-200 dark:bg-slate-800" />
+            <div className="h-6 w-2/3 rounded bg-slate-200 dark:bg-slate-800" />
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div className="h-14 rounded-2xl bg-slate-100 dark:bg-slate-800" />
+              <div className="h-14 rounded-2xl bg-slate-100 dark:bg-slate-800" />
+              <div className="h-14 rounded-2xl bg-slate-100 dark:bg-slate-800" />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* =========================================================================
+   Painel principal
+=========================================================================== */
+
+function ChamadasPainel({ onNova, onEditar, refreshSignal, onCountsChange }) {
+  const reduceMotion = useReducedMotion();
+  const [lista, setLista] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState("");
+  const [busca, setBusca] = useState("");
+  const [filtro, setFiltro] = useState("ativas");
+  const [busyId, setBusyId] = useState(null);
+  const [confirmId, setConfirmId] = useState(null);
+
+  const carregar = useCallback(async () => {
+    setErro("");
+    setLoading(true);
+
+    try {
+      const rows = await chamadaApi.listarAdmin();
+      setLista(rows);
+    } catch (error) {
+      setErro(
+        getMessage(
+          error,
+          "Não foi possível carregar as chamadas. Verifique sua conexão ou tente novamente."
+        )
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    carregar();
+  }, [carregar, refreshSignal]);
+
+  const counts = useMemo(() => {
+    const total = lista.length;
+    const abertas = lista.filter((item) => item.dentro_prazo === true).length;
+    const encerradas = lista.filter((item) => item.dentro_prazo === false).length;
+    const publicadas = lista.filter((item) => item.publicado === true).length;
+
+    return { total, abertas, encerradas, publicadas };
+  }, [lista]);
+
+  useEffect(() => {
+    onCountsChange?.(counts);
+  }, [counts, onCountsChange]);
+
+  const filtradas = useMemo(() => {
+    const term = busca.trim().toLowerCase();
+
+    return lista.filter((item) => {
+      const matchesBusca =
+        !term ||
+        String(item.titulo || "").toLowerCase().includes(term) ||
+        String(item.descricao_markdown || "").toLowerCase().includes(term);
+
+      const matchesFiltro =
+        filtro === "todas"
+          ? true
+          : filtro === "publicadas"
+            ? item.publicado === true
+            : filtro === "rascunho"
+              ? item.publicado !== true
+              : filtro === "encerradas"
+                ? item.dentro_prazo === false
+                : item.dentro_prazo === true;
+
+      return matchesBusca && matchesFiltro;
+    });
+  }, [lista, busca, filtro]);
+
+  async function alterarPublicacao(id, publicado) {
+    setBusyId(id);
+    setErro("");
+
+    try {
+      const atualizado = await chamadaApi.publicar(id, publicado);
+
+      setLista((items) =>
+        items.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                ...(atualizado || {}),
+                publicado: Boolean(publicado),
+              }
+            : item
+        )
+      );
+    } catch (error) {
+      setErro(
+        getMessage(
+          error,
+          publicado
+            ? "Não foi possível publicar a chamada. Confira se há linha temática e critério escrito cadastrados."
+            : "Não foi possível despublicar a chamada."
+        )
+      );
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function excluirConfirmado() {
+    const id = confirmId;
+    if (!id) return;
+
+    setBusyId(id);
+    setErro("");
+
+    try {
+      await chamadaApi.remover(id);
+      setLista((items) => items.filter((item) => item.id !== id));
+      setConfirmId(null);
+    } catch (error) {
+      setErro(
+        getMessage(
+          error,
+          "Não foi possível excluir a chamada. Se houver submissões vinculadas, a exclusão é bloqueada para preservar o histórico."
+        )
+      );
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
+      <section className="space-y-4">
+        <GlassCard className="p-4 sm:p-5">
+          {loading ? (
+            <div className="mb-4 h-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+              <div
+                className={cx(
+                  "h-full w-1/3 rounded-full bg-gradient-to-r from-cyan-500 to-violet-500",
+                  reduceMotion ? "" : "animate-pulse"
+                )}
+              />
+            </div>
+          ) : null}
+
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 className="flex items-center gap-2 text-xl font-black text-slate-900 dark:text-white">
+                <Layers3 className="h-5 w-5 text-cyan-600" />
+                Chamadas cadastradas
+              </h2>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                Filtre, publique e edite chamadas com contrato único da v2.0.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Button tone="slate" icon={RefreshCw} onClick={carregar} loading={loading}>
+                Recarregar
+              </Button>
+              <Button tone="primary" icon={Plus} onClick={onNova}>
+                Nova chamada
+              </Button>
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-3 lg:grid-cols-[1fr_auto]">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                value={busca}
+                onChange={(event) => setBusca(event.target.value)}
+                className="h-12 w-full rounded-2xl border border-slate-200 bg-white pl-11 pr-4 text-sm outline-none transition focus:ring-2 focus:ring-cyan-500 dark:border-slate-700 dark:bg-slate-950"
+                placeholder="Buscar por título ou descrição..."
+              />
+            </div>
+
+            <div className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-1 dark:border-slate-800 dark:bg-slate-950">
+              {[
+                ["ativas", "Ativas"],
+                ["publicadas", "Publicadas"],
+                ["rascunho", "Rascunhos"],
+                ["encerradas", "Encerradas"],
+                ["todas", "Todas"],
+              ].map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setFiltro(key)}
+                  className={cx(
+                    "rounded-xl px-3 py-2 text-xs font-bold transition focus:outline-none focus:ring-2 focus:ring-cyan-500",
+                    filtro === key
+                      ? "bg-slate-950 text-white dark:bg-white dark:text-slate-950"
+                      : "text-slate-500 hover:bg-white dark:text-slate-400 dark:hover:bg-slate-900"
+                  )}
+                  aria-pressed={filtro === key}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <LiveRegion message={erro} type="assertive" />
+          {erro ? (
+            <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+              <div className="flex gap-2">
+                <AlertCircle className="mt-0.5 h-4 w-4 flex-none" />
+                <p>{erro}</p>
+              </div>
+            </div>
+          ) : null}
+        </GlassCard>
+
+        {loading ? (
+          <SkeletonList />
+        ) : filtradas.length === 0 ? (
+          <GlassCard className="p-8 text-center">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-slate-100 dark:bg-slate-800">
+              <Filter className="h-7 w-7 text-slate-400" />
+            </div>
+            <h3 className="mt-4 text-lg font-black text-slate-900 dark:text-white">
+              Nenhuma chamada encontrada
+            </h3>
+            <p className="mx-auto mt-2 max-w-md text-sm text-slate-500 dark:text-slate-400">
+              Ajuste os filtros ou crie uma nova chamada institucional para iniciar o fluxo de submissão.
+            </p>
+            <div className="mt-5">
+              <Button tone="primary" icon={Plus} onClick={onNova}>
+                Criar chamada
+              </Button>
+            </div>
+          </GlassCard>
+        ) : (
+          <div className="grid gap-3">
+            <AnimatePresence initial={false}>
+              {filtradas.map((chamada) => (
+                <ChamadaCard
+                  key={chamada.id}
+                  chamada={chamada}
+                  busy={busyId === chamada.id}
+                  onEditar={onEditar}
+                  onPublicar={alterarPublicacao}
+                  onExcluir={setConfirmId}
+                />
+              ))}
+            </AnimatePresence>
+          </div>
+        )}
+      </section>
+
+      <aside className="space-y-4">
+        <GlassCard className="p-5">
+          <div className="flex items-center gap-3">
+            <div className="rounded-2xl bg-cyan-50 p-3 text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200">
+              <ShieldCheck className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="font-black text-slate-900 dark:text-white">Contrato v2.0</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Chamada, trabalho e submissão agora são módulos separados.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-5 space-y-3 text-sm text-slate-600 dark:text-slate-300">
+            <ChecklistItem ok>Esta tela usa apenas `/api/chamada`.</ChecklistItem>
+            <ChecklistItem ok>Modelos usam campo multipart `arquivo`.</ChecklistItem>
+            <ChecklistItem ok>Publicação usa endpoint de publicação.</ChecklistItem>
+            <ChecklistItem ok>Submissões e avaliações ficam fora desta página.</ChecklistItem>
+          </div>
+        </GlassCard>
+
+        <GlassCard className="p-5">
+          <h3 className="flex items-center gap-2 font-black text-slate-900 dark:text-white">
+            <FileText className="h-5 w-5 text-violet-500" />
+            Antes de publicar
+          </h3>
+          <p className="mt-2 text-sm leading-relaxed text-slate-500 dark:text-slate-400">
+            A chamada precisa ter, no mínimo, uma linha temática e um critério de avaliação escrita.
+            O backend v2.0 bloqueia publicação incompleta.
+          </p>
+        </GlassCard>
+      </aside>
+
+      <ConfirmDialog
+        open={confirmId != null}
+        title="Excluir chamada?"
+        description="A exclusão física só é permitida quando não há submissões vinculadas."
+        busy={busyId === confirmId}
+        onCancel={() => setConfirmId(null)}
+        onConfirm={excluirConfirmado}
+      />
+    </div>
+  );
+}
+
+function ChecklistItem({ children, ok = false }) {
+  return (
+    <div className="flex items-start gap-2">
+      {ok ? (
+        <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-emerald-500" />
+      ) : (
+        <AlertCircle className="mt-0.5 h-4 w-4 flex-none text-amber-500" />
+      )}
+      <span>{children}</span>
+    </div>
+  );
+}
+
+/* =========================================================================
+   Formulário modal
+=========================================================================== */
+
+const DEFAULT_FORM = {
+  titulo: "",
+  descricao_markdown: "",
+  periodo_experiencia_inicio: "2026-01",
+  periodo_experiencia_fim: "2026-12",
+  prazo_final_br: nowDatetimeLocal(),
+  aceita_poster: true,
+  link_modelo_poster: "",
+  max_coautores: 10,
+  publicado: false,
+  linhas: [],
+  criterios: [],
+  criterios_orais: [],
+  limites: {
+    titulo: 100,
+    introducao: 2000,
+    objetivos: 1000,
+    metodo: 1500,
+    resultados: 1500,
+    consideracao: 1000,
+  },
+  criterios_outros: "",
+  oral_outros: "",
+  premiacao_texto: "",
+  disposicao_finais_texto: "",
+};
+
+function ChamadaModal({ open, onClose, chamadaId, onSaved }) {
+  const isEdit = Boolean(chamadaId);
+  const [form, setForm] = useState(DEFAULT_FORM);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState("");
-  const [infoOk, setInfoOk] = useState("");
-  const abortRef = useRef(null);
 
-  // modelo de banner (POR CHAMADA)
-  const [modeloMeta, setModeloMeta] = useState(null);
-  const [modeloBusy, setModeloBusy] = useState(false);
-  const [modeloErr, setModeloErr] = useState("");
-  const [modeloOk, setModeloOk] = useState("");
-  const [modeloDownloading, setModeloDownloading] = useState(false);
-  const hadUploadCorsRef = useRef(false);
+  const [erro, setErro] = useState("");
+  const [sucesso, setSucesso] = useState("");
 
-  // 🔶 modelo de slides (apresentação oral)
+  const [bannerMeta, setBannerMeta] = useState(null);
   const [oralMeta, setOralMeta] = useState(null);
-  const [oralBusy, setOralBusy] = useState(false);
-  const [oralErr, setOralErr] = useState("");
-  const [oralOk, setOralOk] = useState("");
-  const hadUploadCorsOralRef = useRef(false);
+  const [modeloBusy, setModeloBusy] = useState("");
+  const [modeloMsg, setModeloMsg] = useState("");
 
   const inputBase =
-    "w-full rounded-xl border px-3 py-2 ring-offset-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-800";
+    "h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm outline-none transition focus:ring-2 focus:ring-cyan-500 dark:border-slate-700 dark:bg-slate-900";
 
-  const update = (k, v) => setForm((f) => ({ ...f, [k]: v }));
-  const updateLim = (k, v) => setForm((f) => ({ ...f, limites: { ...f.limites, [k]: Number(v) || 0 } }));
+  const textAreaBase =
+    "w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm outline-none transition focus:ring-2 focus:ring-cyan-500 dark:border-slate-700 dark:bg-slate-900";
 
-  const validar = () => {
-    const { periodo_experiencia_inicio: ini, periodo_experiencia_fim: fim, limites } = form;
-    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(ini) || !/^\d{4}-(0[1-9]|1[0-2])$/.test(fim)) return "Períodos devem estar no formato AAAA-MM.";
-    if (ini > fim) return "Período inicial não pode ser maior que o final.";
-    for (const [k, v] of Object.entries(limites)) {
-      const n = Number(v);
-      if (!Number.isInteger(n) || n < LIMIT_MIN || n > LIMIT_MAX) return `Limite inválido para ${k}: ${LIMIT_MIN} a ${LIMIT_MAX}.`;
-    }
-    return "";
-  };
+  const setValue = useCallback((key, value) => {
+    setForm((current) => ({ ...current, [key]: value }));
+  }, []);
 
-  /* ===== util ===== */
-  function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+  const setLimit = useCallback((key, value) => {
+    setForm((current) => ({
+      ...current,
+      limites: {
+        ...current.limites,
+        [key]: clampLimit(value),
+      },
+    }));
+  }, []);
 
-  // 📤 importar modelo de slides (oral)
-  const onImportModeloOral = async (file) => {
-    if (!file) return;
-    setOralErr(""); setOralOk(""); setInfoOk(""); setOralBusy(true);
-    try {
-      if (!isEdit) throw new Error("Salve a chamada para habilitar o upload do modelo.");
-      if (!/\.(pptx?|PPTX?)$/.test(file.name)) throw new Error("Envie arquivo .ppt ou .pptx");
-      if (file.size > 50 * 1024 * 1024) throw new Error("Arquivo muito grande (máx 50MB).");
+  async function carregarMetaModelos(id) {
+    const [banner, oral] = await Promise.allSettled([
+      chamadaApi.modeloBannerMeta(id),
+      chamadaApi.modeloOralMeta(id),
+    ]);
 
-      const tryOnce = async () => {
-        await apiUploadSvc(`chamadas/${chamadaId}/modelo-oral`, file, { fieldName: "file" });
-        const meta = await apiGet(`admin/chamadas/${chamadaId}/modelo-oral`);
-        setOralMeta(meta || null);
-      };
+    setBannerMeta(banner.status === "fulfilled" ? banner.value : null);
+    setOralMeta(oral.status === "fulfilled" ? oral.value : null);
+  }
 
-      const attempts = [0, 400, 1000];
-      let lastErr = null;
-      hadUploadCorsOralRef.current = false;
-
-      for (let i = 0; i < attempts.length; i++) {
-        try {
-          if (i > 0) setInfoOk(`Conexão instável, tentando novamente (${i + 1}/${attempts.length})…`);
-          await tryOnce();
-          lastErr = null;
-          break;
-        } catch (e) {
-          lastErr = e;
-          const msg = String(e?.message || "");
-          const status = e?.status || e?.response?.status;
-          if (status === 401 || status === 403 || /Failed to fetch|CORS/i.test(msg)) {
-            hadUploadCorsOralRef.current = true;
-            try { await apiGet("perfil/me"); } catch {}
-            await sleep(attempts[i]);
-            continue;
-          }
-          break;
-        }
-      }
-      if (lastErr) throw lastErr;
-
-      setOralOk("Modelo de slides (oral) importado com sucesso.");
-      setInfoOk("");
-    } catch (e) {
-      setOralErr(e?.message || "Falha ao importar o modelo de slides (oral).");
-    } finally {
-      setOralBusy(false);
-    }
-  };
-
-  // 📥 baixar modelo de slides (oral)
-  const handleDownloadOral = useCallback(async () => {
-    try {
-      const { blob, filename } = await apiGetFile(`admin/chamadas/${chamadaId}/modelo-oral/download`);
-      downloadBlob(filename || `modelo-oral-chamada-${chamadaId}.pptx`, blob);
-      setOralOk("Download iniciado.");
-    } catch (e) {
-      console.error("Erro ao baixar modelo oral:", e);
-      setOralErr(e?.message || "Falha ao baixar o modelo de slides (oral).");
-    }
-  }, [chamadaId]);
-
-  // 📥 baixar modelo (.ppt/.pptx) — banner
-  const onDownloadModelo = async () => {
-    if (!isEdit) return;
-    if (!modeloMeta?.exists) return;
-    setModeloErr(""); setModeloOk(""); setModeloDownloading(true);
-    try {
-      const { blob, filename } = await apiGetFile(`admin/chamadas/${chamadaId}/modelo-banner/download`);
-      const name =
-        filename ||
-        modeloMeta?.filename ||
-        `modelo-banner-chamada-${chamadaId}${/\.pptx?$/i.test(modeloMeta?.filename || "") ? "" : ".pptx"}`;
-      downloadBlob(name, blob);
-      setModeloOk("Download iniciado.");
-    } catch (e) {
-      setModeloErr(e?.message || "Falha ao baixar o modelo.");
-    } finally { setModeloDownloading(false); }
-  };
-
-  // carrega para edição + meta do modelo da CHAMADA
-  useEffect(() => {
+  const carregar = useCallback(async () => {
     if (!open) return;
-    setErr(""); setInfoOk(""); setModeloErr(""); setModeloOk("");
-    if (!isEdit) { setModeloMeta(null); setOralMeta(null); }
 
-    (async () => {
-      try {
-        if (isEdit) {
-          setLoading(true);
-          abortRef.current?.abort?.();
-          abortRef.current = new AbortController();
-          const r = await apiGet(`chamadas/${chamadaId}`, { signal: abortRef.current.signal });
-          const c = r?.chamada || {};
-          const prazoInput =
-            wallToDatetimeLocal(c.prazo_final_br || "") ||
-            (isIsoWithTz(c.prazo_final_br) ? isoToDatetimeLocalInZone(c.prazo_final_br, "America/Sao_Paulo") : "") ||
-            nowLocalDatetimeLocal();
-          setForm({
-            titulo: c.titulo || "",
-            descricao_markdown: c.descricao_markdown || "",
-            periodo_experiencia_inicio: c.periodo_experiencia_inicio || "2023-01",
-            periodo_experiencia_fim: c.periodo_experiencia_fim || "2025-07",
-            prazo_final_br: prazoInput,
-            aceita_poster: !!c.aceita_poster,
-            link_modelo_poster: c.link_modelo_poster || "",
-            max_coautores: Number(c.max_coautores) || 10,
-            publicado: !!c.publicado,
-            linhas: (r?.linhas || []).map((l) => ({ nome: l.nome || "", descricao: l.descricao || "" })),
-            criterios: r?.criterios || [],
-            criterios_orais: r?.criterios_orais || [],
-            limites: {
-              titulo: Number(r?.limites?.titulo ?? 100),
-              introducao: Number(r?.limites?.introducao ?? 2000),
-              objetivos: Number(r?.limites?.objetivos ?? 1000),
-              metodo: Number(r?.limites?.metodo ?? 1500),
-              resultados: Number(r?.limites?.resultados ?? 1500),
-              consideracao: Number(r?.limites?.consideracao ?? 1000),
-            },
-            criterios_outros: r?.criterios_outros || "",
-            oral_outros: r?.oral_outros || "",
-            premiacao_texto: r?.premiacao_texto || "",
-            disposicao_finais_texto: r?.disposicao_finais_texto || "",
-          });
+    setErro("");
+    setSucesso("");
+    setModeloMsg("");
+    setBannerMeta(null);
+    setOralMeta(null);
 
-          try {
-            const metaBanner = await apiGet(`admin/chamadas/${chamadaId}/modelo-banner`);
-            setModeloMeta(metaBanner || null);
-          } catch {
-            setModeloMeta(null);
-          }
+    if (!isEdit) {
+      setForm({
+        ...DEFAULT_FORM,
+        prazo_final_br: nowDatetimeLocal(),
+      });
+      return;
+    }
 
-          try {
-            const metaOral = await apiGet(`admin/chamadas/${chamadaId}/modelo-oral`);
-            setOralMeta(metaOral || null);
-          } catch {
-            setOralMeta(null);
-          }
-        }
-      } catch (e) {
-        setErr(e?.message || "Falha ao carregar a chamada para edição.");
-      } finally { setLoading(false); }
-    })();
+    setLoading(true);
+
+    try {
+      const response = await chamadaApi.obter(chamadaId);
+      const chamada = response?.chamada || response || {};
+
+      setForm({
+        titulo: chamada.titulo || "",
+        descricao_markdown: chamada.descricao_markdown || "",
+        periodo_experiencia_inicio:
+          chamada.periodo_experiencia_inicio || DEFAULT_FORM.periodo_experiencia_inicio,
+        periodo_experiencia_fim:
+          chamada.periodo_experiencia_fim || DEFAULT_FORM.periodo_experiencia_fim,
+        prazo_final_br: wallToDatetimeLocal(chamada.prazo_final_br),
+        aceita_poster: Boolean(chamada.aceita_poster),
+        link_modelo_poster: chamada.link_modelo_poster || "",
+        max_coautores: Number(chamada.max_coautores || 10),
+        publicado: Boolean(chamada.publicado),
+        linhas: Array.isArray(response?.linhas)
+          ? response.linhas.map((item) => ({
+              nome: item.nome || "",
+              descricao: item.descricao || "",
+            }))
+          : [],
+        criterios: Array.isArray(response?.criterios) ? response.criterios : [],
+        criterios_orais: Array.isArray(response?.criterios_orais)
+          ? response.criterios_orais
+          : [],
+        limites: {
+          titulo: Number(response?.limites?.titulo ?? 100),
+          introducao: Number(response?.limites?.introducao ?? 2000),
+          objetivos: Number(response?.limites?.objetivos ?? 1000),
+          metodo: Number(response?.limites?.metodo ?? 1500),
+          resultados: Number(response?.limites?.resultados ?? 1500),
+          consideracao: Number(response?.limites?.consideracao ?? 1000),
+        },
+        criterios_outros: response?.criterios_outros || "",
+        oral_outros: response?.oral_outros || "",
+        premiacao_texto: response?.premiacao_texto || "",
+        disposicao_finais_texto: response?.disposicao_finais_texto || "",
+      });
+
+      await carregarMetaModelos(chamadaId);
+    } catch (error) {
+      setErro(getMessage(error, "Falha ao carregar a chamada para edição."));
+    } finally {
+      setLoading(false);
+    }
   }, [open, isEdit, chamadaId]);
 
-  const onSave = async () => {
-    setErr(""); setInfoOk("");
+  useEffect(() => {
+    carregar();
+  }, [carregar]);
 
-    if (modeloBusy) { setErr("Aguarde terminar o envio do modelo de banner antes de salvar."); return; }
-    if (oralBusy) { setErr("Aguarde terminar o envio do modelo de slides (oral) antes de salvar."); return; }
+  function validar() {
+    if (!form.titulo.trim()) return "Informe o título da chamada.";
+    if (!form.descricao_markdown.trim()) return "Informe a descrição/normas da chamada.";
+    if (!parseYYYYMM(form.periodo_experiencia_inicio)) return "Período inicial inválido.";
+    if (!parseYYYYMM(form.periodo_experiencia_fim)) return "Período final inválido.";
 
-    const ver = validar();
-    if (ver) { setErr(ver); return; }
+    if (compareYYYYMM(form.periodo_experiencia_inicio, form.periodo_experiencia_fim) > 0) {
+      return "O período inicial não pode ser maior que o período final.";
+    }
+
+    if (!datetimeLocalToWall(form.prazo_final_br)) {
+      return "Informe o prazo final corretamente.";
+    }
+
+    if (!Array.isArray(form.linhas) || form.linhas.filter((l) => l.nome?.trim()).length === 0) {
+      return "Inclua pelo menos uma linha temática.";
+    }
+
+    if (!Array.isArray(form.criterios) || form.criterios.filter((c) => c.titulo?.trim()).length === 0) {
+      return "Inclua pelo menos um critério de avaliação escrita.";
+    }
+
+    return "";
+  }
+
+  function payload() {
+    return {
+      titulo: form.titulo.trim(),
+      descricao_markdown: form.descricao_markdown.trim(),
+      periodo_experiencia_inicio: form.periodo_experiencia_inicio,
+      periodo_experiencia_fim: form.periodo_experiencia_fim,
+      prazo_final_br: datetimeLocalToWall(form.prazo_final_br),
+      aceita_poster: Boolean(form.aceita_poster),
+      link_modelo_poster: form.link_modelo_poster?.trim() || null,
+      max_coautores: Number(form.max_coautores || 0),
+      publicado: Boolean(form.publicado),
+      linhas: form.linhas
+        .filter((linha) => linha.nome?.trim())
+        .map((linha) => ({
+          codigo: toCodigo(linha.nome),
+          nome: linha.nome.trim(),
+          descricao: linha.descricao?.trim() || null,
+        })),
+      criterios: form.criterios
+        .filter((criterio) => criterio.titulo?.trim())
+        .map((criterio, index) => ({
+          ordem: index + 1,
+          titulo: criterio.titulo.trim(),
+          escala_min: Number(criterio.escala_min || 1),
+          escala_max: Number(criterio.escala_max || 5),
+          peso: Number(criterio.peso || 1),
+        })),
+      criterios_orais: form.criterios_orais
+        .filter((criterio) => criterio.titulo?.trim())
+        .map((criterio, index) => ({
+          ordem: index + 1,
+          titulo: criterio.titulo.trim(),
+          escala_min: Number(criterio.escala_min || 1),
+          escala_max: Number(criterio.escala_max || 3),
+          peso: Number(criterio.peso || 1),
+        })),
+      limites: {
+        titulo: clampLimit(form.limites.titulo),
+        introducao: clampLimit(form.limites.introducao),
+        objetivos: clampLimit(form.limites.objetivos),
+        metodo: clampLimit(form.limites.metodo),
+        resultados: clampLimit(form.limites.resultados),
+        consideracao: clampLimit(form.limites.consideracao),
+      },
+      criterios_outros: form.criterios_outros?.trim() || null,
+      oral_outros: form.oral_outros?.trim() || null,
+      premiacao_texto: form.premiacao_texto?.trim() || null,
+      disposicao_finais_texto: form.disposicao_finais_texto?.trim() || null,
+    };
+  }
+
+  async function salvar() {
+    setErro("");
+    setSucesso("");
+
+    const invalid = validar();
+    if (invalid) {
+      setErro(invalid);
+      return;
+    }
+
     setSaving(true);
+
     try {
-      const criteriosNorm = (form.criterios || []).map((c) => ({
-        titulo: c.titulo,
-        escala_min: Number(c.escala_min) || 1,
-        escala_max: Number(c.escala_max) || 5,
-        peso: Number(c.peso) || 1,
-      }));
-      const criteriosOraisNorm = (form.criterios_orais || []).map((c) => ({
-        titulo: c.titulo,
-        escala_min: Number(c.escala_min) || 1,
-        escala_max: Number(c.escala_max) || 3,
-        peso: Number(c.peso) || 1,
-      }));
+      const data = isEdit
+        ? await chamadaApi.atualizar(chamadaId, payload())
+        : await chamadaApi.criar(payload());
 
-      const payload = {
-        titulo: form.titulo,
-        descricao_markdown: form.descricao_markdown,
-        periodo_experiencia_inicio: form.periodo_experiencia_inicio,
-        periodo_experiencia_fim: form.periodo_experiencia_fim,
-        prazo_final_br: datetimeLocalToBrWall(form.prazo_final_br),
-        aceita_poster: !!form.aceita_poster,
-        link_modelo_poster: form.link_modelo_poster,
-        max_coautores: Number(form.max_coautores) || 0,
-        publicado: !!form.publicado,
-        linhas: (form.linhas || []).map((l) => ({ codigo: toCodigo(l.nome), nome: l.nome || "", descricao: l.descricao || "" })),
-        criterios: criteriosNorm,
-        criterios_orais: criteriosOraisNorm,
-        limites: {
-          titulo: enforceBackend(clampUi(form.limites.titulo)),
-          introducao: enforceBackend(clampUi(form.limites.introducao)),
-          objetivos: enforceBackend(clampUi(form.limites.objetivos)),
-          metodo: enforceBackend(clampUi(form.limites.metodo)),
-          resultados: enforceBackend(clampUi(form.limites.resultados)),
-          consideracao: enforceBackend(clampUi(form.limites.consideracoes)),
-        },
-        criterios_outros: form.criterios_outros || "",
-        oral_outros: form.oral_outros || "",
-        premiacao_texto: form.premiacao_texto || "",
-        disposicao_finais_texto: form.disposicao_finais_texto || "",
-      };
+      const savedId = data?.id || chamadaId;
 
-      let savedId = chamadaId || null;
-      if (isEdit) {
-        await apiPut(`admin/chamadas/${chamadaId}`, payload);
-        setInfoOk("Alterações salvas.");
-        onSaved?.(savedId);
-        onClose?.();
-      } else {
-        const r = await apiPost("admin/chamadas", payload);
-        if (r?.id) savedId = r.id;
-        setInfoOk("Chamada criada. Agora você já pode importar os modelos (.pptx) desta chamada.");
-        onSaved?.(savedId);
-        try { await apiGet(`admin/chamadas/${savedId}/modelo-banner`); } catch {}
-        try { await apiGet("perfil/me"); } catch {}
+      setSucesso(isEdit ? "Chamada atualizada com sucesso." : "Chamada criada com sucesso.");
+      onSaved?.(savedId);
+
+      if (savedId) {
+        await carregarMetaModelos(savedId);
       }
-    } catch (e) {
-      const msg = e?.message || e?.response?.data?.error || "Erro ao salvar a chamada. Revise os campos.";
-      setErr(msg);
-      console.error("Salvar chamada — erro:", e);
+
+      if (isEdit) {
+        onClose?.();
+      }
+    } catch (error) {
+      setErro(
+        getMessage(
+          error,
+          "Não foi possível salvar a chamada. Revise os campos e tente novamente."
+        )
+      );
     } finally {
       setSaving(false);
     }
-  };
+  }
+
+  async function importarModelo(tipo, file) {
+    if (!file) return;
+
+    setErro("");
+    setModeloMsg("");
+
+    if (!isEdit) {
+      setErro("Salve a chamada antes de importar modelos oficiais.");
+      return;
+    }
+
+    if (!/\.pptx?$/i.test(file.name)) {
+      setErro("Envie um arquivo .ppt ou .pptx.");
+      return;
+    }
+
+    if (file.size > 50 * 1024 * 1024) {
+      setErro("O modelo excede 50MB.");
+      return;
+    }
+
+    setModeloBusy(tipo);
+
+    try {
+      if (tipo === "banner") {
+        await chamadaApi.importarModeloBanner(chamadaId, file);
+      } else {
+        await chamadaApi.importarModeloOral(chamadaId, file);
+      }
+
+      await carregarMetaModelos(chamadaId);
+      setModeloMsg(tipo === "banner" ? "Modelo de banner importado." : "Modelo oral importado.");
+    } catch (error) {
+      setErro(
+        getMessage(
+          error,
+          tipo === "banner"
+            ? "Não foi possível importar o modelo de banner."
+            : "Não foi possível importar o modelo oral."
+        )
+      );
+    } finally {
+      setModeloBusy("");
+    }
+  }
+
+  async function baixarModelo(tipo) {
+    setErro("");
+    setModeloMsg("");
+
+    try {
+      const result =
+        tipo === "banner"
+          ? await chamadaApi.baixarModeloBanner(chamadaId)
+          : await chamadaApi.baixarModeloOral(chamadaId);
+
+      downloadBlob(
+        result.filename ||
+          (tipo === "banner"
+            ? `modelo-banner-chamada-${chamadaId}.pptx`
+            : `modelo-oral-chamada-${chamadaId}.pptx`),
+        result.blob
+      );
+
+      setModeloMsg("Download iniciado.");
+    } catch (error) {
+      setErro(
+        getMessage(
+          error,
+          tipo === "banner"
+            ? "Não foi possível baixar o modelo de banner."
+            : "Não foi possível baixar o modelo oral."
+        )
+      );
+    }
+  }
 
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={isEdit ? "Editar chamada" : "Nova chamada"}
-      labelledById="dlg-title"
-      describedById="dlg-desc"
+      subtitle="Defina normas, prazos, linhas temáticas, critérios e modelos oficiais de apresentação."
       footer={
         <>
-          {(err || infoOk) && (
-            <span className={`mr-auto text-sm ${err ? "text-red-600" : "text-emerald-600"}`}>
-              {err || infoOk}
-            </span>
-          )}
+          <div className="mr-auto min-w-0 text-sm">
+            {erro ? <span className="font-medium text-rose-600">{erro}</span> : null}
+            {!erro && sucesso ? <span className="font-medium text-emerald-600">{sucesso}</span> : null}
+            {!erro && !sucesso && modeloMsg ? (
+              <span className="font-medium text-cyan-600">{modeloMsg}</span>
+            ) : null}
+          </div>
 
-          {/* Botões auxiliares de modelo (se já existir) */}
-          {isEdit && modeloMeta?.exists && (
-            <button
-              type="button"
-              onClick={onDownloadModelo}
-              disabled={modeloDownloading}
-              className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800 dark:border-zinc-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              title="Baixar modelo de banner (.pptx)"
-            >
-              {modeloDownloading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
-              {modeloDownloading ? "Baixando…" : "Baixar modelo do banner"}
-            </button>
-          )}
-
-          {/* 🔶 Novo: download modelo ORAL, se existir */}
-          {isEdit && oralMeta?.exists && (
-            <button
-              type="button"
-              onClick={handleDownloadOral}
-              className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800 dark:border-zinc-700 focus:outline-none focus:ring-2 focus:ring-amber-500"
-              title="Baixar modelo de slides (apresentação oral)"
-            >
-              <Download className="h-4 w-4" aria-hidden="true" />
-              Baixar modelo (oral)
-            </button>
-          )}
-
-          <button type="button" onClick={onClose} className="rounded-xl px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">
+          <Button tone="ghost" onClick={onClose}>
             Cancelar
-          </button>
-          <button
-            type="button"
-            onClick={onSave}
-            disabled={saving || modeloBusy || oralBusy}
-            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
-          >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />} {saving ? "Salvando..." : "Salvar"}
-          </button>
+          </Button>
+          <Button tone="primary" icon={Save} loading={saving} onClick={salvar}>
+            {saving ? "Salvando..." : "Salvar chamada"}
+          </Button>
         </>
       }
     >
-      <LiveRegion message={err || infoOk} type={err ? "assertive" : "polite"} />
+      <LiveRegion message={erro || sucesso || modeloMsg} type={erro ? "assertive" : "polite"} />
 
       {loading ? (
-        <div className="flex items-center gap-2 text-sm text-zinc-600">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Carregando…
+        <div className="flex items-center gap-3 rounded-3xl border border-slate-200 bg-white p-6 text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+          <Loader2 className="h-5 w-5 animate-spin" />
+          Carregando dados da chamada...
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-8">
-          {/* Descrição acessível do conteúdo do modal */}
-          <div id="dlg-desc" className="sr-only">
-            Formulário para criar ou editar chamada. Preencha informações gerais, prazos, normas,
-            limites de caracteres e critérios de avaliação. Ao final, salve para habilitar upload
-            dos modelos (.pptx) específicos desta chamada.
-          </div>
-
-          {/* 1) Gerais */}
-          <section id="s1" className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <h2 className="sm:col-span-3 mb-2 text-base font-semibold">Informações gerais</h2>
-            <div className="sm:col-span-3">
-              <Field label={<span>Título da chamada <Counter value={form.titulo} max={200} /></span>} htmlFor="titulo">
-                <input id="titulo" className={`${inputBase} text-lg sm:text-xl`} value={form.titulo}
-                  onChange={(e) => update("titulo", e.target.value)} maxLength={200} required aria-required="true" />
+        <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
+          <div className="space-y-6">
+            <FormSection title="Informações gerais" icon={Settings2}>
+              <Field label={<span>Título <Counter value={form.titulo} max={200} /></span>} required>
+                <input
+                  className={cx(inputBase, "h-12 text-base font-semibold")}
+                  value={form.titulo}
+                  onChange={(event) => setValue("titulo", event.target.value)}
+                  maxLength={200}
+                />
               </Field>
-            </div>
 
-            <Field label="Período da experiência — início (AAAA-MM)">
-              <MonthYearPicker
-                value={form.periodo_experiencia_inicio}
-                max={form.periodo_experiencia_fim || undefined}
-                selectClass={inputBase}
-                className="sm:max-w-xs"
-                onChange={(v) => update("periodo_experiencia_inicio", v)}
-              />
-            </Field>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Período da experiência — início" required>
+                  <MonthYearPicker
+                    label="Período inicial"
+                    value={form.periodo_experiencia_inicio}
+                    max={form.periodo_experiencia_fim}
+                    onChange={(value) => setValue("periodo_experiencia_inicio", value)}
+                  />
+                </Field>
 
-            <Field label="Período da experiência — fim (AAAA-MM)">
-              <MonthYearPicker
-                value={form.periodo_experiencia_fim}
-                min={form.periodo_experiencia_inicio || undefined}
-                selectClass={inputBase}
-                className="sm:max-w-xs"
-                onChange={(v) => update("periodo_experiencia_fim", v)}
-              />
-            </Field>
-          </section>
-
-          {/* 2) Prazo */}
-          <section id="s2" className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <h2 className="sm:col-span-2 mb-2 text-base font-semibold">Prazo para submissão</h2>
-            <Field label="Prazo final (Brasília)" htmlFor="prazo">
-              <input id="prazo" type="datetime-local" className={inputBase} value={form.prazo_final_br}
-                onChange={(e) => update("prazo_final_br", e.target.value)} required aria-required="true" />
-            </Field>
-          </section>
-
-          {/* 3) Normas / Linhas / Limites */}
-          <section id="s3" className="grid grid-cols-1 gap-4">
-            <h2 className="mb-2 text-base font-semibold">Normas para submissão dos trabalhos</h2>
-
-            {/* Linhas */}
-            <div>
-              <div className="mb-2 flex items-center justify-between">
-                <h3 className="font-medium">Linhas temáticas</h3>
-                <button
-                  type="button"
-                  onClick={() => update("linhas", [...form.linhas, { nome: "", descricao: "" }])}
-                  className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-                  <Plus className="h-4 w-4" aria-hidden="true" /> adicionar linha
-                </button>
+                <Field label="Período da experiência — fim" required>
+                  <MonthYearPicker
+                    label="Período final"
+                    value={form.periodo_experiencia_fim}
+                    min={form.periodo_experiencia_inicio}
+                    onChange={(value) => setValue("periodo_experiencia_fim", value)}
+                  />
+                </Field>
               </div>
-              <div className="grid gap-3">
-                {form.linhas.map((l, i) => (
-                  <div key={i} className="grid gap-2">
-                    <input className={inputBase} placeholder="Nome da linha temática" value={l.nome}
-                      onChange={(e) => { const arr = [...form.linhas]; arr[i] = { ...arr[i], nome: e.target.value }; update("linhas", arr); }}
-                      aria-label="Nome da linha temática" />
-                    <div className="flex gap-2">
-                      <textarea className={`${inputBase} flex-1 min-h-[110px] rounded-2xl`} placeholder="Descrição (opcional)" value={l.descricao || ""}
-                        onChange={(e) => { const arr = [...form.linhas]; arr[i] = { ...arr[i], descricao: e.target.value }; update("linhas", arr); }}
-                        aria-label="Descrição da linha temática" />
-                      <button type="button"
-                        onClick={() => update("linhas", form.linhas.filter((_, j) => j !== i))}
-                        className="inline-flex items-center gap-2 rounded-2xl bg-zinc-100 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
-                        aria-label={`Remover linha temática ${i + 1}`}>
-                        <Trash2 className="h-4 w-4" aria-hidden="true" /> Remover
-                      </button>
-                    </div>
+
+              <Field
+                label="Prazo final para submissão"
+                hint="Horário de parede em Brasília. Será enviado como YYYY-MM-DD HH:mm:ss."
+                required
+              >
+                <input
+                  type="datetime-local"
+                  className={inputBase}
+                  value={form.prazo_final_br}
+                  onChange={(event) => setValue("prazo_final_br", event.target.value)}
+                />
+              </Field>
+
+              <Field label="Descrição / normas da chamada" required>
+                <textarea
+                  className={cx(textAreaBase, "min-h-[180px]")}
+                  value={form.descricao_markdown}
+                  onChange={(event) => setValue("descricao_markdown", event.target.value)}
+                  placeholder="Descreva regras, público-alvo, formato de submissão, etapas e critérios gerais."
+                />
+              </Field>
+            </FormSection>
+
+            <FormSection title="Linhas temáticas" icon={Layers3}>
+              <DynamicList
+                items={form.linhas}
+                addLabel="Adicionar linha"
+                emptyText="Nenhuma linha temática cadastrada."
+                onAdd={() => setValue("linhas", [...form.linhas, { nome: "", descricao: "" }])}
+                onRemove={(index) =>
+                  setValue(
+                    "linhas",
+                    form.linhas.filter((_, itemIndex) => itemIndex !== index)
+                  )
+                }
+                render={(item, index) => (
+                  <div className="grid gap-3">
+                    <input
+                      className={inputBase}
+                      value={item.nome}
+                      placeholder="Nome da linha temática"
+                      onChange={(event) => {
+                        const next = [...form.linhas];
+                        next[index] = { ...next[index], nome: event.target.value };
+                        setValue("linhas", next);
+                      }}
+                    />
+                    <textarea
+                      className={cx(textAreaBase, "min-h-[90px]")}
+                      value={item.descricao || ""}
+                      placeholder="Descrição da linha temática"
+                      onChange={(event) => {
+                        const next = [...form.linhas];
+                        next[index] = { ...next[index], descricao: event.target.value };
+                        setValue("linhas", next);
+                      }}
+                    />
                   </div>
-                ))}
-              </div>
-            </div>
+                )}
+              />
+            </FormSection>
 
-            {/* Limites */}
-            <div>
-              <h3 className="mb-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">Limites de caracteres da submissão</h3>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <FormSection title="Limites do formulário de submissão" icon={ClipboardList}>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {[
-                  ["titulo", "Título da experiência"],
-                  ["introducao", "Introdução com justificativa"],
+                  ["titulo", "Título"],
+                  ["introducao", "Introdução"],
                   ["objetivos", "Objetivos"],
-                  ["metodo", "Método/Descrição da prática"],
-                  ["resultados", "Resultados/Impactos"],
+                  ["metodo", "Método/descrição"],
+                  ["resultados", "Resultados"],
                   ["consideracao", "Considerações finais"],
-                ].map(([key, rot]) => (
-                  <Field
-                    key={key}
-                    label={rot}
-                    hint={`(mín. ${LIMIT_MIN} • máx. ${LIMIT_MAX}) — valores abaixo de 50 serão salvos como 50 (regra temporária)`}
-                  >
+                ].map(([key, label]) => (
+                  <Field key={key} label={label} hint={`Entre ${LIMIT_MIN} e ${LIMIT_MAX} caracteres.`}>
                     <input
                       type="number"
                       min={LIMIT_MIN}
                       max={LIMIT_MAX}
                       className={inputBase}
                       value={form.limites[key]}
-                      onChange={(e) => updateLim(key, e.target.value)}
-                      aria-label={`Limite de caracteres para ${rot}`}
+                      onChange={(event) => setLimit(key, event.target.value)}
                     />
                   </Field>
                 ))}
               </div>
-            </div>
+            </FormSection>
 
-            {/* Markdown normas */}
-            <Field label="Descrição/Normas (Markdown)" htmlFor="desc">
-              <textarea id="desc" className={`${inputBase} min-h-[180px] rounded-2xl`}
-                value={form.descricao_markdown}
-                onChange={(e) => update("descricao_markdown", e.target.value)}
-                required aria-required="true" />
-            </Field>
-          </section>
+            <FormSection title="Critérios de avaliação escrita" icon={CheckCircle2}>
+              <CriteriaEditor
+                criterios={form.criterios}
+                defaultMax={5}
+                onChange={(value) => setValue("criterios", value)}
+              />
 
-          {/* 4) Autores */}
-          <section id="s4" className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <h2 className="sm:col-span-2 mb-2 text-base font-semibold">Limite de autores e coautores</h2>
-            <Field label="Máximo de coautores" htmlFor="coaut">
-              <input id="coaut" type="number" min={0} className={inputBase}
-                value={form.max_coautores}
-                onChange={(e) => update("max_coautores", e.target.value)} />
-            </Field>
-          </section>
-
-          {/* 5) Critérios escrita */}
-          <section id="s5" className="grid grid-cols-1 gap-4">
-            <h2 className="mb-2 text-base font-semibold">Critérios de avaliação — escrita</h2>
-            <div>
-              <div className="mb-2 flex items-center justify-between">
-                <h3 className="font-medium">Critérios</h3>
-                <button
-                  type="button"
-                  onClick={() => update("criterios", [...form.criterios, { titulo: "", escala_min: 1, escala_max: 5, peso: 1 }])}
-                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                >
-                  <Plus className="h-4 w-4" aria-hidden="true" /> adicionar critério
-                </button>
-              </div>
-              <div className="grid gap-3">
-                {form.criterios.map((c, i) => (
-                  <div key={i} className="grid gap-2 sm:grid-cols-2">
-                    <input className={inputBase} placeholder="Título do critério" value={c.titulo}
-                      onChange={(e) => { const arr = [...form.criterios]; arr[i] = { ...arr[i], titulo: e.target.value }; update("criterios", arr); }}
-                      aria-label="Título do critério (escrita)" />
-                    <div className="grid grid-cols-3 gap-2">
-                      <Field label="Mín.">
-                        <input className={inputBase} type="number" value={c.escala_min ?? 1}
-                          onChange={(e) => { const arr = [...form.criterios]; arr[i] = { ...arr[i], escala_min: Number(e.target.value) || 1 }; update("criterios", arr); }} />
-                      </Field>
-                      <Field label="Máx.">
-                        <input className={inputBase} type="number" value={c.escala_max ?? 5}
-                          onChange={(e) => { const arr = [...form.criterios]; arr[i] = { ...arr[i], escala_max: Number(e.target.value) || 5 }; update("criterios", arr); }} />
-                      </Field>
-                      <Field label="Peso">
-                        <input className={inputBase} type="number" step="0.1" value={c.peso ?? 1}
-                          onChange={(e) => { const arr = [...form.criterios]; arr[i] = { ...arr[i], peso: Number(e.target.value) || 1 }; update("criterios", arr); }} />
-                      </Field>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <Field label="Outros critérios (escrita)">
-              <textarea className={`${inputBase} min-h-[100px] rounded-2xl`} value={form.criterios_outros}
-                onChange={(e) => update("criterios_outros", e.target.value)} placeholder="Complementos da avaliação escrita..." />
-            </Field>
-          </section>
-
-          {/* 6) Critérios oral */}
-          <section id="s6" className="grid grid-cols-1 gap-4">
-            <h2 className="mb-2 text-base font-semibold">Apresentação oral</h2>
-            <div>
-              <div className="mb-2 flex items-center justify-between">
-                <h3 className="font-medium">Critérios — apresentação oral</h3>
-                <button
-                  type="button"
-                  onClick={() => update("criterios_orais", [...form.criterios_orais, { titulo: "", escala_min: 1, escala_max: 3, peso: 1 }])}
-                  className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-3 py-2 text-sm text-white hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500"
-                >
-                  <Plus className="h-4 w-4" aria-hidden="true" /> adicionar critério
-                </button>
-              </div>
-              <div className="grid gap-3">
-                {form.criterios_orais.map((c, i) => (
-                  <div key={i} className="grid gap-2 sm:grid-cols-2">
-                    <input className={inputBase} placeholder="Título do critério" value={c.titulo}
-                      onChange={(e) => { const arr = [...form.criterios_orais]; arr[i] = { ...arr[i], titulo: e.target.value }; update("criterios_orais", arr); }}
-                      aria-label="Título do critério (oral)" />
-                    <div className="grid grid-cols-3 gap-2">
-                      <Field label="Mín.">
-                        <input className={inputBase} type="number" value={c.escala_min ?? 1}
-                          onChange={(e) => { const arr = [...form.criterios_orais]; arr[i] = { ...arr[i], escala_min: Number(e.target.value) || 1 }; update("criterios_orais", arr); }} />
-                      </Field>
-                      <Field label="Máx.">
-                        <input className={inputBase} type="number" value={c.escala_max ?? 3}
-                          onChange={(e) => { const arr = [...form.criterios_orais]; arr[i] = { ...arr[i], escala_max: Number(e.target.value) || 3 }; update("criterios_orais", arr); }} />
-                      </Field>
-                      <Field label="Peso">
-                        <input className={inputBase} type="number" step="0.1" value={c.peso ?? 1}
-                          onChange={(e) => { const arr = [...form.criterios_orais]; arr[i] = { ...arr[i], peso: Number(e.target.value) || 1 }; update("criterios_orais", arr); }} />
-                      </Field>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <Field label="Outros critérios (oral)">
-              <textarea className={`${inputBase} min-h-[100px] rounded-2xl`} value={form.oral_outros}
-                onChange={(e) => update("oral_outros", e.target.value)} placeholder="Complementos da avaliação oral..." />
-            </Field>
-          </section>
-
-          {/* 7) Premiação */}
-          <section id="s7" className="grid grid-cols-1 gap-4">
-            <h2 className="mb-2 text-base font-semibold">Premiação</h2>
-            <Field label="Texto da premiação">
-              <textarea className={`${inputBase} min-h-[120px] rounded-2xl`} value={form.premiacao_texto}
-                onChange={(e) => update("premiacao_texto", e.target.value)} placeholder="Descreva regras e formato da premiação..." />
-            </Field>
-          </section>
-
-          {/* 8) Formulário eletrônico para submissão */}
-          <section id="s8" className="grid grid-cols-1 gap-4">
-            <h2 className="mb-2 text-base font-semibold">Formulário eletrônico para submissão</h2>
-
-            <Field label="Aceita pôster (.ppt/.pptx)">
-              <label className="inline-flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  className="rounded border-zinc-300"
-                  checked={form.aceita_poster}
-                  onChange={(e) => update("aceita_poster", e.target.checked)}
+              <Field label="Complementos da avaliação escrita">
+                <textarea
+                  className={cx(textAreaBase, "min-h-[110px]")}
+                  value={form.criterios_outros}
+                  onChange={(event) => setValue("criterios_outros", event.target.value)}
                 />
-                Aceitar envio de pôster no ato da submissão
-              </label>
-            </Field>
+              </Field>
+            </FormSection>
 
-            {/* Importar modelo POR CHAMADA (banner) */}
-            <Field label="Modelo de banner">
-              {!isEdit && (
-                <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-900 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
-                  <div className="flex items-start gap-2 text-sm">
-                    <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
-                    <div>
-                      <strong>Salve a chamada</strong> para habilitar o envio do modelo (.pptx). Após salvar, o botão de upload ficará disponível nesta mesma tela.
-                    </div>
-                  </div>
-                </div>
-              )}
+            <FormSection title="Critérios da apresentação oral" icon={FileText}>
+              <CriteriaEditor
+                criterios={form.criterios_orais}
+                defaultMax={3}
+                onChange={(value) => setValue("criterios_orais", value)}
+              />
 
-              <div className="flex flex-col items-center justify-center gap-3">
-                <div className="flex flex-wrap items-center justify-center gap-2">
-                  <label
-                    className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm text-white ${
-                      isEdit && !modeloBusy ? "bg-emerald-600 hover:bg-emerald-700 cursor-pointer" : "bg-zinc-400 cursor-not-allowed"
-                    }`}
-                    title={isEdit ? "Importar modelo (.pptx)" : "Salve a chamada para habilitar o upload"}
-                  >
-                    <input
-                      type="file"
-                      accept=".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                      className="hidden"
-                      disabled={!isEdit || modeloBusy}
-                      onChange={(e) => onImportModelo(e.target.files?.[0] || null)}
-                    />
-                    {modeloBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
-                    {modeloBusy ? "Enviando…" : "Importar modelo (.pptx)"}
-                  </label>
-                </div>
+              <Field label="Complementos da avaliação oral">
+                <textarea
+                  className={cx(textAreaBase, "min-h-[110px]")}
+                  value={form.oral_outros}
+                  onChange={(event) => setValue("oral_outros", event.target.value)}
+                />
+              </Field>
+            </FormSection>
 
-                <div className="mt-1 text-center text-xs text-zinc-500">
-                  Esse arquivo será usado por outras telas para gerar/exportar o banner da <strong>chamada atual</strong>.
-                  {modeloMeta?.exists === true && (
-                    <>
-                      {" "}<strong>Modelo disponível</strong>
-                      {modeloMeta.filename ? ` — ${modeloMeta.filename}` : ""}
-                      {Number.isFinite(modeloMeta?.size) ? ` (${formatBytes(modeloMeta.size)})` : ""}
-                      {modeloMeta.mtime ? ` — atualizado em ${new Date(modeloMeta.mtime).toLocaleString()}` : ""}
-                    </>
-                  )}
-                  {modeloMeta?.exists === false && (<span className="text-rose-600"> Nenhum modelo importado ainda para esta chamada.</span>)}
-                </div>
+            <FormSection title="Premiação e disposições finais" icon={Sparkles}>
+              <Field label="Texto da premiação">
+                <textarea
+                  className={cx(textAreaBase, "min-h-[110px]")}
+                  value={form.premiacao_texto}
+                  onChange={(event) => setValue("premiacao_texto", event.target.value)}
+                />
+              </Field>
 
-                {modeloOk && <div className="text-center text-xs text-emerald-600">{modeloOk}</div>}
-                {modeloErr && <div className="text-center text-xs text-rose-600">{modeloErr}</div>}
-                {infoOk && !modeloOk && !modeloErr && <div className="text-center text-xs text-emerald-600">{infoOk}</div>}
+              <Field label="Disposições finais">
+                <textarea
+                  className={cx(textAreaBase, "min-h-[110px]")}
+                  value={form.disposicao_finais_texto}
+                  onChange={(event) => setValue("disposicao_finais_texto", event.target.value)}
+                />
+              </Field>
+            </FormSection>
+          </div>
+
+          <aside className="space-y-4">
+            <GlassCard className="sticky top-4 p-5">
+              <h3 className="flex items-center gap-2 font-black text-slate-900 dark:text-white">
+                <Settings2 className="h-5 w-5 text-cyan-500" />
+                Configurações rápidas
+              </h3>
+
+              <div className="mt-4 space-y-4">
+                <Field label="Máximo de coautores">
+                  <input
+                    type="number"
+                    min={0}
+                    className={inputBase}
+                    value={form.max_coautores}
+                    onChange={(event) => setValue("max_coautores", event.target.value)}
+                  />
+                </Field>
+
+                <label className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm font-semibold dark:border-slate-800 dark:bg-slate-900">
+                  <span>Aceita envio de pôster</span>
+                  <input
+                    type="checkbox"
+                    checked={form.aceita_poster}
+                    onChange={(event) => setValue("aceita_poster", event.target.checked)}
+                    className="h-5 w-5 rounded border-slate-300"
+                  />
+                </label>
+
+                <label className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm font-semibold dark:border-slate-800 dark:bg-slate-900">
+                  <span>Publicar ao salvar</span>
+                  <input
+                    type="checkbox"
+                    checked={form.publicado}
+                    onChange={(event) => setValue("publicado", event.target.checked)}
+                    className="h-5 w-5 rounded border-slate-300"
+                  />
+                </label>
               </div>
-            </Field>
+            </GlassCard>
 
-            {/* 🔶 Modelo de slides (apresentação oral) */}
-            <Field label="Modelo de slides (apresentação oral)">
-              {!isEdit && (
-                <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-900 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
-                  <div className="flex items-start gap-2 text-sm">
-                    <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
-                    <div><strong>Salve a chamada</strong> para habilitar o envio do modelo de slides (.pptx).</div>
-                  </div>
-                </div>
-              )}
+            <ModeloBox
+              title="Modelo de banner"
+              description="Arquivo oficial usado como base para pôster da chamada."
+              meta={bannerMeta}
+              disabled={!isEdit}
+              busy={modeloBusy === "banner"}
+              onUpload={(file) => importarModelo("banner", file)}
+              onDownload={() => baixarModelo("banner")}
+            />
 
-              <div className="flex flex-col items-center justify-center gap-3">
-                <div className="flex flex-wrap items-center justify-center gap-2">
-                  {/* Upload do modelo (oral) */}
-                  <label
-                    className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm text-white ${
-                      isEdit && !oralBusy ? "bg-amber-600 hover:bg-amber-700 cursor-pointer" : "bg-zinc-400 cursor-not-allowed"
-                    }`}
-                    title={isEdit ? "Importar modelo de slides (.pptx)" : "Salve a chamada para habilitar o upload"}
-                  >
-                    <input
-                      type="file"
-                      accept=".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                      className="hidden"
-                      disabled={!isEdit || oralBusy}
-                      onChange={(e) => onImportModeloOral(e.target.files?.[0] || null)}
-                    />
-                    {oralBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
-                    {oralBusy ? "Enviando…" : "Importar modelo (oral .pptx)"}
-                  </label>
-                </div>
-
-                <div className="mt-1 text-center text-xs text-zinc-500">
-                  Esse arquivo será usado para as <strong>apresentações orais</strong> desta chamada.
-                  {oralMeta?.exists === true && (
-                    <>
-                      {" "}<strong>Modelo disponível</strong>
-                      {oralMeta.filename ? ` — ${oralMeta.filename}` : ""}
-                      {Number.isFinite(oralMeta?.size) ? ` (${formatBytes(oralMeta.size)})` : ""}
-                      {oralMeta.mtime ? ` — atualizado em ${new Date(oralMeta.mtime).toLocaleString()}` : ""}
-                    </>
-                  )}
-                  {oralMeta?.exists === false && (<span className="text-rose-600"> Nenhum modelo importado ainda para apresentação oral.</span>)}
-                </div>
-
-                {oralOk &&  <div className="text-center text-xs text-emerald-600">{oralOk}</div>}
-                {oralErr && <div className="text-center text-xs text-rose-600">{oralErr}</div>}
-              </div>
-            </Field>
-          </section>
-
-          {/* 9) Disposições finais */}
-          <section id="s9" className="grid grid-cols-1 gap-4">
-            <h2 className="mb-2 text-base font-semibold">Disposições finais</h2>
-            <Field label="Texto das disposições finais">
-              <textarea className={`${inputBase} min-h-[120px] rounded-2xl`} value={form.disposicao_finais_texto}
-                onChange={(e) => update("disposicao_finais_texto", e.target.value)} placeholder="Informe as disposições finais..." />
-            </Field>
-          </section>
+            <ModeloBox
+              title="Modelo oral"
+              description="Arquivo oficial usado para apresentações orais da chamada."
+              meta={oralMeta}
+              disabled={!isEdit}
+              busy={modeloBusy === "oral"}
+              onUpload={(file) => importarModelo("oral", file)}
+              onDownload={() => baixarModelo("oral")}
+            />
+          </aside>
         </div>
       )}
     </Modal>
   );
 }
 
-/* ─── Página principal ─── */
+function FormSection({ title, icon: Icon, children }) {
+  return (
+    <GlassCard className="p-5">
+      <div className="mb-5 flex items-center gap-3">
+        <div className="rounded-2xl bg-slate-100 p-3 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+          <Icon className="h-5 w-5" />
+        </div>
+        <h3 className="text-lg font-black text-slate-900 dark:text-white">{title}</h3>
+      </div>
+      <div className="space-y-4">{children}</div>
+    </GlassCard>
+  );
+}
+
+function DynamicList({ items, onAdd, onRemove, render, addLabel, emptyText }) {
+  return (
+    <div className="space-y-3">
+      <div className="flex justify-end">
+        <Button tone="primary" size="sm" icon={Plus} onClick={onAdd}>
+          {addLabel}
+        </Button>
+      </div>
+
+      {items.length === 0 ? (
+        <div className="rounded-3xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+          {emptyText}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {items.map((item, index) => (
+            <div
+              key={index}
+              className="rounded-3xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/70"
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-sm font-black text-slate-700 dark:text-slate-200">
+                  Item {index + 1}
+                </span>
+                <Button tone="ghost" size="sm" icon={Trash2} onClick={() => onRemove(index)}>
+                  Remover
+                </Button>
+              </div>
+              {render(item, index)}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CriteriaEditor({ criterios, defaultMax, onChange }) {
+  function update(index, patch) {
+    const next = [...criterios];
+    next[index] = { ...next[index], ...patch };
+    onChange(next);
+  }
+
+  return (
+    <DynamicList
+      items={criterios}
+      addLabel="Adicionar critério"
+      emptyText="Nenhum critério cadastrado."
+      onAdd={() =>
+        onChange([
+          ...criterios,
+          {
+            titulo: "",
+            escala_min: 1,
+            escala_max: defaultMax,
+            peso: 1,
+          },
+        ])
+      }
+      onRemove={(index) => onChange(criterios.filter((_, itemIndex) => itemIndex !== index))}
+      render={(criterio, index) => (
+        <div className="grid gap-3 lg:grid-cols-[1fr_110px_110px_110px]">
+          <Field label="Critério">
+            <input
+              className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm outline-none transition focus:ring-2 focus:ring-cyan-500 dark:border-slate-700 dark:bg-slate-900"
+              value={criterio.titulo || ""}
+              onChange={(event) => update(index, { titulo: event.target.value })}
+              placeholder="Título do critério"
+            />
+          </Field>
+
+          <Field label="Mín.">
+            <input
+              type="number"
+              className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm outline-none transition focus:ring-2 focus:ring-cyan-500 dark:border-slate-700 dark:bg-slate-900"
+              value={criterio.escala_min ?? 1}
+              onChange={(event) => update(index, { escala_min: Number(event.target.value) || 1 })}
+            />
+          </Field>
+
+          <Field label="Máx.">
+            <input
+              type="number"
+              className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm outline-none transition focus:ring-2 focus:ring-cyan-500 dark:border-slate-700 dark:bg-slate-900"
+              value={criterio.escala_max ?? defaultMax}
+              onChange={(event) => update(index, { escala_max: Number(event.target.value) || defaultMax })}
+            />
+          </Field>
+
+          <Field label="Peso">
+            <input
+              type="number"
+              step="0.1"
+              className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm outline-none transition focus:ring-2 focus:ring-cyan-500 dark:border-slate-700 dark:bg-slate-900"
+              value={criterio.peso ?? 1}
+              onChange={(event) => update(index, { peso: Number(event.target.value) || 1 })}
+            />
+          </Field>
+        </div>
+      )}
+    />
+  );
+}
+
+function ModeloBox({ title, description, meta, disabled, busy, onUpload, onDownload }) {
+  const inputRef = useRef(null);
+  const exists = Boolean(meta?.exists);
+
+  return (
+    <GlassCard className="p-5">
+      <h3 className="flex items-center gap-2 font-black text-slate-900 dark:text-white">
+        <Upload className="h-5 w-5 text-emerald-500" />
+        {title}
+      </h3>
+      <p className="mt-2 text-sm leading-relaxed text-slate-500 dark:text-slate-400">
+        {description}
+      </p>
+
+      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
+        {disabled ? (
+          <span>Salve a chamada antes de importar modelos.</span>
+        ) : exists ? (
+          <div className="space-y-1">
+            <div className="font-bold text-emerald-600">Modelo disponível</div>
+            <div>{meta.filename || "Arquivo sem nome"}</div>
+            <div>{formatBytes(meta.size)}</div>
+          </div>
+        ) : (
+          <span>Nenhum modelo importado.</span>
+        )}
+      </div>
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        className="hidden"
+        disabled={disabled || busy}
+        onChange={(event) => {
+          const file = event.target.files?.[0] || null;
+          event.target.value = "";
+          onUpload(file);
+        }}
+      />
+
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        <Button
+          tone="slate"
+          icon={Upload}
+          loading={busy}
+          disabled={disabled}
+          onClick={() => inputRef.current?.click()}
+        >
+          Importar
+        </Button>
+        <Button tone="slate" icon={Download} disabled={disabled || !exists} onClick={onDownload}>
+          Baixar
+        </Button>
+      </div>
+    </GlassCard>
+  );
+}
+
+/* =========================================================================
+   Página
+=========================================================================== */
+
 export default function AdminChamadaForm() {
   const params = useParams();
-  const routeId = params?.chamadaId;
+  const routeId = params?.chamadaId || null;
+
   const [counts, setCounts] = useState({
     total: "—",
     abertas: "—",
@@ -1243,31 +2008,49 @@ export default function AdminChamadaForm() {
   const [editingId, setEditingId] = useState(null);
   const [refreshSignal, setRefreshSignal] = useState(0);
 
-  useEffect(() => { if (routeId) { setEditingId(routeId); setModalOpen(true); } }, [routeId]);
+  useEffect(() => {
+    if (routeId) {
+      setEditingId(routeId);
+      setModalOpen(true);
+    }
+  }, [routeId]);
 
-  const openNovo = () => { setEditingId(null); setModalOpen(true); };
-  const openEditar = (id) => { setEditingId(id); setModalOpen(true); };
-  const onSaved = (savedId) => {
-    setRefreshSignal((x) => x + 1);
-    if (savedId) setEditingId(savedId); // ativa modo edição p/ importar modelos
-  };
+  function abrirNova() {
+    setEditingId(null);
+    setModalOpen(true);
+  }
+
+  function abrirEdicao(id) {
+    setEditingId(id);
+    setModalOpen(true);
+  }
+
+  function handleSaved(savedId) {
+    setRefreshSignal((current) => current + 1);
+    if (savedId) setEditingId(savedId);
+  }
 
   return (
-    <div className="flex min-h-screen flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
-      <HeaderHero counts={counts} />
-      <main className="mx-auto w-full max-w-screen-xl p-4 sm:px-6 lg:px-8">
-        <div className="mb-6">
-          <ChamadasPainel
-            onEditar={openEditar}
-            onNova={openNovo}
-            refreshSignal={refreshSignal}
-            onCountsChange={setCounts}
-          />
-        </div>
+    <PageShell>
+      <Hero counts={counts} onNova={abrirNova} />
+
+      <main className="mx-auto w-full max-w-screen-2xl px-4 py-6 sm:px-6 lg:px-8">
+        <ChamadasPainel
+          onNova={abrirNova}
+          onEditar={abrirEdicao}
+          refreshSignal={refreshSignal}
+          onCountsChange={setCounts}
+        />
       </main>
+
       <Footer />
 
-      <AddEditChamadaModal open={modalOpen} onClose={() => setModalOpen(false)} chamadaId={editingId} onSaved={onSaved} />
-    </div>
+      <ChamadaModal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        chamadaId={editingId}
+        onSaved={handleSaved}
+      />
+    </PageShell>
   );
 }

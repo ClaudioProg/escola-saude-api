@@ -1,186 +1,59 @@
-// ✅ src/pages/CertificadosAvulsos.jsx — PREMIUM (layout moderno + mobile-first + diagnóstico forte)
-import { useEffect, useState, useMemo, useRef, useCallback } from "react";
-import { toast } from "react-toastify";
+// ✅ frontend/src/pages/CertificadosAvulsos.jsx — v2.0
+// Atualizado em: 15/05/2026
+// Plataforma Escola da Saúde
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { motion, useReducedMotion } from "framer-motion";
 import {
-  RefreshCcw,
-  Plus,
-  Search,
-  X,
-  Mail,
-  FileText,
+  AlertTriangle,
   Award,
-  Send,
-  UserSquare2,
   CalendarDays,
-  GraduationCap,
+  CheckCircle2,
+  Download,
+  FileText,
+  Filter,
+  Loader2,
+  Mail,
   PenSquare,
+  Plus,
+  RefreshCcw,
+  Search,
+  Send,
   ShieldCheck,
+  Sparkles,
+  UserSquare2,
+  X,
 } from "lucide-react";
-import { useReducedMotion } from "framer-motion";
 
-import Footer from "../components/Footer";
-import BotaoPrimario from "../components/BotaoPrimario";
-import BotaoSecundario from "../components/BotaoSecundario";
-import CarregandoSkeleton from "../components/CarregandoSkeleton";
-import NadaEncontrado from "../components/NadaEncontrado";
-import { apiGet, apiPost, apiGetFile } from "../services/api";
+import Footer from "../components/layout/Footer";
+import Botao from "../components/ui/Botao";
+import CarregandoSkeleton from "../components/ui/CarregandoSkeleton";
+import ErroCarregamento from "../components/ui/ErroCarregamento";
+import NadaEncontrado from "../components/ui/NadaEncontrado";
+import { notifyError, notifyInfo, notifySuccess, notifyWarning } from "../components/ui/AppToast";
+import { api } from "../services/api";
+import { downloadBlob } from "../utils/downloadArquivo";
+import { formatDateBr, extractYmd } from "../utils/dateTime";
 
-/* ===================== Logs ===================== */
-const IS_DEV =
-  typeof import.meta !== "undefined" && Boolean(import.meta.env?.DEV);
+/* ─────────────────────────────────────────────
+ * Contratos oficiais esperados no api.js
+ * ─────────────────────────────────────────────
+ *
+ * api.certificadoAvulso.listar()
+ * api.certificadoAvulso.criar(payload)
+ * api.certificadoAvulso.pdf(id, params?)
+ * api.certificadoAvulso.enviar(id, params?)
+ *
+ * api.assinatura.listar()
+ */
 
-function debugLog(scope, payload) {
-  if (!IS_DEV) return;
-  try {
-    console.log(`[CERT_AVULSO_FRONT][${scope}]`, payload);
-  } catch {
-    // noop
-  }
-}
+/* ─────────────────────────────────────────────
+ * Constantes oficiais
+ * ───────────────────────────────────────────── */
 
-/* ===================== HeaderHero ===================== */
-function HeaderHero({
-  onRefresh,
-  onSubmitClick,
-  carregando,
-  onFocusBusca,
-  total,
-  enviados,
-  naoEnviados,
-}) {
-  useEffect(() => {
-  const onKey = (e) => {
-    const mac = /(Mac|iPhone|iPad)/i.test(navigator.userAgent);
-    const key = typeof e?.key === "string" ? e.key.toLowerCase() : "";
-
-    if (!key) return;
-
-    if ((mac && e.metaKey && key === "k") || (!mac && e.ctrlKey && key === "k")) {
-      e.preventDefault();
-      onFocusBusca?.();
-    }
-  };
-
-  window.addEventListener("keydown", onKey);
-  return () => window.removeEventListener("keydown", onKey);
-}, [onFocusBusca]);
-
-  return (
-    <header
-      className="relative overflow-hidden bg-gradient-to-br from-amber-950 via-orange-800 to-rose-700 text-white"
-      role="banner"
-    >
-      <a
-        href="#conteudo"
-        className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
-      >
-        Ir para o conteúdo
-      </a>
-
-      <div className="absolute inset-0 opacity-20 pointer-events-none">
-        <div className="absolute -top-12 -right-10 h-44 w-44 rounded-full bg-yellow-300 blur-3xl" />
-        <div className="absolute bottom-0 left-0 h-40 w-40 rounded-full bg-rose-300 blur-3xl" />
-      </div>
-
-      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 py-7 sm:py-8">
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] sm:text-xs font-bold uppercase tracking-wide">
-              <Award className="w-3.5 h-3.5" aria-hidden="true" />
-              Gestão administrativa
-            </div>
-
-            <h1 className="mt-3 text-2xl sm:text-3xl lg:text-4xl font-black tracking-tight">
-              Certificados Avulsos
-            </h1>
-
-            <p className="mt-3 max-w-2xl text-sm sm:text-base text-white/90 leading-6">
-              Cadastre certificados fora do fluxo automático, gere o PDF com mais segurança
-              e envie por e-mail com apoio a segunda assinatura.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-3 gap-2 sm:gap-3 lg:min-w-[360px]">
-            <div className="rounded-2xl border border-white/15 bg-white/10 backdrop-blur px-3 py-3 text-center">
-              <p className="text-[11px] uppercase tracking-wide text-white/80">Total</p>
-              <p className="mt-1 text-xl sm:text-2xl font-black">{total}</p>
-            </div>
-            <div className="rounded-2xl border border-white/15 bg-white/10 backdrop-blur px-3 py-3 text-center">
-              <p className="text-[11px] uppercase tracking-wide text-white/80">Enviados</p>
-              <p className="mt-1 text-xl sm:text-2xl font-black">{enviados}</p>
-            </div>
-            <div className="rounded-2xl border border-white/15 bg-white/10 backdrop-blur px-3 py-3 text-center">
-              <p className="text-[11px] uppercase tracking-wide text-white/80">Pendentes</p>
-              <p className="mt-1 text-xl sm:text-2xl font-black">{naoEnviados}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-5 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-          <BotaoSecundario
-            variant="outline"
-            cor="azulPetroleo"
-            leftIcon={<RefreshCcw className="w-4 h-4" aria-hidden="true" />}
-            onClick={onRefresh}
-            disabled={carregando}
-            aria-label="Atualizar lista de certificados"
-          >
-            {carregando ? "Atualizando…" : "Atualizar"}
-          </BotaoSecundario>
-
-          <BotaoPrimario
-            cor="amareloOuro"
-            leftIcon={<Plus className="w-4 h-4" aria-hidden="true" />}
-            type="button"
-            onClick={onSubmitClick}
-            aria-label="Cadastrar novo certificado"
-          >
-            Cadastrar certificado
-          </BotaoPrimario>
-        </div>
-      </div>
-    </header>
-  );
-}
-
-/* ===================== Helpers ===================== */
-function ymdToBR(ymd) {
-  if (!ymd) return "";
-  const m = String(ymd).match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (!m) return String(ymd);
-  return `${m[3]}/${m[2]}/${m[1]}`;
-}
-
-function validYMD(s) {
-  return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
-}
-
-const validarEmail = (v) =>
-  /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || "").trim());
-
-const onlyDigits = (v = "") => String(v).replace(/\D+/g, "");
-
-const clampLen = (s, n = 200) => String(s ?? "").slice(0, n);
-
-function formatPeriodo(item) {
-  const di = item?.data_inicio?.slice?.(0, 10) || "";
-  const df = item?.data_fim?.slice?.(0, 10) || "";
-
-  if (!di) return "—";
-  if (df && df !== di) return `${ymdToBR(di)} a ${ymdToBR(df)}`;
-  return ymdToBR(di);
-}
-
-function formatCarga(item) {
-  return item?.carga_horaria && Number(item.carga_horaria) > 0
-    ? `${item.carga_horaria}h`
-    : "—";
-}
-
-/* ===================== Modalidades ===================== */
 const MODALIDADES = [
   "participante",
-  "instrutor",
+  "organizador",
   "banca_avaliadora",
   "oficineiro",
   "mediador",
@@ -193,14 +66,14 @@ const MODALIDADES = [
   "comissao_organizadora",
 ];
 
-const rotuloModalidade = {
+const ROTULO_MODALIDADE = {
   participante: "Participante",
-  instrutor: "Instrutor(a) / Palestrante",
+  organizador: "organizador(a) / Palestrante",
   banca_avaliadora: "Banca Avaliadora",
   oficineiro: "Oficineiro(a)",
   mediador: "Mediador(a)",
   banca_tcr_medica: "Banca TCR Médica (MFC)",
-  banca_tcr_multi: "Banca TCR Multi",
+  banca_tcr_multi: "Banca TCR Multiprofissional",
   residente_medica: "Residente Médica (MFC)",
   residente_multi: "Residente Multiprofissional",
   mostra_banner: "Mostra Banner",
@@ -208,57 +81,1013 @@ const rotuloModalidade = {
   comissao_organizadora: "Comissão Organizadora",
 };
 
-function modalidadeExigeTitulo(modalidade) {
+const MODALIDADES_EXIGEM_TITULO = [
+  "residente_medica",
+  "residente_multi",
+  "mostra_banner",
+  "mostra_oral",
+  "oficineiro",
+];
+
+const MODALIDADES_SEM_CARGA = ["banca_avaliadora", "comissao_organizadora"];
+
+const STATUS_VALIDOS_DOWNLOAD = ["emitido", "enviado"];
+
+const KEY_ASSIN2_ENABLED = "certificado_avulso_assinatura2_enabled";
+const KEY_ASSIN2_ID = "certificado_avulso_assinatura2_id";
+const KEY_FILTRO_ENVIO = "certificado_avulso_filtro_envio";
+const KEY_FILTRO_STATUS = "certificado_avulso_filtro_status";
+const KEY_BUSCA = "certificado_avulso_busca";
+
+/* ─────────────────────────────────────────────
+ * Helpers
+ * ───────────────────────────────────────────── */
+
+function cx(...parts) {
+  return parts.filter(Boolean).join(" ");
+}
+
+function extrairData(response) {
+  return response?.data ?? response ?? null;
+}
+
+function obterMensagemErro(error, fallback) {
   return (
-    modalidade === "residente_medica" ||
-    modalidade === "residente_multi" ||
-    modalidade === "mostra_banner" ||
-    modalidade === "mostra_oral" ||
-    modalidade === "oficineiro"
+    error?.response?.data?.message ||
+    error?.data?.message ||
+    error?.message ||
+    fallback
   );
 }
 
-function modalidadeSemCarga(modalidade) {
-  return modalidade === "banca_avaliadora" || modalidade === "comissao_organizadora";
+function validarFacade(nome, fn) {
+  if (typeof fn !== "function") {
+    throw new Error(`Facade ausente no api.js: ${nome}.`);
+  }
 }
 
-/* ===================== Constantes ===================== */
-const KEY_ASSIN2_ENABLED = "cert:assin2:enabled";
-const KEY_ASSIN2_ID = "cert:assin2:id";
-const KEY_FILTRO = "cert:filtro";
-const KEY_BUSCA = "cert:busca";
+function safeText(value, max = 5000) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text.length > max ? text.slice(0, max) : text;
+}
 
-/* ===================== Card de estatística ===================== */
-function MiniStat({ icon, label, value, tone = "default" }) {
+function onlyDigits(value = "") {
+  return String(value || "").replace(/\D+/g, "");
+}
+
+function validarEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+}
+
+function isYmd(value) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function dataBR(value) {
+  const iso = extractYmd(value);
+
+  return iso ? formatDateBr(iso) : "—";
+}
+
+function formatarPeriodo(item) {
+  const inicio = item?.data_inicio || "";
+  const fim = item?.data_fim || inicio;
+
+  if (!inicio && !fim) return "—";
+
+  const di = dataBR(inicio);
+  const df = dataBR(fim);
+
+  if (di === df) return di;
+
+  return `${di} a ${df}`;
+}
+
+function formatarCarga(item) {
+  const carga = Number(item?.carga_horaria || 0);
+  return Number.isFinite(carga) && carga > 0 ? `${carga}h` : "—";
+}
+
+function modalidadeExigeTitulo(modalidade) {
+  return MODALIDADES_EXIGEM_TITULO.includes(modalidade);
+}
+
+function modalidadeSemCarga(modalidade) {
+  return MODALIDADES_SEM_CARGA.includes(modalidade);
+}
+
+function normalizarBusca(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function nomeArquivoSeguro(value) {
+  const nome = String(value || "certificado_avulso")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "_")
+    .slice(0, 120);
+
+  return nome || "certificado_avulso";
+}
+
+function statusTone(status) {
+  if (status === "emitido" || status === "enviado") return "emerald";
+  if (status === "cancelado" || status === "anulado") return "rose";
+  if (status === "substituido") return "violet";
+  if (status === "erro_emissao") return "amber";
+  return "slate";
+}
+
+function statusLabel(status) {
+  if (status === "emitido") return "Emitido";
+  if (status === "enviado") return "Enviado";
+  if (status === "cancelado") return "Cancelado";
+  if (status === "anulado") return "Anulado";
+  if (status === "substituido") return "Substituído";
+  if (status === "erro_emissao") return "Erro de emissão";
+  return "Sem status";
+}
+
+function getIdentificadorLabel(item) {
+  if (item?.identificador_tipo === "cpf") {
+    return item?.identificador_mascarado || "CPF informado";
+  }
+
+  if (item?.identificador_tipo === "registro_funcional") {
+    return item?.identificador_mascarado || "Registro funcional informado";
+  }
+
+  return item?.identificador_mascarado || "Identificador informado";
+}
+
+function certificadoPodeGerarPdf(item) {
+  return STATUS_VALIDOS_DOWNLOAD.includes(item?.status || "emitido");
+}
+
+function certificadoPdfConsolidado(item) {
+  return Boolean(item?.arquivo_pdf && item?.hash_pdf);
+}
+
+function getNumeroCertificadoLabel(item) {
+  return item?.numero_certificado || "Número ainda não informado";
+}
+
+/* ─────────────────────────────────────────────
+ * Componentes locais
+ * ───────────────────────────────────────────── */
+
+function Badge({ tone = "slate", children }) {
   const tones = {
-    default:
-      "bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white",
-    success:
-      "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900/50 text-emerald-900 dark:text-emerald-100",
-    warning:
-      "bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/50 text-amber-900 dark:text-amber-100",
+    slate:
+      "bg-slate-100 text-slate-700 ring-slate-200 dark:bg-zinc-800 dark:text-zinc-200 dark:ring-zinc-700",
+    emerald:
+      "bg-emerald-50 text-emerald-800 ring-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-100 dark:ring-emerald-800/60",
+    amber:
+      "bg-amber-50 text-amber-800 ring-amber-100 dark:bg-amber-950/40 dark:text-amber-100 dark:ring-amber-800/60",
+    rose:
+      "bg-rose-50 text-rose-800 ring-rose-100 dark:bg-rose-950/40 dark:text-rose-100 dark:ring-rose-800/60",
+    cyan:
+      "bg-cyan-50 text-cyan-800 ring-cyan-100 dark:bg-cyan-950/40 dark:text-cyan-100 dark:ring-cyan-800/60",
+    violet:
+      "bg-violet-50 text-violet-800 ring-violet-100 dark:bg-violet-950/40 dark:text-violet-100 dark:ring-violet-800/60",
   };
 
   return (
-    <div className={`rounded-2xl border p-4 shadow-sm ${tones[tone] || tones.default}`}>
+    <span
+      className={cx(
+        "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-black ring-1",
+        tones[tone] || tones.slate
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function MiniStat({ icon: Icon, label, value, tone = "slate" }) {
+  const tones = {
+    slate: "bg-white/10 text-white ring-white/15",
+    emerald: "bg-emerald-400/15 text-emerald-50 ring-emerald-300/20",
+    amber: "bg-amber-400/15 text-amber-50 ring-amber-300/20",
+    rose: "bg-rose-400/15 text-rose-50 ring-rose-300/20",
+    cyan: "bg-cyan-400/15 text-cyan-50 ring-cyan-300/20",
+  };
+
+  return (
+    <div className={cx("rounded-3xl p-4 ring-1 backdrop-blur", tones[tone])}>
       <div className="flex items-center gap-3">
-        <div className="rounded-2xl p-2 bg-black/5 dark:bg-white/5">{icon}</div>
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/15">
+          <Icon className="h-5 w-5" aria-hidden="true" />
+        </div>
+
         <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-wide opacity-70">{label}</p>
-          <p className="text-2xl font-black">{value}</p>
+          <p className="text-[11px] font-black uppercase tracking-wide opacity-80">
+            {label}
+          </p>
+          <p className="text-2xl font-black leading-none">{value}</p>
         </div>
       </div>
     </div>
   );
 }
 
-/* ===================== Página ===================== */
+function Hero({ kpis, carregando, onRefresh, onCadastrar, onFocusBusca }) {
+  useEffect(() => {
+    const onKey = (event) => {
+      const key = typeof event?.key === "string" ? event.key.toLowerCase() : "";
+      const mac = /(Mac|iPhone|iPad)/i.test(navigator.userAgent);
+
+      if (!key) return;
+
+      if ((mac && event.metaKey && key === "k") || (!mac && event.ctrlKey && key === "k")) {
+        event.preventDefault();
+        onFocusBusca?.();
+      }
+    };
+
+    window.addEventListener("keydown", onKey);
+
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onFocusBusca]);
+
+  return (
+    <header className="relative overflow-hidden bg-gradient-to-br from-slate-950 via-amber-950 to-rose-800 text-white">
+      <div className="absolute inset-0 opacity-30">
+        <div className="absolute -left-24 -top-24 h-72 w-72 rounded-full bg-amber-400 blur-3xl" />
+        <div className="absolute right-0 top-8 h-72 w-72 rounded-full bg-rose-500 blur-3xl" />
+        <div className="absolute bottom-0 left-1/2 h-64 w-64 -translate-x-1/2 rounded-full bg-emerald-500 blur-3xl" />
+      </div>
+
+      <a
+        href="#conteudo"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-xl focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:font-bold focus:text-slate-950"
+      >
+        Ir para o conteúdo
+      </a>
+
+      <div className="relative mx-auto max-w-7xl px-4 py-7 sm:px-6 sm:py-9">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-3xl">
+            <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-black ring-1 ring-white/20 backdrop-blur">
+              <Award className="h-4 w-4" aria-hidden="true" />
+              Certificados avulsos
+            </div>
+
+            <h1 className="mt-4 text-2xl font-black tracking-tight sm:text-4xl">
+              Certificados avulsos
+            </h1>
+
+            <p className="mt-3 max-w-2xl text-sm text-white/85 sm:text-base">
+  Cadastre certificados fora do fluxo automático, consolide o PDF eletrônico
+  na primeira emissão, baixe o documento oficial e envie por e-mail quando
+  necessário.
+</p>
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row lg:shrink-0">
+            <Botao
+              type="button"
+              variant="secondary"
+              onClick={onRefresh}
+              disabled={carregando}
+              className="bg-white/10 text-white ring-1 ring-white/20 hover:bg-white/15"
+            >
+              <span className="inline-flex items-center gap-2">
+                <RefreshCcw
+                  className={cx("h-4 w-4", carregando && "animate-spin")}
+                  aria-hidden="true"
+                />
+                {carregando ? "Atualizando..." : "Atualizar"}
+              </span>
+            </Botao>
+
+            <Botao
+              type="button"
+              variant="primary"
+              onClick={onCadastrar}
+              className="bg-white text-slate-950 hover:bg-white/90"
+            >
+              <span className="inline-flex items-center gap-2">
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                Cadastrar
+              </span>
+            </Botao>
+          </div>
+        </div>
+
+        <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-4">
+          <MiniStat icon={Award} label="Total" value={kpis.total} tone="cyan" />
+          <MiniStat icon={Mail} label="Enviados" value={kpis.enviados} tone="emerald" />
+          <MiniStat icon={Send} label="Pendentes" value={kpis.pendentes} tone="amber" />
+          <MiniStat icon={ShieldCheck} label="Válidos" value={kpis.validos} tone="rose" />
+        </div>
+
+        <div className="mt-5 rounded-3xl bg-white/10 p-4 text-sm text-white/85 ring-1 ring-white/15 backdrop-blur">
+          <div className="flex items-start gap-3">
+            <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+            <p>
+              O identificador pode ser CPF ou registro funcional. Na visualização
+              pública, a plataforma usa apenas identificador mascarado, código
+              de validação e metadados seguros do certificado.
+            </p>
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function Toolbar({
+  busca,
+  setBusca,
+  filtroEnvio,
+  setFiltroEnvio,
+  filtroStatus,
+  setFiltroStatus,
+  buscaRef,
+  onLimpar,
+}) {
+  return (
+    <section
+      aria-label="Filtros de certificados avulsos"
+      className="rounded-[1.5rem] bg-white/85 p-3 shadow-sm ring-1 ring-slate-200 backdrop-blur dark:bg-zinc-900/85 dark:ring-zinc-800"
+    >
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <div className="relative w-full xl:max-w-md">
+          <Search
+            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+            aria-hidden="true"
+          />
+
+          <input
+            ref={buscaRef}
+            type="search"
+            value={busca}
+            onChange={(event) => setBusca(event.target.value)}
+            placeholder="Buscar por nome, e-mail, curso, modalidade ou código..."
+            className="w-full rounded-2xl border border-slate-300 bg-white py-2 pl-9 pr-10 text-sm text-slate-950 outline-none transition focus:border-amber-700 focus:ring-4 focus:ring-amber-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white dark:focus:ring-amber-950"
+            aria-label="Buscar certificados avulsos"
+          />
+
+          {busca ? (
+            <button
+              type="button"
+              onClick={() => setBusca("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-xl p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-zinc-800"
+              aria-label="Limpar busca"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-1 text-xs font-bold text-slate-500 dark:text-zinc-400">
+            <Filter className="h-4 w-4" aria-hidden="true" />
+            Filtros:
+          </span>
+
+          <select
+            value={filtroEnvio}
+            onChange={(event) => setFiltroEnvio(event.target.value)}
+            className="rounded-2xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:ring-4 focus:ring-amber-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:focus:ring-amber-950"
+            aria-label="Filtrar por envio"
+          >
+            <option value="todos">Todos</option>
+            <option value="enviados">Enviados</option>
+            <option value="nao_enviados">Não enviados</option>
+          </select>
+
+          <select
+            value={filtroStatus}
+            onChange={(event) => setFiltroStatus(event.target.value)}
+            className="rounded-2xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:ring-4 focus:ring-amber-100 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:focus:ring-amber-950"
+            aria-label="Filtrar por status"
+          >
+            <option value="todos">Todos os status</option>
+            <option value="emitido">Emitidos</option>
+            <option value="enviado">Enviados</option>
+            <option value="cancelado">Cancelados</option>
+            <option value="anulado">Anulados</option>
+            <option value="substituido">Substituídos</option>
+            <option value="erro_emissao">Erro de emissão</option>
+          </select>
+
+          <Botao type="button" variant="secondary" onClick={onLimpar}>
+            Limpar filtros
+          </Botao>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Campo({ label, htmlFor, required = false, hint, children }) {
+  return (
+    <div>
+      <label
+        htmlFor={htmlFor}
+        className="block text-sm font-black text-slate-700 dark:text-zinc-200"
+      >
+        {label} {required ? <span className="text-rose-600">*</span> : null}
+      </label>
+
+      <div className="mt-1">{children}</div>
+
+      {hint ? (
+        <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-zinc-400">
+          {hint}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function FormularioCertificado({
+  form,
+  setForm,
+  salvando,
+  onSubmit,
+  formRef,
+  usarAssinatura2,
+  setUsarAssinatura2,
+  assinatura2Id,
+  setAssinatura2Id,
+  assinaturas,
+  assinaturasCarregando,
+  assinatura2Nome,
+}) {
+  const modalidade = form.modalidade || "participante";
+  const exigeTitulo = modalidadeExigeTitulo(modalidade);
+  const semCarga = modalidadeSemCarga(modalidade);
+
+  const handleChange = useCallback(
+    (event) => {
+      const { name, value } = event.target;
+
+      if (name === "identificador") {
+        setForm((prev) => ({
+          ...prev,
+          identificador: safeText(value, 80),
+        }));
+        return;
+      }
+
+      if (name === "email") {
+        setForm((prev) => ({
+          ...prev,
+          email: safeText(value, 160).toLowerCase(),
+        }));
+        return;
+      }
+
+      if (name === "carga_horaria") {
+        setForm((prev) => ({
+          ...prev,
+          carga_horaria: value.replace(/[^\d]/g, "").slice(0, 4),
+        }));
+        return;
+      }
+
+      if (name === "modalidade") {
+        const novaModalidade = value;
+
+        setForm((prev) => ({
+          ...prev,
+          modalidade: novaModalidade,
+          titulo_trabalho: modalidadeExigeTitulo(novaModalidade)
+            ? prev.titulo_trabalho
+            : "",
+          carga_horaria: modalidadeSemCarga(novaModalidade)
+            ? ""
+            : prev.carga_horaria,
+        }));
+        return;
+      }
+
+      const maxMap = {
+        nome: 180,
+        curso: 300,
+        titulo_trabalho: 500,
+        texto_personalizado: 5000,
+      };
+
+      setForm((prev) => ({
+        ...prev,
+        [name]: safeText(value, maxMap[name] || 300),
+      }));
+    },
+    [setForm]
+  );
+
+  return (
+    <section className="rounded-[1.5rem] bg-white shadow-sm ring-1 ring-slate-200 dark:bg-zinc-900 dark:ring-zinc-800">
+      <header className="border-b border-slate-200 p-4 dark:border-zinc-800 sm:p-5">
+        <div className="flex items-start gap-3">
+          <div className="rounded-2xl bg-rose-50 p-2 ring-1 ring-rose-100 dark:bg-rose-950/30 dark:ring-rose-800/60">
+            <PenSquare className="h-5 w-5 text-rose-700 dark:text-rose-200" aria-hidden="true" />
+          </div>
+
+          <div className="min-w-0">
+            <h2 className="text-lg font-black text-slate-950 dark:text-white">
+              Novo certificado
+            </h2>
+
+            <p className="mt-1 text-sm text-slate-600 dark:text-zinc-300">
+              Cadastro manual com modalidade oficial, identificador seguro e
+              suporte a assinatura adicional.
+            </p>
+          </div>
+        </div>
+      </header>
+
+      <form
+        ref={formRef}
+        id="form-certificado-avulso"
+        onSubmit={onSubmit}
+        className="space-y-4 p-4 sm:p-5"
+        aria-label="Cadastro de certificado avulso"
+        aria-busy={salvando ? "true" : "false"}
+      >
+        <Campo label="Nome completo" htmlFor="nome" required>
+          <input
+            id="nome"
+            name="nome"
+            type="text"
+            value={form.nome}
+            onChange={handleChange}
+            required
+            autoComplete="name"
+            disabled={salvando}
+            className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-amber-700 focus:ring-4 focus:ring-amber-100 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white dark:focus:ring-amber-950"
+          />
+        </Campo>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Campo
+            label="Identificador"
+            htmlFor="identificador"
+            required
+            hint="Aceita CPF ou registro funcional. CPF será mascarado na validação pública."
+          >
+            <input
+              id="identificador"
+              name="identificador"
+              type="text"
+              value={form.identificador}
+              onChange={handleChange}
+              required
+              disabled={salvando}
+              autoComplete="off"
+              className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-amber-700 focus:ring-4 focus:ring-amber-100 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white dark:focus:ring-amber-950"
+            />
+          </Campo>
+
+          <Campo label="E-mail" htmlFor="email" required>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              value={form.email}
+              onChange={handleChange}
+              required
+              autoComplete="email"
+              disabled={salvando}
+              className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-amber-700 focus:ring-4 focus:ring-amber-100 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white dark:focus:ring-amber-950"
+            />
+          </Campo>
+        </div>
+
+        <Campo label="Evento / curso" htmlFor="curso" required>
+          <input
+            id="curso"
+            name="curso"
+            type="text"
+            value={form.curso}
+            onChange={handleChange}
+            required
+            disabled={salvando}
+            className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-amber-700 focus:ring-4 focus:ring-amber-100 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white dark:focus:ring-amber-950"
+          />
+        </Campo>
+
+        <Campo label="Modalidade / participação" htmlFor="modalidade">
+          <select
+            id="modalidade"
+            name="modalidade"
+            value={form.modalidade}
+            onChange={handleChange}
+            disabled={salvando}
+            className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 outline-none transition focus:border-amber-700 focus:ring-4 focus:ring-amber-100 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white dark:focus:ring-amber-950"
+          >
+            {MODALIDADES.map((modalidadeOption) => (
+              <option key={modalidadeOption} value={modalidadeOption}>
+                {ROTULO_MODALIDADE[modalidadeOption] || modalidadeOption}
+              </option>
+            ))}
+          </select>
+        </Campo>
+
+        {exigeTitulo ? (
+          <Campo label="Título do trabalho / oficina" htmlFor="titulo_trabalho" required>
+            <input
+              id="titulo_trabalho"
+              name="titulo_trabalho"
+              type="text"
+              value={form.titulo_trabalho}
+              onChange={handleChange}
+              required={exigeTitulo}
+              disabled={salvando}
+              className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-amber-700 focus:ring-4 focus:ring-amber-100 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white dark:focus:ring-amber-950"
+            />
+          </Campo>
+        ) : null}
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <Campo
+            label="Carga horária"
+            htmlFor="carga_horaria"
+            hint={
+              semCarga
+                ? "Não se aplica à modalidade escolhida."
+                : "Obrigatória nas modalidades em que houver carga horária."
+            }
+          >
+            <input
+              id="carga_horaria"
+              name="carga_horaria"
+              type="number"
+              min={1}
+              step={1}
+              value={form.carga_horaria}
+              onChange={handleChange}
+              disabled={salvando || semCarga}
+              className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-amber-700 focus:ring-4 focus:ring-amber-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white dark:focus:ring-amber-950"
+            />
+          </Campo>
+
+          <Campo label="Data de início" htmlFor="data_inicio">
+            <input
+              id="data_inicio"
+              name="data_inicio"
+              type="date"
+              value={form.data_inicio}
+              onChange={handleChange}
+              disabled={salvando}
+              className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-amber-700 focus:ring-4 focus:ring-amber-100 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white dark:focus:ring-amber-950"
+            />
+          </Campo>
+
+          <Campo label="Data de término" htmlFor="data_fim">
+            <input
+              id="data_fim"
+              name="data_fim"
+              type="date"
+              value={form.data_fim}
+              onChange={handleChange}
+              disabled={salvando}
+              className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-amber-700 focus:ring-4 focus:ring-amber-100 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white dark:focus:ring-amber-950"
+            />
+          </Campo>
+        </div>
+
+        <Campo
+          label="Texto personalizado"
+          htmlFor="texto_personalizado"
+          hint="Opcional. Quando preenchido, substitui o texto automático do certificado."
+        >
+          <textarea
+            id="texto_personalizado"
+            name="texto_personalizado"
+            rows={4}
+            value={form.texto_personalizado}
+            onChange={handleChange}
+            disabled={salvando}
+            className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-amber-700 focus:ring-4 focus:ring-amber-100 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white dark:focus:ring-amber-950"
+            placeholder="Ex.: Participou como..."
+          />
+        </Campo>
+
+        <section className="rounded-3xl bg-slate-50 p-4 ring-1 ring-slate-200 dark:bg-zinc-950 dark:ring-zinc-800">
+          <div className="flex items-start gap-3">
+            <div className="rounded-2xl bg-emerald-50 p-2 ring-1 ring-emerald-100 dark:bg-emerald-950/30 dark:ring-emerald-800/60">
+              <ShieldCheck className="h-5 w-5 text-emerald-700 dark:text-emerald-200" aria-hidden="true" />
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <h3 className="text-sm font-black text-slate-950 dark:text-white">
+                Assinatura adicional
+              </h3>
+
+              <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-zinc-400">
+                Use quando o certificado precisar de coassinatura.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="inline-flex cursor-pointer select-none items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={usarAssinatura2}
+                onChange={(event) => {
+                  setUsarAssinatura2(event.target.checked);
+                  if (!event.target.checked) setAssinatura2Id("");
+                }}
+              />
+              Adicionar 2ª assinatura
+            </label>
+
+            <div className={usarAssinatura2 ? "" : "pointer-events-none opacity-50"}>
+              <label
+                htmlFor="assinatura2"
+                className="block text-sm font-black text-slate-700 dark:text-zinc-200"
+              >
+                Selecionar assinatura
+              </label>
+
+              <select
+                id="assinatura2"
+                value={assinatura2Id}
+                onChange={(event) => setAssinatura2Id(event.target.value)}
+                disabled={!usarAssinatura2 || assinaturasCarregando || assinaturas.length === 0}
+                className="mt-1 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 outline-none transition focus:border-amber-700 focus:ring-4 focus:ring-amber-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white dark:focus:ring-amber-950"
+              >
+                <option value="">
+                  {assinaturasCarregando ? "Carregando..." : "— Selecione —"}
+                </option>
+
+                {assinaturas.map((assinatura) => (
+                  <option key={assinatura.id} value={assinatura.id}>
+                    {assinatura.nome}
+                  </option>
+                ))}
+              </select>
+
+              <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-zinc-400">
+                {assinaturasCarregando
+                  ? "Buscando assinaturas disponíveis..."
+                  : assinaturas.length
+                    ? "Mostrando pessoas com assinatura cadastrada."
+                    : "Nenhuma assinatura cadastrada encontrada."}
+              </p>
+
+              {usarAssinatura2 && assinatura2Nome ? (
+                <p className="mt-2 text-xs font-black text-emerald-700 dark:text-emerald-200">
+                  Selecionada: {assinatura2Nome}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </section>
+
+        <div className="flex justify-end">
+          <Botao type="submit" variant="primary" disabled={salvando}>
+            <span className="inline-flex items-center gap-2">
+              {salvando ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Plus className="h-4 w-4" aria-hidden="true" />
+              )}
+              {salvando ? "Cadastrando..." : "Cadastrar certificado"}
+            </span>
+          </Botao>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function CertificadoAvulsoCard({
+  item,
+  onGerarPdf,
+  onEnviarEmail,
+  acaoLoading,
+  usarAssinatura2,
+  assinatura2Id,
+}) {
+  const isEmailLoading = acaoLoading.id === item.id && acaoLoading.tipo === "email";
+  const isPdfLoading = acaoLoading.id === item.id && acaoLoading.tipo === "pdf";
+  const mod = item?.modalidade || "participante";
+  const status = item?.status || "emitido";
+  const podeGerar = certificadoPodeGerarPdf(item);
+  const pdfConsolidado = certificadoPdfConsolidado(item);
+
+  return (
+    <motion.article
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.18 }}
+      className="overflow-hidden rounded-[1.5rem] bg-white shadow-sm ring-1 ring-slate-200 transition hover:shadow-md dark:bg-zinc-900 dark:ring-zinc-800"
+      aria-label={`Certificado de ${item?.nome || "participante"}`}
+      aria-busy={isEmailLoading || isPdfLoading ? "true" : "false"}
+    >
+      <div className="h-1.5 bg-gradient-to-r from-amber-700 via-orange-500 to-rose-600" />
+
+      <div className="p-4 sm:p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 gap-3">
+            <div className="h-11 w-11 shrink-0 rounded-2xl bg-rose-50 p-2 ring-1 ring-rose-100 dark:bg-rose-950/30 dark:ring-rose-800/60">
+              <UserSquare2
+                className="h-7 w-7 text-rose-700 dark:text-rose-200"
+                aria-hidden="true"
+              />
+            </div>
+
+            <div className="min-w-0">
+              <h3 className="break-words text-base font-black leading-5 text-slate-950 dark:text-white">
+                {item?.nome || "Sem nome"}
+              </h3>
+
+              <p className="mt-2 break-words text-sm font-semibold text-slate-700 dark:text-zinc-200">
+                {item?.curso || "Curso não informado"}
+              </p>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Badge tone={item?.enviado ? "emerald" : "amber"}>
+                  {item?.enviado ? (
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  ) : (
+                    <Send className="h-3.5 w-3.5" />
+                  )}
+                  {item?.enviado ? "Enviado" : "Pendente de envio"}
+                </Badge>
+
+                <Badge tone={statusTone(status)}>
+                  {statusLabel(status)}
+                </Badge>
+
+                <Badge tone={pdfConsolidado ? "emerald" : "cyan"}>
+                  {pdfConsolidado ? "PDF consolidado" : "PDF pendente"}
+                </Badge>
+
+                <Badge tone="cyan">{ROTULO_MODALIDADE[mod] || mod}</Badge>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 text-sm">
+          <div className="rounded-2xl bg-emerald-50 p-3 ring-1 ring-emerald-100 dark:bg-emerald-950/30 dark:ring-emerald-800/60">
+            <p className="text-[11px] font-black uppercase tracking-wide text-emerald-700 dark:text-emerald-200">
+              Certificado nº
+            </p>
+            <p className="mt-1 break-all font-black text-emerald-900 dark:text-emerald-100">
+              {getNumeroCertificadoLabel(item)}
+            </p>
+          </div>
+
+          <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-100 dark:bg-zinc-950 dark:ring-zinc-800">
+            <p className="text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-zinc-400">
+              E-mail
+            </p>
+            <p className="mt-1 break-all font-semibold text-slate-800 dark:text-zinc-100">
+              {item?.email || "—"}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-100 dark:bg-zinc-950 dark:ring-zinc-800">
+              <p className="text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-zinc-400">
+                Identificador
+              </p>
+              <p className="mt-1 font-semibold text-slate-800 dark:text-zinc-100">
+                {getIdentificadorLabel(item)}
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-100 dark:bg-zinc-950 dark:ring-zinc-800">
+              <p className="text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-zinc-400">
+                Carga
+              </p>
+              <p className="mt-1 font-semibold text-slate-800 dark:text-zinc-100">
+                {formatarCarga(item)}
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-100 dark:bg-zinc-950 dark:ring-zinc-800">
+              <p className="text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-zinc-400">
+                Período
+              </p>
+              <p className="mt-1 font-semibold text-slate-800 dark:text-zinc-100">
+                {formatarPeriodo(item)}
+              </p>
+            </div>
+          </div>
+
+          {item?.titulo_trabalho ? (
+            <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-100 dark:bg-zinc-950 dark:ring-zinc-800">
+              <p className="text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-zinc-400">
+                Título do trabalho / oficina
+              </p>
+              <p className="mt-1 break-words font-semibold text-slate-800 dark:text-zinc-100">
+                {item.titulo_trabalho}
+              </p>
+            </div>
+          ) : null}
+
+          {item?.codigo_validacao ? (
+            <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-100 dark:bg-zinc-950 dark:ring-zinc-800">
+              <p className="text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-zinc-400">
+                Código de validação
+              </p>
+              <p className="mt-1 break-all font-black text-slate-800 dark:text-zinc-100">
+                {item.codigo_validacao}
+              </p>
+            </div>
+          ) : null}
+
+          {!podeGerar ? (
+            <div className="rounded-2xl bg-rose-50 p-3 text-sm font-semibold text-rose-800 ring-1 ring-rose-100 dark:bg-rose-950/30 dark:text-rose-100 dark:ring-rose-800/60">
+              Este certificado não está disponível para download porque está
+              com status {statusLabel(status).toLowerCase()}.
+            </div>
+          ) : null}
+
+          {pdfConsolidado && usarAssinatura2 && assinatura2Id ? (
+            <div className="rounded-2xl bg-amber-50 p-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-100 dark:bg-amber-950/30 dark:text-amber-100 dark:ring-amber-800/60">
+              Este PDF já foi consolidado. A segunda assinatura só altera a
+              primeira consolidação; depois disso, correções exigem substituição
+              formal do certificado.
+            </div>
+          ) : null}
+        </div>
+
+        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Botao
+            type="button"
+            variant="secondary"
+            onClick={() => onGerarPdf(item)}
+            disabled={isPdfLoading || !podeGerar}
+            title={
+              pdfConsolidado
+                ? "Baixar PDF oficial"
+                : usarAssinatura2 && assinatura2Id
+                  ? "Consolidar PDF com 2 assinaturas"
+                  : "Consolidar PDF oficial"
+            }
+          >
+            <span className="inline-flex items-center justify-center gap-2">
+              {isPdfLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <FileText className="h-4 w-4" aria-hidden="true" />
+              )}
+              {isPdfLoading
+                ? pdfConsolidado
+                  ? "Baixando..."
+                  : "Consolidando..."
+                : pdfConsolidado
+                  ? "Baixar PDF"
+                  : "Consolidar PDF"}
+            </span>
+          </Botao>
+
+          <Botao
+            type="button"
+            variant="primary"
+            onClick={() => onEnviarEmail(item.id)}
+            disabled={isEmailLoading || !podeGerar}
+            title={item?.enviado ? "Reenviar e-mail" : "Enviar e-mail"}
+          >
+            <span className="inline-flex items-center justify-center gap-2">
+              {isEmailLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : item?.enviado ? (
+                <Mail className="h-4 w-4" aria-hidden="true" />
+              ) : (
+                <Send className="h-4 w-4" aria-hidden="true" />
+              )}
+              {isEmailLoading
+                ? "Enviando..."
+                : item?.enviado
+                  ? "Reenviar"
+                  : "Enviar"}
+            </span>
+          </Botao>
+        </div>
+      </div>
+    </motion.article>
+  );
+}
+
+/* ─────────────────────────────────────────────
+ * Página principal
+ * ───────────────────────────────────────────── */
+
 export default function CertificadosAvulsos() {
   const reduceMotion = useReducedMotion();
 
   const [form, setForm] = useState({
     nome: "",
-    cpf: "",
+    identificador: "",
     email: "",
     curso: "",
     carga_horaria: "",
@@ -266,6 +1095,7 @@ export default function CertificadosAvulsos() {
     data_fim: "",
     modalidade: "participante",
     titulo_trabalho: "",
+    texto_personalizado: "",
   });
 
   const [usarAssinatura2, setUsarAssinatura2] = useState(
@@ -279,130 +1109,141 @@ export default function CertificadosAvulsos() {
 
   const [lista, setLista] = useState([]);
   const [carregando, setCarregando] = useState(true);
+  const [erro, setErro] = useState("");
   const [salvando, setSalvando] = useState(false);
 
-  const [filtro, setFiltro] = useState(
-    () => localStorage.getItem(KEY_FILTRO) || "todos"
+  const [filtroEnvio, setFiltroEnvio] = useState(
+    () => localStorage.getItem(KEY_FILTRO_ENVIO) || "todos"
   );
-  const [busca, setBusca] = useState(
-    () => localStorage.getItem(KEY_BUSCA) || ""
+  const [filtroStatus, setFiltroStatus] = useState(
+    () => localStorage.getItem(KEY_FILTRO_STATUS) || "todos"
   );
+  const [busca, setBusca] = useState(() => localStorage.getItem(KEY_BUSCA) || "");
   const [buscaDebounced, setBuscaDebounced] = useState(busca);
 
   const [acaoLoading, setAcaoLoading] = useState({ id: null, tipo: null });
 
   const liveRef = useRef(null);
-  const erroRef = useRef(null);
   const buscaRef = useRef(null);
   const formRef = useRef(null);
+  const mountedRef = useRef(true);
 
-  const setLive = useCallback((msg) => {
-    if (liveRef.current) liveRef.current.textContent = msg;
+  const setLive = useCallback((message) => {
+    if (liveRef.current) liveRef.current.textContent = message;
   }, []);
 
-  /* ===================== Carregamentos ===================== */
   const carregarCertificados = useCallback(async () => {
     try {
+      validarFacade("api.certificadoAvulso.listar", api?.certificadoAvulso?.listar);
+
       setCarregando(true);
-      setLive("Carregando certificados…");
+      setErro("");
+      setLive("Carregando certificados avulsos.");
 
-      debugLog("LISTA_START", {
-        endpoint: "certificados-avulsos",
-      });
+      const response = await api.certificadoAvulso.listar();
+      const payload = extrairData(response);
+      const arr = Array.isArray(payload) ? payload : [];
 
-      const data = await apiGet("certificados-avulsos", { on403: "silent" });
-      const arr = Array.isArray(data) ? data : [];
+      if (!mountedRef.current) return;
 
       setLista(arr);
-
-      debugLog("LISTA_OK", {
-        total: arr.length,
-      });
-
       setLive(
         arr.length
-          ? `Foram carregados ${arr.length} certificado(s).`
-          : "Nenhum certificado encontrado."
+          ? `${arr.length} certificado(s) avulso(s) carregado(s).`
+          : "Nenhum certificado avulso encontrado."
       );
-    } catch (erro) {
-      debugLog("LISTA_ERRO", {
-        message: erro?.message || String(erro),
-        response: erro?.response?.data || null,
-        status: erro?.response?.status || null,
-      });
+    } catch (error) {
+      console.error("[CertificadosAvulsos] erro ao carregar:", error);
 
-      toast.error("❌ Erro ao carregar certificados.");
+      if (!mountedRef.current) return;
+
+      const message = obterMensagemErro(
+        error,
+        "Não foi possível carregar certificados avulsos."
+      );
+
+      setErro(message);
       setLista([]);
-      setLive("Falha ao carregar certificados.");
-      setTimeout(() => erroRef.current?.focus(), 0);
+      notifyError(message);
+      setLive("Erro ao carregar certificados avulsos.");
     } finally {
-      setCarregando(false);
+      if (mountedRef.current) setCarregando(false);
     }
   }, [setLive]);
 
   const carregarAssinaturas = useCallback(async () => {
     try {
+      validarFacade("api.assinatura.listar", api?.assinatura?.listar);
+
       setAssinaturasCarregando(true);
 
-      debugLog("ASSINATURAS_START", {
-        endpoint: "assinatura/lista",
-      });
+      const response = await api.assinatura.listar();
+      const payload = extrairData(response);
 
-      const data = await apiGet("assinatura/lista", { on403: "silent" });
-
-      const arr = Array.isArray(data)
-        ? data
-        : Array.isArray(data?.lista)
-        ? data.lista
-        : [];
+      const arr = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.lista)
+          ? payload.lista
+          : [];
 
       const filtradas = arr
-        .filter(
-          (a) =>
-            (a?.tem_assinatura ??
-              a?.possui_assinatura ??
-              !!a?.assinatura ??
-              !!a?.arquivo_assinatura) === true
-        )
-        .map((a) => ({
-          id: a.id ?? a.usuario_id ?? a.pessoa_id,
-          nome: a.nome || a.titulo || "—",
+        .filter((assinatura) => {
+          return Boolean(
+            assinatura?.tem_assinatura ??
+              assinatura?.possui_assinatura ??
+              assinatura?.imagem_base64 ??
+              assinatura?.assinatura ??
+              assinatura?.arquivo_assinatura
+          );
+        })
+        .map((assinatura) => ({
+          id: assinatura.id ?? assinatura.usuario_id ?? assinatura.pessoa_id,
+          nome: assinatura.nome || assinatura.titulo || "—",
         }))
-        .filter((a) => a.id && a.nome);
+        .filter((assinatura) => assinatura.id && assinatura.nome);
+
+      if (!mountedRef.current) return;
 
       setAssinaturas(filtradas);
+    } catch (error) {
+      console.error("[CertificadosAvulsos] erro ao carregar assinaturas:", error);
 
-      debugLog("ASSINATURAS_OK", {
-        totalRecebido: arr.length,
-        totalFiltrado: filtradas.length,
-      });
-    } catch (erro) {
-      debugLog("ASSINATURAS_ERRO", {
-        message: erro?.message || String(erro),
-        response: erro?.response?.data || null,
-        status: erro?.response?.status || null,
-      });
+      if (!mountedRef.current) return;
 
       setAssinaturas([]);
     } finally {
-      setAssinaturasCarregando(false);
+      if (mountedRef.current) setAssinaturasCarregando(false);
     }
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
+    document.title = "Certificados Avulsos | Escola da Saúde";
+
     carregarCertificados();
     carregarAssinaturas();
+
+    return () => {
+      mountedRef.current = false;
+    };
   }, [carregarCertificados, carregarAssinaturas]);
 
-  /* ===================== Persistências ===================== */
   useEffect(() => {
-    localStorage.setItem(KEY_FILTRO, filtro);
-  }, [filtro]);
+    localStorage.setItem(KEY_FILTRO_ENVIO, filtroEnvio);
+  }, [filtroEnvio]);
+
+  useEffect(() => {
+    localStorage.setItem(KEY_FILTRO_STATUS, filtroStatus);
+  }, [filtroStatus]);
 
   useEffect(() => {
     localStorage.setItem(KEY_BUSCA, busca);
-    const t = setTimeout(() => setBuscaDebounced(busca.trim().toLowerCase()), 250);
-    return () => clearTimeout(t);
+
+    const timer = window.setTimeout(() => {
+      setBuscaDebounced(normalizarBusca(busca));
+    }, 250);
+
+    return () => window.clearTimeout(timer);
   }, [busca]);
 
   useEffect(() => {
@@ -410,168 +1251,204 @@ export default function CertificadosAvulsos() {
   }, [usarAssinatura2]);
 
   useEffect(() => {
-    if (assinatura2Id) localStorage.setItem(KEY_ASSIN2_ID, assinatura2Id);
-    else localStorage.removeItem(KEY_ASSIN2_ID);
+    if (assinatura2Id) {
+      localStorage.setItem(KEY_ASSIN2_ID, assinatura2Id);
+    } else {
+      localStorage.removeItem(KEY_ASSIN2_ID);
+    }
   }, [assinatura2Id]);
 
-  /* ===================== Form ===================== */
-  function handleChange(e) {
-    const { name, value } = e.target;
-
-    if (name === "cpf") {
-      const dig = onlyDigits(value).slice(0, 14);
-      setForm((prev) => ({ ...prev, cpf: dig }));
-      return;
-    }
-
-    if (name === "email") {
-      setForm((prev) => ({
-        ...prev,
-        email: clampLen(value, 120).toLowerCase(),
-      }));
-      return;
-    }
-
-    if (name === "carga_horaria") {
-      const v = value.replace(/[^\d]/g, "");
-      setForm((prev) => ({ ...prev, carga_horaria: v }));
-      return;
-    }
-
-    if (name === "modalidade") {
-      const exigeTitulo = modalidadeExigeTitulo(value);
-      const semCarga = modalidadeSemCarga(value);
-
-      setForm((prev) => ({
-        ...prev,
-        modalidade: value,
-        titulo_trabalho: exigeTitulo ? prev.titulo_trabalho : "",
-        carga_horaria: semCarga ? "" : prev.carga_horaria,
-      }));
-      return;
-    }
-
-    const maxMap = {
-      nome: 150,
-      curso: 160,
-      titulo_trabalho: 255,
-    };
-
-    const v = maxMap[name] ? clampLen(value, maxMap[name]) : value;
-    setForm((prev) => ({ ...prev, [name]: v }));
-  }
-
-  function handlePasteCPF(e) {
-    const text = (e.clipboardData || window.clipboardData)?.getData("text") || "";
-    const dig = onlyDigits(text).slice(0, 14);
-    e.preventDefault();
-    setForm((prev) => ({ ...prev, cpf: dig }));
-  }
-
   useEffect(() => {
-    const onKey = (e) => {
+    const onKey = (event) => {
+      const key = event.key;
       const mac = /(Mac|iPhone|iPad)/i.test(navigator.userAgent);
+      const typing = ["input", "textarea", "select"].includes(
+        document.activeElement?.tagName?.toLowerCase()
+      );
+
+      if (typing) return;
+
       const isSubmit =
-        (mac && e.metaKey && e.key === "Enter") ||
-        (!mac && e.ctrlKey && e.key === "Enter");
+        (mac && event.metaKey && key === "Enter") ||
+        (!mac && event.ctrlKey && key === "Enter");
 
       if (isSubmit) {
-        const f = document.getElementById("form-cert-avulso");
-        if (f?.requestSubmit) f.requestSubmit();
-        else f?.submit();
+        event.preventDefault();
+        formRef.current?.requestSubmit?.();
       }
     };
 
     window.addEventListener("keydown", onKey);
+
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  const assinatura2Nome = useMemo(() => {
+    const achada = assinaturas.find(
+      (assinatura) => String(assinatura.id) === String(assinatura2Id)
+    );
+
+    return achada?.nome || "";
+  }, [assinaturas, assinatura2Id]);
+
+  const kpis = useMemo(() => {
+    const total = lista.length;
+    const enviados = lista.filter((item) => item?.enviado === true).length;
+    const pendentes = lista.filter((item) => item?.enviado !== true).length;
+    const validos = lista.filter((item) =>
+      STATUS_VALIDOS_DOWNLOAD.includes(item?.status || "emitido")
+    ).length;
+
+    return {
+      total,
+      enviados,
+      pendentes,
+      validos,
+    };
+  }, [lista]);
+
+  const listaFiltrada = useMemo(() => {
+    return lista
+      .filter((item) => {
+        if (filtroEnvio === "enviados" && item?.enviado !== true) return false;
+        if (filtroEnvio === "nao_enviados" && item?.enviado === true) return false;
+
+        if (filtroStatus !== "todos" && (item?.status || "emitido") !== filtroStatus) {
+          return false;
+        }
+
+        if (!buscaDebounced) return true;
+
+        const texto = normalizarBusca(
+  [
+    item?.nome,
+    item?.email,
+    item?.curso,
+    item?.modalidade,
+    ROTULO_MODALIDADE[item?.modalidade],
+    item?.titulo_trabalho,
+    item?.numero_certificado,
+    item?.codigo_validacao,
+    item?.identificador_mascarado,
+  ].join(" ")
+);
+
+        return texto.includes(buscaDebounced);
+      })
+      .sort((a, b) => {
+        const da = String(a?.emitido_em || a?.id || "");
+        const db = String(b?.emitido_em || b?.id || "");
+
+        return db.localeCompare(da);
+      });
+  }, [lista, filtroEnvio, filtroStatus, buscaDebounced]);
+
+  const limparFiltros = useCallback(() => {
+    setBusca("");
+    setFiltroEnvio("todos");
+    setFiltroStatus("todos");
+  }, []);
+
   const cadastrarCertificado = useCallback(
-    async (e) => {
-      e.preventDefault();
+    async (event) => {
+      event.preventDefault();
+
       if (salvando) return;
 
       const modalidade = form.modalidade || "participante";
       const exigeTitulo = modalidadeExigeTitulo(modalidade);
+      const semCarga = modalidadeSemCarga(modalidade);
 
       const payload = {
-        nome: clampLen(form.nome.replace(/\s+/g, " ").trim(), 150),
-        cpf: onlyDigits(form.cpf),
-        email: clampLen(form.email.trim(), 120).toLowerCase(),
-        curso: clampLen(form.curso.replace(/\s+/g, " ").trim(), 160),
-        carga_horaria: form.carga_horaria,
-        data_inicio: form.data_inicio || "",
-        data_fim: form.data_fim || form.data_inicio || "",
+        nome: safeText(form.nome, 180),
+        cpf: safeText(form.identificador, 80),
+        email: safeText(form.email, 160).toLowerCase(),
+        curso: safeText(form.curso, 300),
+        carga_horaria: semCarga
+          ? null
+          : form.carga_horaria
+            ? Number(form.carga_horaria)
+            : null,
+        data_inicio: form.data_inicio || null,
+        data_fim: form.data_fim || form.data_inicio || null,
         modalidade,
-        titulo_trabalho: exigeTitulo
-          ? clampLen((form.titulo_trabalho || "").replace(/\s+/g, " ").trim(), 255)
-          : "",
+        titulo_trabalho: exigeTitulo ? safeText(form.titulo_trabalho, 500) : null,
+        texto_personalizado: safeText(form.texto_personalizado, 5000),
       };
 
-      if (!payload.nome || !payload.email || !payload.curso) {
-        toast.warning("Preencha nome, e-mail e curso.");
-        setLive("Preencha os campos obrigatórios.");
+      if (!payload.nome || !payload.cpf || !payload.email || !payload.curso) {
+        notifyWarning("Preencha nome, identificador, e-mail e curso.");
+        setLive("Campos obrigatórios ausentes.");
         return;
       }
 
       if (!validarEmail(payload.email)) {
-        toast.warning("Informe um e-mail válido.");
+        notifyWarning("Informe um e-mail válido.");
         setLive("E-mail inválido.");
         return;
       }
 
-      const cargaStr = String(form.carga_horaria || "").trim();
-      if (cargaStr) {
-        const n = Number(cargaStr);
-        if (!Number.isFinite(n) || n <= 0) {
-          toast.warning("Informe uma carga horária válida (> 0) ou deixe em branco.");
+      if (!MODALIDADES.includes(payload.modalidade)) {
+        notifyWarning("Modalidade inválida.");
+        setLive("Modalidade inválida.");
+        return;
+      }
+
+      if (!semCarga && payload.carga_horaria !== null) {
+        if (!Number.isFinite(payload.carga_horaria) || payload.carga_horaria <= 0) {
+          notifyWarning("Informe uma carga horária válida ou deixe em branco.");
           setLive("Carga horária inválida.");
           return;
         }
       }
 
       if (exigeTitulo && !payload.titulo_trabalho) {
-        toast.warning("Informe o título do trabalho/oficina para a modalidade selecionada.");
-        setLive("Título do trabalho é obrigatório.");
+        notifyWarning("Informe o título do trabalho/oficina.");
+        setLive("Título obrigatório ausente.");
         return;
       }
 
-      if (payload.data_inicio && !validYMD(payload.data_inicio)) {
-        toast.warning("Data de início inválida.");
+      if (payload.data_inicio && !isYmd(payload.data_inicio)) {
+        notifyWarning("Data de início inválida.");
         setLive("Data de início inválida.");
         return;
       }
 
-      if (payload.data_fim && !validYMD(payload.data_fim)) {
-        toast.warning("Data de término inválida.");
+      if (payload.data_fim && !isYmd(payload.data_fim)) {
+        notifyWarning("Data de término inválida.");
         setLive("Data de término inválida.");
         return;
       }
 
       if (payload.data_inicio && payload.data_fim && payload.data_fim < payload.data_inicio) {
-        toast.warning("A data de término não pode ser anterior à data de início.");
-        setLive("A data de término não pode ser anterior à data de início.");
+        notifyWarning("A data de término não pode ser anterior à data de início.");
+        setLive("Período inválido.");
         return;
       }
 
-      setSalvando(true);
-
       try {
-        debugLog("CADASTRO_START", payload);
+        validarFacade("api.certificadoAvulso.criar", api?.certificadoAvulso?.criar);
 
-        const novo = await apiPost("certificados-avulsos", payload);
+        setSalvando(true);
+        setLive("Cadastrando certificado avulso.");
 
-        debugLog("CADASTRO_OK", {
-          id: novo?.id || null,
-        });
+        const response = await api.certificadoAvulso.criar(payload);
+        const novo = extrairData(response);
+
+        if (novo) {
+  setLista((prev) => [novo, ...prev]);
+} else {
+  await carregarCertificados();
+}
 
         setLista((prev) => [novo, ...prev]);
-        setFiltro("todos");
+        setFiltroEnvio("todos");
+        setFiltroStatus("todos");
         setBusca("");
 
         setForm({
           nome: "",
-          cpf: "",
+          identificador: "",
           email: "",
           curso: "",
           carga_horaria: "",
@@ -579,792 +1456,271 @@ export default function CertificadosAvulsos() {
           data_fim: "",
           modalidade: "participante",
           titulo_trabalho: "",
+          texto_personalizado: "",
         });
 
-        toast.success("✅ Certificado cadastrado.");
-        setLive("Certificado cadastrado com sucesso.");
-      } catch (erro) {
-        debugLog("CADASTRO_ERRO", {
-          message: erro?.message || String(erro),
-          response: erro?.response?.data || null,
-          status: erro?.response?.status || null,
-          payload,
-        });
+        notifySuccess("Certificado avulso cadastrado com sucesso.");
+        setLive("Certificado avulso cadastrado.");
+      } catch (error) {
+        console.error("[CertificadosAvulsos] erro ao cadastrar:", error);
 
-        const msg =
-          erro?.response?.data?.erro ||
-          "Erro ao cadastrar certificado.";
-
-        toast.error(`❌ ${msg}`);
-        setLive("Erro ao cadastrar certificado.");
-        setTimeout(() => erroRef.current?.focus(), 0);
+        notifyError(
+          obterMensagemErro(error, "Não foi possível cadastrar o certificado.")
+        );
+        setLive("Erro ao cadastrar certificado avulso.");
       } finally {
         setSalvando(false);
       }
     },
-    [form, salvando, setLive]
+    [form, salvando, setLive, carregarCertificados]
   );
+
+  const getAssinaturaParams = useCallback(() => {
+    if (!usarAssinatura2) return undefined;
+
+    if (!assinatura2Id) {
+      notifyInfo("Selecione a 2ª assinatura antes de continuar.");
+      return false;
+    }
+
+    return {
+      assinatura2_id: Number(assinatura2Id),
+    };
+  }, [usarAssinatura2, assinatura2Id]);
+
+  const gerarPdf = useCallback(
+  async (item) => {
+    if (acaoLoading.id) return;
+
+    const id = Number(item?.id);
+
+    if (!Number.isInteger(id) || id <= 0) {
+      notifyWarning("Certificado inválido para PDF.");
+      return;
+    }
+
+    const pdfConsolidado = certificadoPdfConsolidado(item);
+    const params = getAssinaturaParams();
+
+    if (params === false) return;
+
+    try {
+      validarFacade("api.certificadoAvulso.pdf", api?.certificadoAvulso?.pdf);
+
+      setAcaoLoading({ id, tipo: "pdf" });
+      setLive(
+        pdfConsolidado
+          ? "Baixando PDF do certificado avulso."
+          : "Consolidando PDF do certificado avulso."
+      );
+
+      const result = await api.certificadoAvulso.pdf(id, params);
+      const blob = result?.blob || result?.data || result;
+
+      const filename =
+        result?.filename ||
+        `${nomeArquivoSeguro(item?.numero_certificado || `certificado_avulso_${id}`)}.pdf`;
+
+      downloadBlob(filename, blob);
+
+      notifySuccess(
+        pdfConsolidado
+          ? "Download iniciado."
+          : "PDF consolidado e download iniciado."
+      );
+
+      setLive(
+        pdfConsolidado
+          ? "Download do PDF iniciado."
+          : "PDF consolidado e download iniciado."
+      );
+
+      await carregarCertificados();
+    } catch (error) {
+      console.error("[CertificadosAvulsos] erro ao consolidar/baixar PDF:", error);
+
+      notifyError(
+        obterMensagemErro(
+          error,
+          pdfConsolidado
+            ? "Não foi possível baixar o PDF."
+            : "Não foi possível consolidar o PDF."
+        )
+      );
+
+      setLive("Erro ao consolidar ou baixar PDF.");
+    } finally {
+      setAcaoLoading({ id: null, tipo: null });
+    }
+  },
+  [acaoLoading.id, getAssinaturaParams, carregarCertificados, setLive]
+);
 
   const enviarPorEmail = useCallback(
     async (id) => {
       if (acaoLoading.id) return;
 
-      if (usarAssinatura2 && !assinatura2Id) {
-        toast.info("Selecione a 2ª assinatura antes de enviar o e-mail.");
-        return;
-      }
+      const params = getAssinaturaParams();
 
-      setAcaoLoading({ id, tipo: "email" });
+      if (params === false) return;
 
       try {
-        const params = new URLSearchParams();
-        if (usarAssinatura2 && assinatura2Id) {
-          params.set("assinatura2_id", String(assinatura2Id));
-        }
-
-        const url = params.toString()
-          ? `certificados-avulsos/${id}/enviar?${params.toString()}`
-          : `certificados-avulsos/${id}/enviar`;
-
-        debugLog("EMAIL_START", { id, url });
-
-        toast.info("📤 Enviando…");
-        await apiPost(url);
-
-        debugLog("EMAIL_OK", { id });
-
-        toast.success("✅ E-mail enviado!");
-        setLista((prev) =>
-          prev.map((item) => (item.id === id ? { ...item, enviado: true } : item))
+        validarFacade(
+          "api.certificadoAvulso.enviar",
+          api?.certificadoAvulso?.enviar
         );
-      } catch (erro) {
-        debugLog("EMAIL_ERRO", {
-          id,
-          message: erro?.message || String(erro),
-          response: erro?.response?.data || null,
-          status: erro?.response?.status || null,
-        });
 
-        const msg =
-          erro?.response?.data?.erro ||
-          "Erro ao enviar e-mail.";
+        setAcaoLoading({ id, tipo: "email" });
+        setLive("Enviando certificado avulso por e-mail.");
 
-        toast.error(`❌ ${msg}`);
+        const response = await api.certificadoAvulso.enviar(id, params);
+        const atualizado = extrairData(response);
+
+        setLista((prev) =>
+          prev.map((item) =>
+            Number(item.id) === Number(id)
+              ? {
+                  ...item,
+                  ...atualizado,
+                  enviado: true,
+                  status: atualizado?.status || "enviado",
+                }
+              : item
+          )
+        );
+
+        notifySuccess("E-mail enviado com sucesso.");
+        setLive("Certificado avulso enviado por e-mail.");
+      } catch (error) {
+        console.error("[CertificadosAvulsos] erro ao enviar e-mail:", error);
+
+        notifyError(
+          obterMensagemErro(error, "Não foi possível enviar o certificado por e-mail.")
+        );
+        setLive("Erro ao enviar e-mail.");
       } finally {
         setAcaoLoading({ id: null, tipo: null });
       }
     },
-    [acaoLoading.id, usarAssinatura2, assinatura2Id]
+    [acaoLoading.id, getAssinaturaParams, setLive]
   );
 
-  const gerarPDF = useCallback(
-    async (id) => {
-      if (acaoLoading.id) return;
-
-      if (usarAssinatura2 && !assinatura2Id) {
-        toast.info("Selecione a 2ª assinatura antes de gerar o PDF.");
-        return;
-      }
-
-      setAcaoLoading({ id, tipo: "pdf" });
-
-      let href = "";
-
-      try {
-        const params = new URLSearchParams();
-        if (usarAssinatura2 && assinatura2Id) {
-          params.set("assinatura2_id", String(assinatura2Id));
-        }
-
-        const url = params.toString()
-          ? `certificados-avulsos/${id}/pdf?${params.toString()}`
-          : `certificados-avulsos/${id}/pdf`;
-
-        debugLog("PDF_START", { id, url });
-
-        const { blob, filename } = await apiGetFile(url);
-
-        debugLog("PDF_OK", {
-          id,
-          filename: filename || null,
-          size: blob?.size || null,
-        });
-
-        href = window.URL.createObjectURL(blob);
-
-        const a = document.createElement("a");
-        a.href = href;
-        a.download = filename || `certificado_${id}.pdf`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      } catch (erro) {
-        debugLog("PDF_ERRO", {
-          id,
-          message: erro?.message || String(erro),
-          response: erro?.response?.data || null,
-          status: erro?.response?.status || null,
-        });
-
-        const msg =
-          erro?.response?.data?.erro ||
-          "Erro ao gerar PDF.";
-
-        toast.error(`❌ ${msg}`);
-      } finally {
-        if (href) window.URL.revokeObjectURL(href);
-        setAcaoLoading({ id: null, tipo: null });
-      }
-    },
-    [usarAssinatura2, assinatura2Id, acaoLoading.id]
-  );
-
-  /* ===================== Derivados ===================== */
-  const enviados = useMemo(
-    () => (lista || []).filter((i) => i.enviado === true).length,
-    [lista]
-  );
-
-  const naoEnviados = useMemo(
-    () => (lista || []).filter((i) => i.enviado === false || i.enviado == null).length,
-    [lista]
-  );
-
-  const listaFiltrada = useMemo(() => {
-    const term = buscaDebounced;
-
-    return (lista || []).filter((item) => {
-      if (filtro === "enviados" && item.enviado !== true) return false;
-      if (filtro === "nao-enviados" && item.enviado === true) return false;
-
-      if (!term) return true;
-
-      const alvo = `${item.nome} ${item.email} ${item.curso} ${item.modalidade || ""} ${
-        item.titulo_trabalho || ""
-      }`.toLowerCase();
-
-      return alvo.includes(term);
-    });
-  }, [lista, filtro, buscaDebounced]);
-
-  const assinatura2Nome = useMemo(() => {
-    const achada = assinaturas.find((a) => String(a.id) === String(assinatura2Id));
-    return achada?.nome || "";
-  }, [assinaturas, assinatura2Id]);
-
-  /* ===================== Render ===================== */
   return (
-    <div className="flex flex-col min-h-screen bg-zinc-50 dark:bg-zinc-900 text-black dark:text-white">
-      <HeaderHero
-        onRefresh={carregarCertificados}
-        onSubmitClick={() => {
-          if (formRef.current?.requestSubmit) formRef.current.requestSubmit();
-          else formRef.current?.submit?.();
-        }}
+    <div className="flex min-h-dvh flex-col bg-slate-50 text-slate-950 dark:bg-zinc-950 dark:text-white">
+      <Hero
+        kpis={kpis}
         carregando={carregando}
+        onRefresh={carregarCertificados}
+        onCadastrar={() => formRef.current?.requestSubmit?.()}
         onFocusBusca={() => buscaRef.current?.focus()}
-        total={lista.length}
-        enviados={enviados}
-        naoEnviados={naoEnviados}
       />
 
-      {carregando && (
+      <p ref={liveRef} className="sr-only" aria-live="polite" />
+
+      {carregando ? (
         <div
-          className="sticky top-0 left-0 w-full h-1 bg-amber-100 z-40"
+          className="sticky top-0 z-50 h-1 w-full bg-amber-100 dark:bg-amber-950"
           role="progressbar"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-label="Carregando dados"
-          aria-busy="true"
+          aria-label="Carregando certificados avulsos"
         >
           <div
-            className={`h-full bg-rose-600 w-1/3 ${
+            className={cx(
+              "h-full w-1/3 bg-amber-600",
               reduceMotion ? "" : "animate-pulse"
-            }`}
-          />
-        </div>
-      )}
-
-      <main id="conteudo" className="flex-1 max-w-7xl mx-auto w-full px-3 sm:px-4 lg:px-6 py-6">
-        <p ref={liveRef} className="sr-only" aria-live="polite" role="status" />
-        <div ref={erroRef} tabIndex={-1} className="sr-only" />
-
-        {/* Top stats */}
-        <section className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
-          <MiniStat
-            icon={<Award className="w-5 h-5" aria-hidden="true" />}
-            label="Total"
-            value={lista.length}
-            tone="default"
-          />
-          <MiniStat
-            icon={<Mail className="w-5 h-5" aria-hidden="true" />}
-            label="Enviados"
-            value={enviados}
-            tone="success"
-          />
-          <MiniStat
-            icon={<Send className="w-5 h-5" aria-hidden="true" />}
-            label="Pendentes"
-            value={naoEnviados}
-            tone="warning"
-          />
-        </section>
-
-        {/* Layout principal */}
-        <div className="grid grid-cols-1 xl:grid-cols-[420px_minmax(0,1fr)] gap-6">
-          {/* Coluna esquerda: cadastro */}
-          <section className="space-y-4">
-            <div className="rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 shadow-sm overflow-hidden">
-              <div className="border-b border-zinc-100 dark:border-zinc-700 px-4 sm:px-5 py-4">
-                <div className="flex items-start gap-3">
-                  <div className="rounded-2xl p-2 bg-rose-100 dark:bg-rose-900/30">
-                    <PenSquare className="w-5 h-5 text-rose-700 dark:text-rose-300" />
-                  </div>
-                  <div className="min-w-0">
-                    <h2 className="text-lg font-black tracking-tight text-zinc-900 dark:text-white">
-                      Novo certificado
-                    </h2>
-                    <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-                      Cadastro manual com suporte a modalidade específica e segunda assinatura.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <form
-                ref={formRef}
-                id="form-cert-avulso"
-                onSubmit={cadastrarCertificado}
-                className="p-4 sm:p-5 space-y-4"
-                aria-label="Cadastro de certificado avulso"
-                aria-busy={salvando}
-              >
-                <div>
-                  <label htmlFor="nome" className="block text-sm font-semibold text-slate-700 dark:text-slate-200">
-                    Nome completo <span className="text-rose-600">*</span>
-                  </label>
-                  <input
-                    id="nome"
-                    name="nome"
-                    type="text"
-                    value={form.nome}
-                    onChange={handleChange}
-                    required
-                    autoComplete="name"
-                    disabled={salvando}
-                    className="mt-1 w-full border border-zinc-300 dark:border-zinc-700 p-2.5 rounded-xl dark:bg-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label htmlFor="cpf" className="block text-sm font-semibold text-slate-700 dark:text-slate-200">
-                      CPF / Registro
-                    </label>
-                    <input
-                      id="cpf"
-                      name="cpf"
-                      type="text"
-                      value={form.cpf}
-                      onChange={handleChange}
-                      onPaste={handlePasteCPF}
-                      disabled={salvando}
-                      className="mt-1 w-full border border-zinc-300 dark:border-zinc-700 p-2.5 rounded-xl dark:bg-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      autoComplete="off"
-                      placeholder="Apenas números"
-                      aria-describedby="cpf-help"
-                    />
-                    <p id="cpf-help" className="text-[11px] text-zinc-500 mt-1">
-                      Aceita somente números; a formatação será aplicada no PDF.
-                    </p>
-                  </div>
-
-                  <div>
-                    <label htmlFor="email" className="block text-sm font-semibold text-slate-700 dark:text-slate-200">
-                      E-mail <span className="text-rose-600">*</span>
-                    </label>
-                    <input
-                      id="email"
-                      name="email"
-                      type="email"
-                      value={form.email}
-                      onChange={handleChange}
-                      required
-                      autoComplete="email"
-                      disabled={salvando}
-                      className="mt-1 w-full border border-zinc-300 dark:border-zinc-700 p-2.5 rounded-xl dark:bg-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label htmlFor="curso" className="block text-sm font-semibold text-slate-700 dark:text-slate-200">
-                    Evento / Curso <span className="text-rose-600">*</span>
-                  </label>
-                  <input
-                    id="curso"
-                    name="curso"
-                    type="text"
-                    value={form.curso}
-                    onChange={handleChange}
-                    required
-                    disabled={salvando}
-                    className="mt-1 w-full border border-zinc-300 dark:border-zinc-700 p-2.5 rounded-xl dark:bg-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
-                  />
-                </div>
-
-                <div>
-                  <label htmlFor="modalidade" className="block text-sm font-semibold text-slate-700 dark:text-slate-200">
-                    Modalidade / Participação
-                  </label>
-                  <select
-                    id="modalidade"
-                    name="modalidade"
-                    value={form.modalidade}
-                    onChange={handleChange}
-                    disabled={salvando}
-                    className="mt-1 w-full border border-zinc-300 dark:border-zinc-700 p-2.5 rounded-xl dark:bg-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500 text-sm"
-                  >
-                    {MODALIDADES.map((m) => (
-                      <option key={m} value={m}>
-                        {rotuloModalidade[m] || m}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="mt-1 text-[11px] text-zinc-500">
-                    Defina se a pessoa foi participante, instrutor(a), banca, residente, mostra ou comissão.
-                  </p>
-                </div>
-
-                {modalidadeExigeTitulo(form.modalidade) && (
-                  <div>
-                    <label
-                      htmlFor="titulo_trabalho"
-                      className="block text-sm font-semibold text-slate-700 dark:text-slate-200"
-                    >
-                      Título do trabalho / oficina <span className="text-rose-600">*</span>
-                    </label>
-                    <input
-                      id="titulo_trabalho"
-                      name="titulo_trabalho"
-                      type="text"
-                      value={form.titulo_trabalho}
-                      onChange={handleChange}
-                      disabled={salvando}
-                      className="mt-1 w-full border border-zinc-300 dark:border-zinc-700 p-2.5 rounded-xl dark:bg-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
-                      placeholder="Título do TCR, trabalho ou oficina apresentada"
-                    />
-                  </div>
-                )}
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div>
-                    <label
-                      htmlFor="carga_horaria"
-                      className="block text-sm font-semibold text-slate-700 dark:text-slate-200"
-                    >
-                      Carga horária
-                    </label>
-                    <input
-                      id="carga_horaria"
-                      name="carga_horaria"
-                      type="number"
-                      min={1}
-                      step="1"
-                      value={form.carga_horaria}
-                      onChange={handleChange}
-                      disabled={salvando || modalidadeSemCarga(form.modalidade)}
-                      className="mt-1 w-full border border-zinc-300 dark:border-zinc-700 p-2.5 rounded-xl dark:bg-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500 disabled:opacity-60 disabled:cursor-not-allowed"
-                    />
-                    <p className="mt-1 text-[11px] text-zinc-500">
-                      {modalidadeSemCarga(form.modalidade)
-                        ? "Não se aplica à modalidade escolhida."
-                        : "Opcional. Se vazio, não aparece no texto."}
-                    </p>
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor="data_inicio"
-                      className="block text-sm font-semibold text-slate-700 dark:text-slate-200"
-                    >
-                      Data de início
-                    </label>
-                    <input
-                      id="data_inicio"
-                      name="data_inicio"
-                      type="date"
-                      value={form.data_inicio}
-                      onChange={handleChange}
-                      disabled={salvando}
-                      className="mt-1 w-full border border-zinc-300 dark:border-zinc-700 p-2.5 rounded-xl dark:bg-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor="data_fim"
-                      className="block text-sm font-semibold text-slate-700 dark:text-slate-200"
-                    >
-                      Data de término
-                    </label>
-                    <input
-                      id="data_fim"
-                      name="data_fim"
-                      type="date"
-                      value={form.data_fim}
-                      onChange={handleChange}
-                      disabled={salvando}
-                      className="mt-1 w-full border border-zinc-300 dark:border-zinc-700 p-2.5 rounded-xl dark:bg-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
-                    />
-                  </div>
-                </div>
-
-                {/* Segunda assinatura */}
-                <div className="rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/40 p-4">
-                  <div className="flex items-start gap-3">
-                    <div className="rounded-2xl p-2 bg-emerald-100 dark:bg-emerald-900/30">
-                      <ShieldCheck className="w-5 h-5 text-emerald-700 dark:text-emerald-300" />
-                    </div>
-
-                    <div className="min-w-0 flex-1">
-                      <h3 className="text-sm font-black text-zinc-900 dark:text-white">
-                        Assinatura adicional
-                      </h3>
-                      <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-300">
-                        Use uma segunda assinatura quando o certificado exigir coassinatura.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4"
-                        checked={usarAssinatura2}
-                        onChange={(e) => {
-                          setUsarAssinatura2(e.target.checked);
-                          if (!e.target.checked) setAssinatura2Id("");
-                        }}
-                      />
-                      <span className="text-sm font-medium">Adicionar 2ª assinatura</span>
-                    </label>
-
-                    <div className={`${usarAssinatura2 ? "" : "opacity-50 pointer-events-none"}`}>
-                      <label
-                        htmlFor="assinatura2"
-                        className="block text-sm font-semibold text-slate-700 dark:text-slate-200"
-                      >
-                        Selecionar assinatura
-                      </label>
-                      <select
-                        id="assinatura2"
-                        value={assinatura2Id}
-                        onChange={(e) => setAssinatura2Id(e.target.value)}
-                        disabled={!usarAssinatura2 || assinaturasCarregando || assinaturas.length === 0}
-                        aria-disabled={!usarAssinatura2 || assinaturas.length === 0}
-                        className="mt-1 w-full border border-zinc-300 dark:border-zinc-700 p-2.5 rounded-xl dark:bg-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
-                      >
-                        <option value="">
-                          {assinaturasCarregando ? "Carregando…" : "— Selecione —"}
-                        </option>
-                        {assinaturas.map((a) => (
-                          <option key={a.id} value={a.id}>
-                            {a.nome}
-                          </option>
-                        ))}
-                      </select>
-
-                      <p className="text-xs text-zinc-500 mt-1">
-                        {assinaturasCarregando
-                          ? "Buscando assinaturas disponíveis…"
-                          : assinaturas.length
-                          ? "Mostrando apenas pessoas com assinatura cadastrada."
-                          : "Nenhuma assinatura cadastrada encontrada."}
-                      </p>
-
-                      {usarAssinatura2 && assinatura2Nome ? (
-                        <p className="mt-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-                          Assinatura selecionada: {assinatura2Nome}
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex justify-end pt-1">
-                  <BotaoPrimario type="submit" disabled={salvando} aria-busy={salvando}>
-                    {salvando ? "Cadastrando..." : "Cadastrar certificado"}
-                  </BotaoPrimario>
-                </div>
-              </form>
-            </div>
-          </section>
-
-          {/* Coluna direita: listagem */}
-          <section className="space-y-4">
-            {/* Filtros */}
-            <div className="rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 shadow-sm p-4 sm:p-5">
-              <div className="flex items-start gap-3">
-                <div className="rounded-2xl p-2 bg-amber-100 dark:bg-amber-900/30">
-                  <Search className="w-5 h-5 text-amber-700 dark:text-amber-300" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <h2 className="text-lg font-black tracking-tight text-zinc-900 dark:text-white">
-                    Localizar certificados
-                  </h2>
-                  <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-                    Busque por nome, e-mail, curso, modalidade ou título do trabalho.
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-end">
-                <div className="flex-1">
-                  <label
-                    htmlFor="busca"
-                    className="block text-xs font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-200 mb-1"
-                  >
-                    Buscar
-                  </label>
-
-                  <div className="relative">
-                    <Search
-                      className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500"
-                      aria-hidden="true"
-                    />
-                    <input
-                      ref={buscaRef}
-                      id="busca"
-                      type="search"
-                      inputMode="search"
-                      placeholder="Nome, e-mail, curso, modalidade…"
-                      value={busca}
-                      onChange={(e) => setBusca(e.target.value)}
-                      className="pl-9 pr-10 py-2.5 w-full rounded-xl border border-gray-300 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-rose-500"
-                    />
-                    {busca && (
-                      <button
-                        type="button"
-                        onClick={() => setBusca("")}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-700"
-                        aria-label="Limpar busca"
-                      >
-                        <X className="w-4 h-4" aria-hidden="true" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="lg:w-64">
-                  <label
-                    htmlFor="filtro"
-                    className="block text-xs font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-200 mb-1"
-                  >
-                    Situação de envio
-                  </label>
-                  <select
-                    id="filtro"
-                    value={filtro}
-                    onChange={(e) => setFiltro(e.target.value)}
-                    className="w-full border border-gray-300 dark:border-zinc-700 p-2.5 rounded-xl dark:bg-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500 text-sm"
-                  >
-                    <option value="todos">Todos</option>
-                    <option value="enviados">Enviados</option>
-                    <option value="nao-enviados">Não enviados</option>
-                  </select>
-                </div>
-
-                {(busca || filtro !== "todos") && (
-                  <div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setBusca("");
-                        setFiltro("todos");
-                      }}
-                      className="px-4 py-2.5 text-sm rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold"
-                    >
-                      Limpar filtros
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <p className="mt-3 text-xs text-gray-600 dark:text-gray-300" aria-live="polite">
-                {listaFiltrada.length} registro{listaFiltrada.length !== 1 ? "s" : ""} encontrado
-                {listaFiltrada.length !== 1 ? "s" : ""}.
-              </p>
-            </div>
-
-            {/* Lista / tabela */}
-            {carregando ? (
-              <div className="rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 shadow-sm p-4">
-                <CarregandoSkeleton linhas={5} />
-              </div>
-            ) : listaFiltrada.length === 0 ? (
-              <div className="rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 shadow-sm p-6">
-                <NadaEncontrado mensagem="Nenhum certificado cadastrado." />
-              </div>
-            ) : (
-              <div
-  className="grid grid-cols-1 gap-4"
-  role="region"
-  aria-live="off"
-  aria-busy={acaoLoading.id != null}
->
-                {listaFiltrada.map((item) => {
-                  const isEmailLoading =
-                    acaoLoading.id === item.id && acaoLoading.tipo === "email";
-                  const isPdfLoading =
-                    acaoLoading.id === item.id && acaoLoading.tipo === "pdf";
-                  const mod = item.modalidade || "participante";
-
-                  return (
-                    <article
-                      key={item.id}
-                      className="overflow-hidden rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 shadow-sm hover:shadow-md transition"
-                      role="group"
-                      aria-label={`Certificado de ${item.nome}`}
-                    >
-                      <div className="h-1.5 bg-gradient-to-r from-amber-500 via-orange-500 to-rose-600" />
-
-                      <div className="p-4 sm:p-5">
-                        <div className="flex items-start gap-3">
-                          <div className="rounded-2xl p-2 bg-rose-100 dark:bg-rose-900/30 shrink-0">
-                            <UserSquare2 className="w-5 h-5 text-rose-700 dark:text-rose-300" />
-                          </div>
-
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-start gap-2 justify-between">
-                              <h3 className="font-black text-base leading-5 text-zinc-900 dark:text-white">
-                                {item.nome}
-                              </h3>
-
-                              <span
-                                className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold shrink-0 ${
-                                  item.enviado
-                                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200"
-                                    : "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200"
-                                }`}
-                              >
-                                {item.enviado ? "Enviado" : "Pendente"}
-                              </span>
-                            </div>
-
-                            <p className="mt-2 text-sm font-medium text-zinc-700 dark:text-zinc-200 leading-5">
-                              {item.curso}
-                            </p>
-
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              <span className="inline-flex items-center rounded-full bg-zinc-100 dark:bg-zinc-700 px-2.5 py-1 text-[11px] font-semibold">
-                                {rotuloModalidade[mod] || mod}
-                              </span>
-
-                              {item.cpf ? (
-                                <span className="inline-flex items-center rounded-full bg-zinc-100 dark:bg-zinc-700 px-2.5 py-1 text-[11px] font-medium text-zinc-600 dark:text-zinc-200">
-                                  CPF/Registro: {item.cpf}
-                                </span>
-                              ) : null}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="mt-4 grid grid-cols-1 gap-3 text-sm">
-                          <div className="rounded-2xl bg-zinc-50 dark:bg-zinc-900/40 p-3">
-                            <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 mb-1">
-                              E-mail
-                            </p>
-                            <p className="break-all font-medium text-zinc-800 dark:text-zinc-100">
-                              {item.email}
-                            </p>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-3">
-                            <div className="rounded-2xl bg-zinc-50 dark:bg-zinc-900/40 p-3">
-                              <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 mb-1">
-                                Carga
-                              </p>
-                              <p className="font-medium text-zinc-800 dark:text-zinc-100">
-                                {formatCarga(item)}
-                              </p>
-                            </div>
-
-                            <div className="rounded-2xl bg-zinc-50 dark:bg-zinc-900/40 p-3">
-                              <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 mb-1">
-                                Período
-                              </p>
-                              <p className="font-medium text-zinc-800 dark:text-zinc-100">
-                                {formatPeriodo(item)}
-                              </p>
-                            </div>
-                          </div>
-
-                          {item.titulo_trabalho ? (
-                            <div className="rounded-2xl bg-zinc-50 dark:bg-zinc-900/40 p-3">
-                              <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 mb-1">
-                                Título do trabalho / oficina
-                              </p>
-                              <p className="font-medium text-zinc-800 dark:text-zinc-100 leading-5">
-                                {item.titulo_trabalho}
-                              </p>
-                            </div>
-                          ) : null}
-                        </div>
-
-                        <div className="mt-5 grid grid-cols-2 gap-3">
-                          <button
-                            type="button"
-                            onClick={() => gerarPDF(item.id)}
-                            disabled={isPdfLoading}
-                            className={`inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-extrabold transition ${
-                              isPdfLoading
-                                ? "bg-blue-100 text-blue-700 opacity-70 cursor-not-allowed dark:bg-blue-900/20 dark:text-blue-300"
-                                : "bg-blue-600 hover:bg-blue-700 text-white"
-                            }`}
-                            aria-label={`Baixar PDF do certificado de ${item.nome}`}
-                            title={`Baixar PDF${
-                              usarAssinatura2 && assinatura2Id
-                                ? " com 2 assinaturas"
-                                : ""
-                            }`}
-                          >
-                            <FileText className="w-4 h-4" />
-                            {isPdfLoading ? "Gerando…" : "PDF"}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => enviarPorEmail(item.id)}
-                            disabled={isEmailLoading}
-                            className={`inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-extrabold transition ${
-                              isEmailLoading
-                                ? "bg-emerald-100 text-emerald-700 opacity-70 cursor-not-allowed dark:bg-emerald-900/20 dark:text-emerald-300"
-                                : "bg-emerald-600 hover:bg-emerald-700 text-white"
-                            }`}
-                            aria-label={`Enviar certificado de ${item.nome} por e-mail`}
-                            title={item.enviado ? "Reenviar e-mail" : "Enviar e-mail"}
-                          >
-                            <Mail className="w-4 h-4" />
-                            {isEmailLoading
-                              ? "Enviando…"
-                              : item.enviado
-                              ? "Reenviar"
-                              : "Enviar"}
-                          </button>
-                        </div>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
             )}
-          </section>
+          />
         </div>
+      ) : null}
+
+      <main
+        id="conteudo"
+        className="mx-auto grid w-full max-w-7xl flex-1 grid-cols-1 gap-6 px-4 py-6 sm:px-6 xl:grid-cols-[430px_minmax(0,1fr)]"
+      >
+        <div>
+          <FormularioCertificado
+            form={form}
+            setForm={setForm}
+            salvando={salvando}
+            onSubmit={cadastrarCertificado}
+            formRef={formRef}
+            usarAssinatura2={usarAssinatura2}
+            setUsarAssinatura2={setUsarAssinatura2}
+            assinatura2Id={assinatura2Id}
+            setAssinatura2Id={setAssinatura2Id}
+            assinaturas={assinaturas}
+            assinaturasCarregando={assinaturasCarregando}
+            assinatura2Nome={assinatura2Nome}
+          />
+        </div>
+
+        <section className="flex min-w-0 flex-col gap-4">
+          <Toolbar
+            busca={busca}
+            setBusca={setBusca}
+            filtroEnvio={filtroEnvio}
+            setFiltroEnvio={setFiltroEnvio}
+            filtroStatus={filtroStatus}
+            setFiltroStatus={setFiltroStatus}
+            buscaRef={buscaRef}
+            onLimpar={limparFiltros}
+          />
+
+          {carregando ? (
+            <section className="grid gap-4" aria-label="Carregando certificados">
+              <CarregandoSkeleton height={180} />
+              <CarregandoSkeleton height={180} />
+              <CarregandoSkeleton height={180} />
+            </section>
+          ) : erro ? (
+            <ErroCarregamento mensagem={erro} onRetry={carregarCertificados} />
+          ) : lista.length === 0 ? (
+            <NadaEncontrado
+              titulo="Nenhum certificado avulso cadastrado"
+              descricao="Cadastre o primeiro certificado no formulário ao lado."
+            />
+          ) : listaFiltrada.length === 0 ? (
+            <NadaEncontrado
+              titulo="Nenhum resultado encontrado"
+              descricao="Altere os filtros ou limpe a busca para visualizar mais certificados."
+            />
+          ) : (
+            <section aria-labelledby="titulo-lista-certificados-avulsos">
+              <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <h2
+                    id="titulo-lista-certificados-avulsos"
+                    className="text-lg font-black text-slate-950 dark:text-white"
+                  >
+                    Certificados cadastrados
+                  </h2>
+
+                  <p className="text-sm text-slate-500 dark:text-zinc-400">
+                    Exibindo {listaFiltrada.length} de {lista.length} registro(s).
+                  </p>
+                </div>
+
+                <Badge tone="amber">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Certificado eletrônico v2.0
+                </Badge>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4">
+                {listaFiltrada.map((item) => (
+                  <CertificadoAvulsoCard
+                    key={item.id}
+                    item={item}
+                    onGerarPdf={gerarPdf}
+                    onEnviarEmail={enviarPorEmail}
+                    acaoLoading={acaoLoading}
+                    usarAssinatura2={usarAssinatura2}
+                    assinatura2Id={assinatura2Id}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+        </section>
       </main>
 
       <Footer />

@@ -1,61 +1,69 @@
-// ✅ src/pages/Login.jsx
-// premium + institucional + QR públicos + PWA + mobile-first + dark/light/system + a11y
-// + login robusto + diagnóstico + redirect pós-login validado
-// + premiumrização estrutural, segurança e UX refinada
+// ✅ frontend/src/pages/Login.jsx — v2.0
+// Plataforma Escola da Saúde
+// Login premium, institucional, mobile-first, acessível, sem sessão legada e com contrato oficial.
 
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { GoogleLogin } from "@react-oauth/google";
 import { toast } from "react-toastify";
 import {
-  LogIn,
+  AlertTriangle,
+  ArrowRight,
+  BadgeCheck,
+  BookOpenCheck,
+  Building2,
+  ClipboardCheck,
+  Copy,
+  ExternalLink,
   Eye,
   EyeOff,
-  User,
-  Lock,
-  AlertTriangle,
-  ShieldCheck,
-  Sparkles,
-  IdCard,
-  QrCode,
-  ExternalLink,
-  Copy,
-  Instagram,
-  Share2,
-  Building2,
-  BookOpenCheck,
   FileText,
-  ClipboardCheck,
-  Smartphone,
   HeartPulse,
-  Landmark,
+  IdCard,
   Info,
-  MonitorSmartphone,
-  BadgeCheck,
-  ArrowRight,
-  Loader2,
+  Instagram,
   KeyRound,
+  Landmark,
+  Loader2,
+  Lock,
+  LogIn,
+  MonitorSmartphone,
+  QrCode,
+  ShieldCheck,
+  Share2,
+  Smartphone,
+  Sparkles,
+  User,
 } from "lucide-react";
 
-import BotaoPrimario from "../components/BotaoPrimario";
-import CarregandoSkeleton from "../components/CarregandoSkeleton";
-import Footer from "../components/Footer";
-import QrSiteEscola from "../components/QrSiteEscola";
-import api, { apiPost } from "../services/api";
+import Footer from "../components/layout/Footer";
+import QrSiteEscola from "../components/institucional/QrSiteEscola";
 
 import useEscolaTheme from "../hooks/useEscolaTheme";
-import ThemeTogglePills from "../components/ThemeTogglePills";
+import {
+  apiAuthLogin,
+  apiAuthGoogle,
+  apiPerfilMe,
+  clearAuthSession,
+  isLoggedIn,
+  persistAuthSession,
+} from "../services/api";
 
-/* ---------------------- constants ---------------------- */
+/* ─────────────────────────────────────────────────────────────
+   Constantes oficiais
+────────────────────────────────────────────────────────────── */
+
 const SITE_URL = "https://escoladasaude.vercel.app";
 const INSTAGRAM_URL =
   "https://www.instagram.com/escoladasaudesms?igsh=Zzd5M3MyazZ0aXRm&utm_source=qr";
 
 const IS_DEV =
-  typeof import.meta !== "undefined" &&
-  Boolean(import.meta.env?.DEV);
+  typeof import.meta !== "undefined" && Boolean(import.meta.env?.DEV);
 
-/* ---------------------- utils/logs ---------------------- */
+/* ─────────────────────────────────────────────────────────────
+   Helpers
+────────────────────────────────────────────────────────────── */
+
 function logDev(...args) {
   if (IS_DEV) console.log("[Login]", ...args);
 }
@@ -68,15 +76,6 @@ function cx(...classes) {
   return classes.filter(Boolean).join(" ");
 }
 
-function getStoredToken() {
-  return (
-    localStorage.getItem("token") ||
-    localStorage.getItem("authToken") ||
-    localStorage.getItem("access_token") ||
-    null
-  );
-}
-
 function sanitizeRedirectPath(raw) {
   const value = String(raw || "").trim();
 
@@ -87,7 +86,6 @@ function sanitizeRedirectPath(raw) {
   const blockedPrefixes = [
     "/login",
     "/cadastro",
-    "/recuperar-senha",
     "/esqueci-senha",
     "/redefinir-senha",
   ];
@@ -99,48 +97,43 @@ function sanitizeRedirectPath(raw) {
   return value;
 }
 
-/* ---------------------- utils CPF ---------------------- */
-function aplicarMascaraCPF(valor) {
-  return String(valor || "")
-    .replace(/\D/g, "")
+function apenasDigitos(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function aplicarMascaraCPF(value) {
+  return apenasDigitos(value)
     .slice(0, 11)
     .replace(/(\d{3})(\d)/, "$1.$2")
     .replace(/(\d{3})(\d)/, "$1.$2")
     .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
 }
 
-function apenasDigitos(c) {
-  return String(c || "").replace(/\D/g, "");
-}
-
 function cpfChecksumValido(cpf) {
-  const s = apenasDigitos(cpf);
-  if (s.length !== 11) return false;
-  if (/^(\d)\1{10}$/.test(s)) return false;
+  const digits = apenasDigitos(cpf);
+
+  if (digits.length !== 11) return false;
+  if (/^(\d)\1{10}$/.test(digits)) return false;
 
   const calc = (arr, len) => {
     let soma = 0;
+
     for (let i = 0; i < len - 1; i += 1) {
       soma += parseInt(arr[i], 10) * (len - i);
     }
+
     const resto = (soma * 10) % 11;
     return resto === 10 ? 0 : resto;
   };
 
-  const d1 = calc(s, 10);
-  const d2 = calc(s, 11);
-  return d1 === parseInt(s[9], 10) && d2 === parseInt(s[10], 10);
+  const d1 = calc(digits, 10);
+  const d2 = calc(digits, 11);
+
+  return d1 === parseInt(digits[9], 10) && d2 === parseInt(digits[10], 10);
 }
 
-function validarCPF(c) {
-  const digits = apenasDigitos(c);
-  if (digits.length !== 11) return false;
-  return cpfChecksumValido(digits);
-}
-
-function maskOkOuFormatar(value) {
-  const digits = apenasDigitos(value);
-  return aplicarMascaraCPF(digits);
+function validarCPF(value) {
+  return cpfChecksumValido(value);
 }
 
 function safeOpen(url) {
@@ -148,12 +141,49 @@ function safeOpen(url) {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
+function getApiErrorMessage(error, fallback) {
+  return (
+    error?.data?.erro ||
+    error?.data?.message ||
+    error?.response?.data?.erro ||
+    error?.response?.data?.message ||
+    error?.message ||
+    fallback
+  );
+}
+
+function getAuthPayload(response) {
+  const payload =
+    response?.data && typeof response.data === "object" ? response.data : response;
+
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  return {
+    token: payload.token,
+    usuario: payload.usuario,
+  };
+}
+
+function usuarioSessaoValido(usuario) {
+  return Boolean(
+    usuario &&
+      typeof usuario === "object" &&
+      Number.isFinite(Number(usuario.id)) &&
+      typeof usuario.perfil === "string" &&
+      usuario.perfil.trim() === usuario.perfil &&
+      usuario.perfil.length > 0
+  );
+}
+
 function useQrSize() {
   const [size, setSize] = useState(() => {
     if (typeof window === "undefined") return 240;
-    const w = window.innerWidth;
-    if (w < 360) return 210;
-    if (w < 768) return 220;
+
+    const width = window.innerWidth;
+    if (width < 360) return 210;
+    if (width < 768) return 220;
     return 240;
   });
 
@@ -161,19 +191,87 @@ function useQrSize() {
     if (typeof window === "undefined") return undefined;
 
     const onResize = () => {
-      const w = window.innerWidth;
-      const next = w < 360 ? 210 : w < 768 ? 220 : 240;
+      const width = window.innerWidth;
+      const next = width < 360 ? 210 : width < 768 ? 220 : 240;
       setSize(next);
     };
 
     window.addEventListener("resize", onResize, { passive: true });
+
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
   return size;
 }
 
-/* ---------------------- ui blocks ---------------------- */
+/* ─────────────────────────────────────────────────────────────
+   Componentes locais
+────────────────────────────────────────────────────────────── */
+
+function SpinnerLocal() {
+  return (
+    <span
+      className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent align-[-2px]"
+      aria-hidden="true"
+    />
+  );
+}
+
+function BotaoLocal({
+  children,
+  variant = "primary",
+  className = "",
+  leftIcon = null,
+  loading = false,
+  disabled = false,
+  ...props
+}) {
+  const base =
+    "inline-flex min-h-[44px] items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-extrabold transition focus:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-60";
+
+  const variants = {
+    primary:
+      "bg-amber-500 text-zinc-950 shadow-lg shadow-amber-900/10 hover:bg-amber-400 focus-visible:ring-amber-500/70",
+    secondary:
+      "border border-slate-200 bg-slate-50 text-slate-800 hover:bg-slate-100 focus-visible:ring-emerald-500/60 dark:border-emerald-600/50 dark:bg-emerald-700/40 dark:text-emerald-100 dark:hover:bg-emerald-700/60",
+  };
+
+  return (
+    <button
+      className={cx(base, variants[variant] || variants.primary, className)}
+      disabled={disabled || loading}
+      {...props}
+    >
+      {loading ? <SpinnerLocal /> : leftIcon}
+      {children}
+    </button>
+  );
+}
+
+function SkeletonLoginGoogle({ mensagem }) {
+  return (
+    <div className="flex w-full max-w-xs items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-600 dark:border-white/10 dark:bg-zinc-900/40 dark:text-zinc-300">
+      <SpinnerLocal />
+      <span>{mensagem}</span>
+    </div>
+  );
+}
+
+function FeaturePill({ children, isDark }) {
+  return (
+    <div
+      className={cx(
+        "rounded-2xl border px-3 py-2 text-xs font-bold",
+        isDark
+          ? "border-white/10 bg-zinc-950/35 text-zinc-200"
+          : "border-slate-200 bg-white text-slate-700 shadow-sm"
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
 function MiniStatLite({ title, value, isDark, icon: Icon }) {
   return (
     <div
@@ -208,7 +306,9 @@ function MiniStatLite({ title, value, isDark, icon: Icon }) {
           <div
             className={cx(
               "rounded-xl p-2",
-              isDark ? "bg-white/5 text-zinc-200" : "bg-slate-100 text-slate-700"
+              isDark
+                ? "bg-white/5 text-zinc-200"
+                : "bg-slate-100 text-slate-700"
             )}
           >
             <Icon className="h-4 w-4" aria-hidden="true" />
@@ -250,14 +350,15 @@ function InstitutionalCard({
       className={cx(
         "overflow-hidden rounded-3xl border transition-colors",
         isDark
-          ? "border-white/10 bg-zinc-900/55"
-          : "border-slate-200 bg-white shadow-sm"
+          ? "border-white/10 bg-white/[0.04] backdrop-blur-xl"
+          : "border-white/10 bg-white/[0.04] backdrop-blur-xl"
       )}
     >
       <div
-        className={`h-1.5 w-full rounded-t-3xl bg-gradient-to-r ${
+        className={cx(
+          "h-1.5 w-full rounded-t-3xl bg-gradient-to-r",
           accentMap[accent] || accentMap.emerald
-        }`}
+        )}
         aria-hidden="true"
       />
 
@@ -283,6 +384,7 @@ function InstitutionalCard({
             >
               {title}
             </h3>
+
             {subtitle ? (
               <p
                 className={cx(
@@ -309,7 +411,15 @@ function InstitutionalCard({
   );
 }
 
-function QrCard({ title, subtitle, icon: Icon, url, qrSize, isDark, accent = "emerald" }) {
+function QrCard({
+  title,
+  subtitle,
+  icon: Icon,
+  url,
+  qrSize,
+  isDark,
+  accent = "emerald",
+}) {
   const bar = {
     emerald: "from-emerald-500/40 via-teal-500/15 to-transparent",
     pink: "from-pink-500/40 via-rose-500/15 to-transparent",
@@ -325,9 +435,10 @@ function QrCard({ title, subtitle, icon: Icon, url, qrSize, isDark, accent = "em
       )}
     >
       <div
-        className={`h-1.5 w-full rounded-full bg-gradient-to-r ${
+        className={cx(
+          "h-1.5 w-full rounded-full bg-gradient-to-r",
           bar[accent] || bar.emerald
-        }`}
+        )}
         aria-hidden="true"
       />
 
@@ -354,7 +465,7 @@ function QrCard({ title, subtitle, icon: Icon, url, qrSize, isDark, accent = "em
           </h3>
           <p
             className={cx(
-              "mt-1 text-[12px] break-words",
+              "mt-1 break-words text-[12px]",
               isDark ? "text-zinc-400" : "text-slate-600"
             )}
           >
@@ -376,7 +487,8 @@ function ActionBtn({ onClick, icon: Icon, children, isDark }) {
       type="button"
       onClick={onClick}
       className={cx(
-        "inline-flex items-center justify-center gap-2 rounded-2xl border px-3 py-2 text-xs font-extrabold transition",
+        "inline-flex min-h-[40px] items-center justify-center gap-2 rounded-2xl border px-3 py-2 text-xs font-extrabold transition",
+        "focus:outline-none focus:ring-2 focus:ring-emerald-500/70",
         isDark
           ? "border-white/10 bg-zinc-900/35 text-zinc-200 hover:bg-white/5"
           : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
@@ -385,21 +497,6 @@ function ActionBtn({ onClick, icon: Icon, children, isDark }) {
       <Icon className="h-4 w-4" aria-hidden="true" />
       {children}
     </button>
-  );
-}
-
-function FeaturePill({ children, isDark }) {
-  return (
-    <div
-      className={cx(
-        "rounded-2xl border px-3 py-2 text-xs font-bold",
-        isDark
-          ? "border-white/10 bg-zinc-950/35 text-zinc-200"
-          : "border-slate-200 bg-white text-slate-700 shadow-sm"
-      )}
-    >
-      {children}
-    </div>
   );
 }
 
@@ -412,9 +509,14 @@ function SessionCheckBanner({ isDark }) {
           ? "border-emerald-500/20 bg-emerald-500/10"
           : "border-emerald-200/40 bg-emerald-500/5"
       )}
+      role="status"
+      aria-live="polite"
     >
       <div className="flex items-center gap-3">
-        <Loader2 className="h-5 w-5 animate-spin text-emerald-600 dark:text-emerald-300" />
+        <Loader2
+          className="h-5 w-5 animate-spin text-emerald-600 dark:text-emerald-300"
+          aria-hidden="true"
+        />
         <div>
           <div className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">
             Verificando sua sessão...
@@ -427,6 +529,10 @@ function SessionCheckBanner({ isDark }) {
     </div>
   );
 }
+
+/* ─────────────────────────────────────────────────────────────
+   Página
+────────────────────────────────────────────────────────────── */
 
 export default function Login() {
   const [cpf, setCpf] = useState("");
@@ -449,26 +555,27 @@ export default function Login() {
   const hasGoogleClient = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID);
   const { isDark } = useEscolaTheme();
 
-  const redirectPath = useMemo(() => {
-    try {
-      const sp = new URLSearchParams(location.search);
-      const raw = sp.get("next") || sp.get("redirect") || "";
-      return sanitizeRedirectPath(raw);
-    } catch {
-      return "/painel";
-    }
-  }, [location.search]);
+const redirectPath = useMemo(() => {
+  try {
+    const params = new URLSearchParams(location.search);
+    const raw = params.get("next") || "";
+    return sanitizeRedirectPath(raw);
+  } catch {
+    return "/painel";
+  }
+}, [location.search]);
 
-  const inputBaseClass = useMemo(
-    () =>
-      cx(
-        "w-full rounded-2xl border py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-500/70",
-        isDark
-          ? "border-white/10 bg-zinc-950/30 text-zinc-100 placeholder:text-zinc-500"
-          : "border-slate-300 bg-white text-slate-900 placeholder:text-slate-400"
-      ),
-    [isDark]
-  );
+ const inputBaseClass = useMemo(
+  () =>
+    cx(
+      "w-full rounded-2xl border py-3 text-sm outline-none transition-all duration-200",
+      "focus:ring-4 focus:ring-emerald-500/20 focus:border-emerald-500",
+      isDark
+        ? "border-white/10 bg-black/30 text-zinc-100 placeholder:text-zinc-500"
+        : "border-slate-300 bg-white/90 text-slate-900 placeholder:text-slate-400 shadow-sm"
+    ),
+  [isDark]
+);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -479,82 +586,75 @@ export default function Login() {
     };
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
+useEffect(() => {
+  let cancelled = false;
 
-    async function validarSessaoExistente() {
-      const token = getStoredToken();
+  async function validarSessaoExistente() {
+    if (!isLoggedIn()) {
+      logDev("sem token oficial salvo; permanece na tela de login");
 
-      if (!token) {
-        logDev("sem token salvo, permanece na tela de login");
-        if (!cancelled && mountedRef.current) {
-          setLoadingSessionCheck(false);
-        }
-        return;
+      if (!cancelled && mountedRef.current) {
+        setLoadingSessionCheck(false);
       }
 
-      logDev("token encontrado no login, validando sessão antes de redirecionar", {
-        pathname: location.pathname,
-        redirectPath,
+      return;
+    }
+
+    logDev("token oficial encontrado; validando sessão em /perfil/me", {
+      pathname: location.pathname,
+      redirectPath,
+    });
+
+    try {
+      const response = await apiPerfilMe({
+        on401: "silent",
+        on403: "silent",
       });
 
-      try {
-        const data = await api.authMe({
-          auth: true,
-          on401: "silent",
-          on403: "silent",
+      const usuarioRecebido =
+        response?.data && typeof response.data === "object"
+          ? response.data
+          : response;
+
+      if (!usuarioSessaoValido(usuarioRecebido)) {
+        throw new Error("Sessão inválida: payload de perfil fora do contrato oficial.");
+      }
+
+      if (!cancelled && mountedRef.current) {
+        logDev("sessão válida no login; redirecionando", {
+          redirectPath,
+          perfil: usuarioRecebido.perfil,
         });
 
-        const usuarioRecebido = data?.usuario || data?.user || null;
+        navigate(redirectPath || "/painel", { replace: true });
+      }
+    } catch (error) {
+      errorDev("sessão salva inválida no login", {
+        message: error?.message,
+        status: error?.status || null,
+      });
 
-        if (!usuarioRecebido) {
-          throw new Error("Sessão inválida: payload sem usuário.");
-        }
-
-        if (!cancelled && mountedRef.current) {
-          logDev("sessão válida no login, redirecionando", {
-            redirectPath,
-            perfil: usuarioRecebido?.perfil,
-          });
-
-          navigate(redirectPath || "/painel", { replace: true });
-          return;
-        }
-      } catch (error) {
-        errorDev("sessão salva inválida no login", {
-          message: error?.message,
-          status: error?.status || error?.response?.status || null,
-        });
-
-        try {
-          api.clearSession?.();
-        } catch {
-          localStorage.removeItem("token");
-          localStorage.removeItem("authToken");
-          localStorage.removeItem("access_token");
-          localStorage.removeItem("usuario");
-          localStorage.removeItem("user");
-        }
-      } finally {
-        if (!cancelled && mountedRef.current) {
-          setLoadingSessionCheck(false);
-        }
+      clearAuthSession();
+    } finally {
+      if (!cancelled && mountedRef.current) {
+        setLoadingSessionCheck(false);
       }
     }
+  }
 
-    if (location.pathname === "/login") {
-      validarSessaoExistente();
-    } else {
-      setLoadingSessionCheck(false);
-    }
+  if (location.pathname === "/login") {
+    validarSessaoExistente();
+  } else {
+    setLoadingSessionCheck(false);
+  }
 
-    return () => {
-      cancelled = true;
-    };
-  }, [navigate, location.pathname, redirectPath]);
+  return () => {
+    cancelled = true;
+  };
+}, [navigate, location.pathname, redirectPath]);
 
   useEffect(() => {
-    const onKey = (e) => {
+    const onKey = (event) => {
       const active = document.activeElement;
       const tag = active?.tagName?.toLowerCase();
 
@@ -562,43 +662,36 @@ export default function Login() {
         return;
       }
 
-      if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        e.preventDefault();
+      if (event.key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
         cpfRef.current?.focus();
       }
     };
 
     window.addEventListener("keydown", onKey);
+
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const persistirSessao = useCallback((payload) => {
-    const { token, usuario } = payload || {};
+ const persistirSessao = useCallback((response) => {
+  const payload = getAuthPayload(response);
 
-    if (!token || !usuario) {
-      throw new Error("Resposta de login inválida.");
-    }
+  if (!payload?.token || !usuarioSessaoValido(payload.usuario)) {
+    throw new Error("Resposta de login fora do contrato oficial.");
+  }
 
-    api.persistSession(token, usuario);
+  persistAuthSession(payload.token, payload.usuario);
 
-    window.dispatchEvent(
-      new CustomEvent("auth:changed", {
-        detail: {
-          authenticated: true,
-          usuario,
-        },
-      })
-    );
-
-    logDev("sessão persistida com sucesso", {
-      usuarioId: usuario?.id || usuario?.usuario_id || null,
-      perfil: usuario?.perfil || null,
-    });
-  }, []);
+  logDev("sessão persistida com sucesso", {
+    usuario_id: payload.usuario.id,
+    perfil: payload.usuario.perfil,
+  });
+}, []);
 
   const redirecionarPosLogin = useCallback(
     (payload) => {
       persistirSessao(payload);
+
       const destino = redirectPath || "/painel";
 
       logDev("redirecionando pós-login", { destino });
@@ -637,89 +730,99 @@ export default function Login() {
     return true;
   }, [cpf, senha]);
 
-  async function handleLogin(e) {
-    e.preventDefault();
-    if (loading || loadingGoogle || loadingSessionCheck) return;
-    if (!validarFormulario()) return;
+async function handleLogin(event) {
+  event.preventDefault();
 
-    setLoading(true);
+  if (loading || loadingGoogle || loadingSessionCheck) return;
+  if (!validarFormulario()) return;
 
-    logDev("iniciando login por CPF", {
-      cpfLength: apenasDigitos(cpf).length,
-      redirectPath,
+  setLoading(true);
+
+  logDev("iniciando login por CPF", {
+    cpf_tamanho: apenasDigitos(cpf).length,
+    redirectPath,
+  });
+
+  try {
+    const response = await apiAuthLogin(
+  {
+    cpf: apenasDigitos(cpf),
+    senha,
+  },
+  {
+    on401: "silent",
+  }
+);
+
+    toast.success("Login realizado com sucesso!");
+    redirecionarPosLogin(response);
+  } catch (error) {
+    const serverMsg = getApiErrorMessage(
+      error,
+      "Não foi possível entrar. Verifique CPF e senha e tente novamente."
+    );
+
+    errorDev("falha no login por CPF", {
+      message: serverMsg,
+      status: error?.status || null,
     });
 
-    try {
-      const payload = await apiPost(
-        "/login",
-        { cpf: apenasDigitos(cpf), senha },
-        { auth: false, on401: "silent" }
-      );
-
-      toast.success("✅ Login realizado com sucesso!");
-      redirecionarPosLogin(payload);
-    } catch (err) {
-      const serverMsg =
-        err?.data?.erro || err?.data?.message || err?.message || "Erro ao fazer login.";
-
-      errorDev("falha no login por CPF", {
-        message: serverMsg,
-        status: err?.status || err?.response?.status || null,
-      });
-
-      setSenha("");
-      setMostrarSenha(false);
-      senhaRef.current?.focus();
-      toast.error(serverMsg);
-    } finally {
-      if (mountedRef.current) {
-        setLoading(false);
-      }
+    setSenha("");
+    setMostrarSenha(false);
+    senhaRef.current?.focus();
+    toast.error(serverMsg);
+  } finally {
+    if (mountedRef.current) {
+      setLoading(false);
     }
   }
+}
 
-  async function handleLoginGoogle(credentialResponse) {
-    if (!credentialResponse?.credential) {
-      toast.error("Credencial do Google ausente.");
-      return;
-    }
-    if (loadingGoogle || loading || loadingSessionCheck) return;
+async function handleLoginGoogle(credentialResponse) {
+  if (!credentialResponse?.credential) {
+    toast.error("Credencial do Google ausente.");
+    return;
+  }
 
-    setLoadingGoogle(true);
+  if (loadingGoogle || loading || loadingSessionCheck) return;
 
-    logDev("iniciando login com Google", {
-      redirectPath,
-      credentialPresent: true,
+  setLoadingGoogle(true);
+
+  logDev("iniciando login com Google", {
+    redirectPath,
+    credencial_presente: true,
+  });
+
+  try {
+    const response = await apiAuthGoogle(
+  {
+    credential: credentialResponse.credential,
+  },
+  {
+    on401: "silent",
+  }
+);
+
+    toast.success("Login com Google realizado com sucesso!");
+    redirecionarPosLogin(response);
+  } catch (error) {
+    const serverMsg = getApiErrorMessage(
+      error,
+      "Não foi possível entrar com Google. Tente novamente ou use CPF e senha."
+    );
+
+    errorDev("falha no login com Google", {
+      message: serverMsg,
+      status: error?.status || null,
     });
 
-    try {
-      const payload = await apiPost(
-        "/auth/google",
-        { credential: credentialResponse.credential },
-        { auth: false, on401: "silent" }
-      );
-
-      toast.success("✅ Login com Google realizado com sucesso!");
-      redirecionarPosLogin(payload);
-    } catch (err) {
-      const serverMsg =
-        err?.data?.erro ||
-        err?.data?.message ||
-        err?.message ||
-        "Erro ao fazer login com Google.";
-
-      errorDev("falha no login com Google", {
-        message: serverMsg,
-        status: err?.status || err?.response?.status || null,
-      });
-
-      toast.error(serverMsg);
-    } finally {
-      if (mountedRef.current) {
-        setLoadingGoogle(false);
-      }
+    toast.error(serverMsg);
+  } finally {
+    if (mountedRef.current) {
+      setLoadingGoogle(false);
     }
   }
+}
 
   const abrirSite = useCallback(() => safeOpen(SITE_URL), []);
   const abrirInstagram = useCallback(() => safeOpen(INSTAGRAM_URL), []);
@@ -727,7 +830,7 @@ export default function Login() {
   const copiarSite = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(SITE_URL);
-      toast.success("🔗 Link da plataforma copiado!");
+      toast.success("Link da plataforma copiado.");
     } catch {
       toast.error("Não foi possível copiar o link.");
     }
@@ -741,12 +844,13 @@ export default function Login() {
           text: "Acesse a plataforma oficial da Escola da Saúde.",
           url: SITE_URL,
         });
-      } else {
-        await navigator.clipboard.writeText(SITE_URL);
-        toast.success("📎 Link copiado para compartilhamento.");
+        return;
       }
+
+      await navigator.clipboard.writeText(SITE_URL);
+      toast.success("Link copiado para compartilhamento.");
     } catch {
-      // noop
+      // cancelamento do compartilhamento não precisa gerar erro
     }
   }, []);
 
@@ -755,13 +859,41 @@ export default function Login() {
   return (
     <>
       <main
-        className={cx(
-          "min-h-screen transition-colors",
-          isDark
-            ? "bg-gradient-to-b from-zinc-950 to-zinc-900 text-zinc-100"
-            : "bg-slate-50 text-slate-900"
-        )}
-      >
+  className={cx(
+    "relative min-h-screen overflow-hidden transition-colors",
+    isDark
+      ? "bg-[#030712] text-zinc-100"
+      : "bg-[#f6f8fb] text-slate-900"
+  )}
+>
+  {/* Glow superior */}
+  <div
+    aria-hidden="true"
+    className={cx(
+      "pointer-events-none absolute inset-0 overflow-hidden",
+      isDark ? "opacity-100" : "opacity-70"
+    )}
+  >
+    <div className="absolute left-[-10%] top-[-10%] h-[28rem] w-[28rem] rounded-full bg-emerald-500/15 blur-3xl" />
+
+    <div className="absolute right-[-8%] top-[10%] h-[26rem] w-[26rem] rounded-full bg-cyan-500/10 blur-3xl" />
+
+    <div className="absolute bottom-[-15%] left-[20%] h-[24rem] w-[24rem] rounded-full bg-sky-500/10 blur-3xl" />
+  </div>
+
+  {/* Grid texture */}
+  <div
+    aria-hidden="true"
+    className={cx(
+      "pointer-events-none absolute inset-0",
+      isDark
+        ? "bg-[linear-gradient(rgba(255,255,255,.025)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.025)_1px,transparent_1px)]"
+        : "bg-[linear-gradient(rgba(15,23,42,.025)_1px,transparent_1px),linear-gradient(90deg,rgba(15,23,42,.025)_1px,transparent_1px)]"
+    )}
+    style={{
+      backgroundSize: "36px 36px",
+    }}
+  />
         <a
           href="#conteudo"
           className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow"
@@ -769,85 +901,83 @@ export default function Login() {
           Pular para o conteúdo
         </a>
 
-        <header className="relative overflow-hidden">
-          <div className="absolute inset-0 bg-gradient-to-br from-emerald-700 via-teal-600 to-sky-700" />
-          {isDark && <div className="absolute inset-0 bg-black/35" />}
+        <header className="relative px-4 pt-4 sm:px-6">
+<div
+  className={cx(
+    "relative mx-auto max-w-7xl overflow-hidden rounded-[2.5rem] border backdrop-blur-xl",
+    "shadow-[0_30px_120px_-40px_rgba(15,23,42,.85)]",
+    isDark
+      ? "border-white/10 bg-white/[0.03]"
+      : "border-white/70 bg-white/20"
+  )}
+>    
+<div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,#10b981_0%,#0f766e_45%,#0369a1_100%)]" />
+    <div
+  aria-hidden="true"
+  className="absolute inset-0 opacity-[0.08]"
+  style={{
+    backgroundImage:
+      "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140' viewBox='0 0 140 140'%3E%3Cg fill='white' fill-opacity='1'%3E%3Ccircle cx='1' cy='1' r='1'/%3E%3C/g%3E%3C/svg%3E\")",
+  }}
+/>
 
-          <div className="absolute -top-24 -left-24 h-72 w-72 rounded-full bg-white/25 blur-3xl" />
-          <div className="absolute -bottom-28 -right-28 h-80 w-80 rounded-full bg-white/20 blur-3xl" />
+    <div
+      className="absolute -left-24 -top-24 h-72 w-72 rounded-full bg-white/20 blur-3xl"
+      aria-hidden="true"
+    />
+    <div
+      className="absolute -bottom-28 -right-28 h-80 w-80 rounded-full bg-white/16 blur-3xl"
+      aria-hidden="true"
+    />
 
-          <div className="relative max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-12">
-            <div className="flex justify-end">
-              <ThemeTogglePills variant="glass" />
-            </div>
+    <div className="relative px-5 py-7 text-center sm:px-8 md:py-8">
+      <div className="flex flex-col items-center gap-4">
+        <div className="inline-flex rounded-[1.75rem] bg-white p-3 shadow-xl ring-1 ring-white/80">
+          <img
+            src="/logo_escola.png"
+            alt="Logotipo da Escola Municipal de Saúde Pública de Santos"
+            className="h-16 w-16 object-contain sm:h-20 sm:w-20"
+            loading="eager"
+          />
+        </div>
 
-            <div className="mt-5 flex flex-col items-center text-center gap-3">
-              <div className="inline-flex items-center gap-2 text-white/90 text-xs font-semibold">
-                <Sparkles className="h-4 w-4" aria-hidden="true" />
-                <span>Portal oficial • acesso público e autenticado</span>
-              </div>
+        <div className="inline-flex items-center gap-2 text-xs font-semibold text-white/90">
+          <Sparkles className="h-4 w-4" aria-hidden="true" />
+          <span>Portal oficial • acesso seguro</span>
+        </div>
 
-              <h1 className="text-2xl md:text-4xl font-extrabold text-white tracking-tight max-w-4xl">
-                Escola Municipal de Saúde Pública de Santos
-              </h1>
+        <h1 className="max-w-6xl whitespace-nowrap text-2xl font-black tracking-[-0.035em] text-white md:text-4xl">
+          Escola Municipal de Saúde Pública de Santos
+        </h1>
 
-              <p className="text-sm md:text-base text-white/90 max-w-3xl leading-relaxed">
-                Plataforma institucional criada em <strong>setembro de 2025</strong> para
-                apoiar ações formativas, acadêmicas e administrativas da Escola da Saúde.
-              </p>
+        <p className="max-w-3xl text-sm leading-relaxed text-white/90 md:text-base">
+          Plataforma institucional para inscrições, presenças, avaliações,
+          certificados e rotinas acadêmico-administrativas da Escola da Saúde.
+        </p>
+      </div>
+    </div>
 
-              <div className="mt-3 flex flex-wrap items-center justify-center gap-2 max-w-3xl">
-                <FeaturePill isDark={false}>Inscrições e eventos</FeaturePill>
-                <FeaturePill isDark={false}>Presenças</FeaturePill>
-                <FeaturePill isDark={false}>Avaliações</FeaturePill>
-                <FeaturePill isDark={false}>Certificados</FeaturePill>
-                <FeaturePill isDark={false}>Submissões e chamadas</FeaturePill>
-              </div>
+    <div className="h-px w-full bg-white/25" aria-hidden="true" />
+  </div>
+</header>
 
-              <div className="mt-2 sm:hidden">
-                <div className="rounded-3xl bg-white/20 backdrop-blur p-4 ring-1 ring-white/25 shadow-lg inline-flex">
-                  <img
-                    src="/logo_escola.png"
-                    alt="Logotipo da Escola Municipal de Saúde Pública de Santos"
-                    className="h-16 w-16 object-contain"
-                    loading="lazy"
-                  />
-                </div>
-              </div>
-
-              <p className="text-[11px] text-white/80">
-                Dica: pressione <strong>/</strong> para focar o CPF.
-              </p>
-            </div>
-
-            <div className="absolute left-4 sm:left-6 top-1/2 -translate-y-1/2 hidden sm:flex">
-              <div className="rounded-3xl bg-white/25 backdrop-blur p-5 ring-1 ring-white/30 shadow-lg">
-                <img
-                  src="/logo_escola.png"
-                  alt="Logotipo da Escola Municipal de Saúde Pública de Santos"
-                  className="h-20 w-20 md:h-24 md:w-24 object-contain"
-                  loading="lazy"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="h-px w-full bg-white/25" aria-hidden="true" />
-        </header>
-
-        <section id="conteudo" className="mx-auto max-w-7xl px-4 sm:px-6 py-8 md:py-12">
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-            <aside className="xl:col-span-5 space-y-6">
+        <section
+          id="conteudo"
+          className="mx-auto max-w-7xl px-4 py-8 sm:px-6 md:py-12"
+        >
+          <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-12">
+            <aside className="space-y-6 xl:col-span-5">
               <InstitutionalCard
                 icon={ShieldCheck}
                 title="Acesso seguro"
-                subtitle="Autenticação institucional da plataforma"
+                subtitle="Entre com CPF e senha"
                 isDark={isDark}
                 accent="emerald"
               >
                 <p>
-                  Entre com <strong>CPF e senha</strong> ou utilize o{" "}
-                  <strong>login com Google</strong> quando disponível.
+                  Use seu <strong>CPF</strong> e sua <strong>senha</strong> para
+                  acessar o painel. Quando disponível, também é possível entrar
+                  com sua conta Google vinculada.
                 </p>
 
                 <div className="grid grid-cols-2 gap-3 pt-1">
@@ -859,13 +989,13 @@ export default function Login() {
                   />
                   <MiniStatLite
                     title="Perfis"
-                    value="RBAC"
+                    value="Acesso por perfil"
                     isDark={isDark}
                     icon={Landmark}
                   />
                   <MiniStatLite
                     title="Mobile"
-                    value="PWA Ready"
+                    value="Responsivo"
                     isDark={isDark}
                     icon={Smartphone}
                   />
@@ -877,75 +1007,70 @@ export default function Login() {
                   />
                 </div>
 
-                <div className="pt-1 text-xs space-y-2">
-                  <p>• Navegação por teclado e alto contraste.</p>
-                  <p>• Não compartilhe sua senha com terceiros.</p>
-                  <p>• Use o link de recuperação caso não lembre sua senha.</p>
+                <div className="space-y-2 pt-1 text-xs">
+                  <p>• Não compartilhe sua senha.</p>
+                  <p>• Use a recuperação caso tenha esquecido o acesso.</p>
+                  <p>• O CPF pode ser digitado com ou sem pontuação.</p>
                 </div>
               </InstitutionalCard>
 
               <InstitutionalCard
                 icon={Building2}
-                title="O que é a Escola da Saúde?"
+                title="Escola da Saúde"
                 subtitle="Educação permanente e articulação ensino-serviço"
                 isDark={isDark}
                 accent="emerald"
               >
                 <p>
-                  A <strong>Escola Municipal de Saúde Pública de Santos</strong> atua no
-                  fortalecimento da qualificação dos trabalhadores da saúde e na organização
-                  de estratégias de aprendizagem voltadas ao SUS.
+                  A <strong>Escola Municipal de Saúde Pública de Santos</strong>{" "}
+                  apoia ações formativas, acompanhamento institucional,
+                  articulação ensino-serviço e rotinas acadêmicas da rede.
                 </p>
 
                 <p>
-                  Entre suas finalidades estão a condução e o apoio à{" "}
-                  <strong>Educação Permanente em Saúde</strong>, a articulação dos{" "}
-                  <strong>estágios das instituições de ensino nas unidades de saúde</strong>{" "}
-                  por meio do <strong>COAPES</strong>, o acompanhamento dos{" "}
-                  <strong>Programas de Residência</strong> e o suporte às ações relacionadas
-                  ao <strong>Comitê de Ética em Pesquisa</strong>.
+                  A plataforma organiza os principais fluxos digitais em um
+                  ambiente único, com mais clareza para usuários, equipes e
+                  gestores.
                 </p>
               </InstitutionalCard>
 
               <InstitutionalCard
                 icon={BookOpenCheck}
-                title="O que você encontra na plataforma?"
-                subtitle="Ambiente digital oficial da Escola da Saúde"
+                title="O que você encontra"
+                subtitle="Ambiente digital oficial"
                 isDark={isDark}
                 accent="sky"
               >
                 <p>
-                  Em um único ambiente, é possível realizar{" "}
-                  <strong>inscrições em cursos e eventos</strong>, acompanhar{" "}
-                  <strong>presenças</strong>, responder <strong>avaliações</strong>, emitir e
-                  baixar <strong>certificados</strong> e acessar outros módulos institucionais.
+                  Acesse inscrições, presenças, avaliações, certificados,
+                  submissões, chamadas e demais funcionalidades conforme seu
+                  perfil de acesso.
                 </p>
 
                 <p>
-                  A disponibilidade de funcionalidades pode variar conforme o{" "}
-                  <strong>perfil de acesso</strong>, incluindo rotinas ligadas a{" "}
-                  <strong>submissões, chamadas, votações e acompanhamento institucional</strong>.
+                  O objetivo é reduzir retrabalho, melhorar rastreabilidade e
+                  facilitar a experiência do usuário.
                 </p>
               </InstitutionalCard>
             </aside>
 
-            <div className="xl:col-span-7 space-y-6">
+            <div className="space-y-6 xl:col-span-7">
               <div
                 className={cx(
                   "rounded-3xl border p-6 transition-colors md:p-8",
                   isDark
-                    ? "border-white/10 bg-zinc-900/50 shadow-none"
-                    : "border-slate-200 bg-white shadow-xl"
+                    ? "border-white/10 bg-white/[0.04] shadow-[0_20px_80px_-40px_rgba(0,0,0,.85)] backdrop-blur-xl"
+                    : "border-white/80 bg-white/85 shadow-[0_20px_60px_-30px_rgba(15,23,42,.18)] backdrop-blur-xl"
                 )}
               >
                 <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
+                  <div className="flex min-w-0 items-center gap-3">
                     <div
                       className={cx(
-                        "h-12 w-12 rounded-2xl flex items-center justify-center border overflow-hidden",
+                        "flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl border",
                         isDark
-                          ? "bg-emerald-500/10 border-white/10"
-                          : "bg-emerald-50 border-emerald-100"
+                          ? "border-white/10 bg-emerald-500/10"
+                          : "border-emerald-100 bg-emerald-50"
                       )}
                       aria-hidden="true"
                     >
@@ -958,7 +1083,7 @@ export default function Login() {
                     </div>
 
                     <div className="min-w-0">
-                      <h2 className="text-lg md:text-xl font-extrabold">
+                      <h2 className="text-lg font-extrabold md:text-xl">
                         Acesse sua conta
                       </h2>
                       <p
@@ -967,14 +1092,14 @@ export default function Login() {
                           isDark ? "text-zinc-300" : "text-slate-500"
                         )}
                       >
-                        CPF + senha ou Google, com acesso rápido ao seu painel.
+                        CPF + senha, com validação segura da sessão.
                       </p>
                     </div>
                   </div>
 
                   <span
                     className={cx(
-                      "hidden sm:inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-bold",
+                      "hidden items-center gap-2 rounded-full border px-3 py-1 text-xs font-bold sm:inline-flex",
                       isDark
                         ? "border-white/10 bg-zinc-950/40 text-zinc-200"
                         : "border-slate-200 bg-slate-50 text-slate-700"
@@ -993,13 +1118,14 @@ export default function Login() {
                     className="mt-6 space-y-4"
                     aria-label="Formulário de Login"
                     aria-busy={loading || loadingGoogle ? "true" : "false"}
+                    noValidate
                   >
                     <div>
                       <label htmlFor="cpf" className="block text-sm font-semibold">
                         CPF
                       </label>
 
-                      <div className="mt-2 relative">
+                      <div className="relative mt-2">
                         <span
                           className={cx(
                             "absolute left-3 top-1/2 -translate-y-1/2",
@@ -1015,18 +1141,20 @@ export default function Login() {
                           ref={cpfRef}
                           type="text"
                           value={cpf}
-                          onChange={(e) => {
-                            setCpf(maskOkOuFormatar(e.target.value));
+                          onChange={(event) => {
+                            setCpf(aplicarMascaraCPF(event.target.value));
                             if (erroCpf) setErroCpf("");
                           }}
-                          onPaste={(e) => {
-                            e.preventDefault();
-                            const text = (e.clipboardData.getData("text") || "").trim();
-                            setCpf(maskOkOuFormatar(text));
+                          onPaste={(event) => {
+                            event.preventDefault();
+                            const text = event.clipboardData.getData("text") || "";
+                            setCpf(aplicarMascaraCPF(text));
                             if (erroCpf) setErroCpf("");
                           }}
                           onBlur={() => {
-                            if (cpf && !validarCPF(cpf)) setErroCpf("CPF inválido.");
+                            if (cpf && !validarCPF(cpf)) {
+                              setErroCpf("CPF inválido.");
+                            }
                           }}
                           placeholder="000.000.000-00"
                           maxLength={14}
@@ -1037,7 +1165,9 @@ export default function Login() {
                           className={cx(
                             inputBaseClass,
                             "pl-11 pr-4",
-                            erroCpf ? "ring-2 ring-red-500/60 border-red-500/60" : ""
+                            erroCpf
+                              ? "border-red-500/60 ring-2 ring-red-500/60"
+                              : ""
                           )}
                           aria-invalid={!!erroCpf}
                           aria-describedby={erroCpf ? "erro-cpf" : "dica-cpf"}
@@ -1048,7 +1178,7 @@ export default function Login() {
                         {erroCpf ? (
                           <p
                             id="erro-cpf"
-                            className="text-red-500 dark:text-red-300 text-xs mt-1"
+                            className="mt-1 text-xs text-red-500 dark:text-red-300"
                             role="alert"
                           >
                             {erroCpf}
@@ -1072,7 +1202,7 @@ export default function Login() {
                         Senha
                       </label>
 
-                      <div className="mt-2 relative">
+                      <div className="relative mt-2">
                         <span
                           className={cx(
                             "absolute left-3 top-1/2 -translate-y-1/2",
@@ -1088,22 +1218,30 @@ export default function Login() {
                           ref={senhaRef}
                           type={mostrarSenha ? "text" : "password"}
                           value={senha}
-                          onChange={(e) => {
-                            setSenha(e.target.value);
+                          onChange={(event) => {
+                            setSenha(event.target.value);
                             if (erroSenha) setErroSenha("");
                           }}
-                          onKeyUp={(e) => setCapsLockOn(e.getModifierState?.("CapsLock"))}
-                          onKeyDown={(e) => setCapsLockOn(e.getModifierState?.("CapsLock"))}
+                          onKeyUp={(event) =>
+                            setCapsLockOn(event.getModifierState?.("CapsLock"))
+                          }
+                          onKeyDown={(event) =>
+                            setCapsLockOn(event.getModifierState?.("CapsLock"))
+                          }
                           placeholder="Digite sua senha"
                           autoComplete="current-password"
                           disabled={loading || loadingGoogle}
                           className={cx(
                             inputBaseClass,
                             "pl-11 pr-12",
-                            erroSenha ? "ring-2 ring-red-500/60 border-red-500/60" : ""
+                            erroSenha
+                              ? "border-red-500/60 ring-2 ring-red-500/60"
+                              : ""
                           )}
                           aria-invalid={!!erroSenha}
-                          aria-describedby={(erroSenha || capsLockOn) ? "senha-feedback" : undefined}
+                          aria-describedby={
+                            erroSenha || capsLockOn ? "senha-feedback" : undefined
+                          }
                         />
 
                         <button
@@ -1128,9 +1266,16 @@ export default function Login() {
                         </button>
                       </div>
 
-                      <div id="senha-feedback" className="min-h-[1.25rem]" aria-live="polite">
+                      <div
+                        id="senha-feedback"
+                        className="min-h-[1.25rem]"
+                        aria-live="polite"
+                      >
                         {erroSenha ? (
-                          <p className="text-red-500 dark:text-red-300 text-xs mt-1" role="alert">
+                          <p
+                            className="mt-1 text-xs text-red-500 dark:text-red-300"
+                            role="alert"
+                          >
                             {erroSenha}
                           </p>
                         ) : null}
@@ -1138,7 +1283,7 @@ export default function Login() {
                         {capsLockOn && !erroSenha ? (
                           <p
                             className={cx(
-                              "mt-1 text-[11px] flex items-center gap-1",
+                              "mt-1 flex items-center gap-1 text-[11px]",
                               isDark ? "text-amber-300" : "text-amber-700"
                             )}
                             role="status"
@@ -1149,17 +1294,19 @@ export default function Login() {
                         ) : null}
                       </div>
 
-                      <div className="mt-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs">
+                      <div className="mt-2 flex flex-col gap-2 text-xs sm:flex-row sm:items-center sm:justify-between">
                         <button
                           type="button"
-                          onClick={() => navigate("/recuperar-senha")}
+                          onClick={() => navigate("/esqueci-senha")}
                           className={cx(
-                            "w-full sm:w-auto font-semibold hover:underline rounded-xl px-3 py-2 inline-flex items-center justify-center gap-2",
+                            "inline-flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2 font-semibold hover:underline sm:w-auto",
                             "focus:outline-none focus:ring-2 focus:ring-emerald-500/70",
-                            isDark ? "text-sky-300 hover:bg-white/5" : "text-sky-700"
+                            isDark
+                              ? "text-sky-300 hover:bg-white/5"
+                              : "text-sky-700"
                           )}
                         >
-                          <KeyRound className="h-4 w-4" />
+                          <KeyRound className="h-4 w-4" aria-hidden="true" />
                           Esqueci minha senha
                         </button>
 
@@ -1167,7 +1314,7 @@ export default function Login() {
                           type="button"
                           onClick={() => navigate("/cadastro")}
                           className={cx(
-                            "w-full sm:w-auto font-extrabold hover:underline rounded-xl px-3 py-2",
+                            "w-full rounded-xl px-3 py-2 font-extrabold hover:underline sm:w-auto",
                             "focus:outline-none focus:ring-2 focus:ring-emerald-500/70",
                             isDark
                               ? "text-emerald-300 hover:bg-white/5"
@@ -1179,17 +1326,16 @@ export default function Login() {
                       </div>
                     </div>
 
-                    <BotaoPrimario
+                    <BotaoLocal
                       type="submit"
-                      className="w-full flex justify-center items-center gap-2"
+                      className="w-full"
                       aria-label="Entrar na plataforma"
                       disabled={loading || loadingGoogle}
                       loading={loading}
-                      cor="amareloOuro"
-                      leftIcon={<LogIn size={16} />}
+                      leftIcon={<LogIn size={16} aria-hidden="true" />}
                     >
                       {loading ? "Entrando..." : "Entrar"}
-                    </BotaoPrimario>
+                    </BotaoLocal>
 
                     <div className="pt-2">
                       <div
@@ -1201,11 +1347,11 @@ export default function Login() {
                         ou
                       </div>
 
-                      <div className="flex justify-center mt-3">
+                      <div className="mt-3 flex justify-center">
                         {loadingGoogle ? (
-                          <CarregandoSkeleton mensagem="Fazendo login com Google..." />
+                          <SkeletonLoginGoogle mensagem="Fazendo login com Google..." />
                         ) : hasGoogleClient ? (
-                          <div className="scale-90 max-w-xs w-full flex justify-center">
+                          <div className="flex w-full max-w-xs justify-center scale-90">
                             <GoogleLogin
                               onSuccess={handleLoginGoogle}
                               onError={() => toast.error("Erro no login com Google.")}
@@ -1220,7 +1366,7 @@ export default function Login() {
                         ) : (
                           <small
                             className={cx(
-                              "text-center block",
+                              "block text-center",
                               isDark ? "text-zinc-400" : "text-slate-500"
                             )}
                           >
@@ -1232,7 +1378,7 @@ export default function Login() {
                       {redirectPath ? (
                         <p
                           className={cx(
-                            "mt-3 text-[11px] text-center",
+                            "mt-3 text-center text-[11px]",
                             isDark ? "text-zinc-400" : "text-slate-500"
                           )}
                         >
@@ -1244,13 +1390,13 @@ export default function Login() {
 
                     <p
                       className={cx(
-                        "pt-2 text-[11px] text-center",
+                        "pt-2 text-center text-[11px]",
                         isDark ? "text-zinc-400" : "text-slate-500"
                       )}
                     >
-                      Ao continuar, você concorda com o uso dos seus dados para fins de
-                      controle de eventos, presença e certificação, conforme diretrizes
-                      institucionais.
+                      Ao continuar, você concorda com o uso dos seus dados para
+                      fins de controle de eventos, presença, avaliação e
+                      certificação.
                     </p>
 
                     <div className="sr-only" aria-live="polite">
@@ -1261,7 +1407,7 @@ export default function Login() {
               </div>
 
               <section aria-label="Links oficiais">
-                <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-4">
+                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                   <div>
                     <h2
                       className={cx(
@@ -1277,7 +1423,8 @@ export default function Login() {
                         isDark ? "text-zinc-400" : "text-slate-600"
                       )}
                     >
-                      Acesse a plataforma e o Instagram oficial da Escola da Saúde.
+                      Acesse a plataforma e o Instagram oficial da Escola da
+                      Saúde.
                     </p>
                   </div>
 
@@ -1288,7 +1435,11 @@ export default function Login() {
                     <ActionBtn onClick={copiarSite} icon={Copy} isDark={isDark}>
                       Copiar link
                     </ActionBtn>
-                    <ActionBtn onClick={abrirInstagram} icon={Instagram} isDark={isDark}>
+                    <ActionBtn
+                      onClick={abrirInstagram}
+                      icon={Instagram}
+                      isDark={isDark}
+                    >
                       Instagram
                     </ActionBtn>
                     <ActionBtn onClick={compartilhar} icon={Share2} isDark={isDark}>
@@ -1297,7 +1448,7 @@ export default function Login() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
                   <QrCard
                     title="Plataforma da Escola"
                     subtitle="escoladasaude.vercel.app"
@@ -1321,8 +1472,11 @@ export default function Login() {
             </div>
           </div>
 
-          <section className="mt-10 space-y-6" aria-label="Informações públicas da plataforma">
-            <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
+          <section
+            className="mt-10 space-y-6"
+            aria-label="Informações públicas da plataforma"
+          >
+            <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
               <div>
                 <h2
                   className={cx(
@@ -1330,7 +1484,7 @@ export default function Login() {
                     isDark ? "text-zinc-100" : "text-slate-900"
                   )}
                 >
-                  Informações úteis antes de entrar
+                  Informações úteis
                 </h2>
                 <p
                   className={cx(
@@ -1338,8 +1492,8 @@ export default function Login() {
                     isDark ? "text-zinc-400" : "text-slate-600"
                   )}
                 >
-                  Saiba como a plataforma pode ajudar, como instalá-la como aplicativo e quais
-                  benefícios ela oferece ao usuário.
+                  Entenda a finalidade da plataforma e como instalá-la como
+                  aplicativo.
                 </p>
               </div>
 
@@ -1349,7 +1503,7 @@ export default function Login() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
               <InstitutionalCard
                 icon={ClipboardCheck}
                 title="Benefícios para o usuário"
@@ -1358,15 +1512,20 @@ export default function Login() {
                 accent="amber"
               >
                 <p>
-                  A centralização das informações facilita o acompanhamento da vida acadêmica
-                  e formativa do usuário, reduz retrabalho e amplia a transparência sobre
-                  inscrições, pendências, presenças e certificações.
+                  A centralização das informações facilita o acompanhamento de
+                  inscrições, pendências, presenças e certificados.
                 </p>
 
                 <div className="grid grid-cols-1 gap-2 pt-1">
-                  <FeaturePill isDark={isDark}>✔ Mais autonomia no acompanhamento</FeaturePill>
-                  <FeaturePill isDark={isDark}>✔ Menos retrabalho e mais organização</FeaturePill>
-                  <FeaturePill isDark={isDark}>✔ Acesso rápido a documentos e rotinas</FeaturePill>
+                  <FeaturePill isDark={isDark}>
+                    ✔ Mais autonomia no acompanhamento
+                  </FeaturePill>
+                  <FeaturePill isDark={isDark}>
+                    ✔ Menos retrabalho e mais organização
+                  </FeaturePill>
+                  <FeaturePill isDark={isDark}>
+                    ✔ Acesso rápido a documentos e rotinas
+                  </FeaturePill>
                 </div>
               </InstitutionalCard>
 
@@ -1378,28 +1537,26 @@ export default function Login() {
                 accent="violet"
               >
                 <p>
-                  A plataforma foi criada para reunir em um único ambiente digital os fluxos
-                  acadêmicos e administrativos da Escola da Saúde, tornando os processos mais
-                  claros, organizados e acessíveis.
+                  A plataforma reúne em um único ambiente digital fluxos
+                  acadêmicos e administrativos da Escola da Saúde.
                 </p>
 
                 <p>
-                  Isso fortalece a comunicação com os usuários e amplia a eficiência no
-                  acompanhamento das ações formativas da instituição.
+                  Isso fortalece a comunicação com os usuários e melhora a
+                  eficiência no acompanhamento das ações formativas.
                 </p>
               </InstitutionalCard>
 
               <InstitutionalCard
                 icon={MonitorSmartphone}
-                title="Instale como aplicativo (PWA)"
+                title="Instale como aplicativo"
                 subtitle="Mais rápido, prático e fácil de acessar"
                 isDark={isDark}
                 accent="emerald"
               >
                 <p>
-                  A plataforma pode ser instalada como um aplicativo em dispositivos
-                  compatíveis, sem precisar de loja, com acesso mais rápido e experiência mais
-                  fluida no dia a dia.
+                  Em dispositivos compatíveis, a plataforma pode ser instalada
+                  como aplicativo, sem necessidade de loja.
                 </p>
 
                 <div className="grid grid-cols-2 gap-2 pt-1">
@@ -1418,46 +1575,67 @@ export default function Login() {
               isDark={isDark}
               accent="rose"
             >
-              <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
                 <div className="space-y-3">
                   <div className="flex items-center gap-2 font-extrabold">
                     <span>🍎</span>
-                    <span>iPhone / iPad (Safari)</span>
+                    <span>iPhone / iPad</span>
                   </div>
-                  <ul className="list-disc ml-5 space-y-1 text-sm">
-                    <li>Acesse <strong>{SITE_URL}</strong></li>
-                    <li>Toque em <strong>Compartilhar</strong></li>
-                    <li>Selecione <strong>Adicionar à Tela de Início</strong></li>
-                    <li>Confirme em <strong>Adicionar</strong></li>
+                  <ul className="ml-5 list-disc space-y-1 text-sm">
+                    <li>
+                      Acesse <strong>{SITE_URL}</strong> no Safari.
+                    </li>
+                    <li>
+                      Toque em <strong>Compartilhar</strong>.
+                    </li>
+                    <li>
+                      Selecione <strong>Adicionar à Tela de Início</strong>.
+                    </li>
+                    <li>
+                      Confirme em <strong>Adicionar</strong>.
+                    </li>
                   </ul>
                 </div>
 
                 <div className="space-y-3">
                   <div className="flex items-center gap-2 font-extrabold">
                     <span>📱</span>
-                    <span>Android (Chrome)</span>
+                    <span>Android</span>
                   </div>
-                  <ul className="list-disc ml-5 space-y-1 text-sm">
-                    <li>Acesse <strong>{SITE_URL}</strong></li>
-                    <li>Toque no menu <strong>⋮</strong></li>
+                  <ul className="ml-5 list-disc space-y-1 text-sm">
+                    <li>
+                      Acesse <strong>{SITE_URL}</strong> no Chrome.
+                    </li>
+                    <li>
+                      Toque no menu <strong>⋮</strong>.
+                    </li>
                     <li>
                       Escolha <strong>Instalar app</strong> ou{" "}
-                      <strong>Adicionar à tela inicial</strong>
+                      <strong>Adicionar à tela inicial</strong>.
                     </li>
-                    <li>Confirme em <strong>Instalar</strong></li>
+                    <li>
+                      Confirme em <strong>Instalar</strong>.
+                    </li>
                   </ul>
                 </div>
 
                 <div className="space-y-3">
                   <div className="flex items-center gap-2 font-extrabold">
                     <span>💻</span>
-                    <span>Computador (Chrome / Edge)</span>
+                    <span>Computador</span>
                   </div>
-                  <ul className="list-disc ml-5 space-y-1 text-sm">
-                    <li>Acesse <strong>{SITE_URL}</strong></li>
-                    <li>Clique no ícone <strong>Instalar</strong> na barra de endereço</li>
-                    <li>Confirme em <strong>Instalar</strong></li>
-                    <li>Abra a plataforma em janela própria</li>
+                  <ul className="ml-5 list-disc space-y-1 text-sm">
+                    <li>
+                      Acesse <strong>{SITE_URL}</strong> no Chrome ou Edge.
+                    </li>
+                    <li>
+                      Clique no ícone <strong>Instalar</strong> na barra de
+                      endereço.
+                    </li>
+                    <li>
+                      Confirme em <strong>Instalar</strong>.
+                    </li>
+                    <li>Abra a plataforma em janela própria.</li>
                   </ul>
                 </div>
               </div>
@@ -1474,19 +1652,31 @@ export default function Login() {
                   <div
                     className={cx(
                       "rounded-xl p-2",
-                      isDark ? "bg-white/5 text-zinc-100" : "bg-white text-slate-700"
+                      isDark
+                        ? "bg-white/5 text-zinc-100"
+                        : "bg-white text-slate-700"
                     )}
                   >
                     <BadgeCheck className="h-5 w-5" aria-hidden="true" />
                   </div>
 
                   <div className="space-y-2 text-sm">
-                    <p className="font-extrabold">Como saber se instalou corretamente?</p>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      <FeaturePill isDark={isDark}>✔ O ícone aparece na tela inicial</FeaturePill>
-                      <FeaturePill isDark={isDark}>✔ A plataforma abre em janela própria</FeaturePill>
-                      <FeaturePill isDark={isDark}>✔ A navegação fica mais direta</FeaturePill>
-                      <FeaturePill isDark={isDark}>✔ O acesso fica mais prático no dia a dia</FeaturePill>
+                    <p className="font-extrabold">
+                      Como saber se instalou corretamente?
+                    </p>
+                    <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                      <FeaturePill isDark={isDark}>
+                        ✔ O ícone aparece na tela inicial
+                      </FeaturePill>
+                      <FeaturePill isDark={isDark}>
+                        ✔ A plataforma abre em janela própria
+                      </FeaturePill>
+                      <FeaturePill isDark={isDark}>
+                        ✔ A navegação fica mais direta
+                      </FeaturePill>
+                      <FeaturePill isDark={isDark}>
+                        ✔ O acesso fica mais prático
+                      </FeaturePill>
                     </div>
                   </div>
                 </div>
@@ -1507,18 +1697,15 @@ export default function Login() {
                   <div
                     className={cx(
                       "inline-flex items-center gap-2 rounded-2xl px-3 py-2 font-bold",
-                      isDark ? "bg-sky-500/10 text-sky-300" : "bg-sky-50 text-sky-700"
+                      isDark
+                        ? "bg-sky-500/10 text-sky-300"
+                        : "bg-sky-50 text-sky-700"
                     )}
                   >
                     <ArrowRight className="h-4 w-4" aria-hidden="true" />
                     iPhone: Compartilhar → Tela de Início
                   </div>
                 </div>
-
-                <p className="mt-4 text-sm">
-                  📍 Em breve, após a finalização do processo de publicação, o aplicativo
-                  também estará disponível na <strong>Google Play Store</strong>.
-                </p>
               </div>
             </InstitutionalCard>
           </section>

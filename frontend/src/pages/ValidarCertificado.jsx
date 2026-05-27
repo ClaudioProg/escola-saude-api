@@ -1,380 +1,742 @@
-// ✅ src/pages/ValidarCertificado.jsx — premium/robusto
-import { useSearchParams } from "react-router-dom";
-import { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { motion } from "framer-motion";
-import { toast } from "react-toastify";
+// ✅ frontend/src/pages/ValidarCertificado.jsx — v2.0
+// Atualizado em: 15/05/2026
+// Plataforma Escola da Saúde
 
-import BotaoPrimario from "../components/BotaoPrimario";
-import NadaEncontrado from "../components/NadaEncontrado";
-import CarregandoSkeleton from "../components/CarregandoSkeleton";
-import { formatarDataHoraBrasileira } from "../utils/dateTime";
-import { apiGet } from "../services/api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useSearchParams } from "react-router-dom";
+import { motion, useReducedMotion } from "framer-motion";
+import {
+  AlertTriangle,
+  Award,
+  CheckCircle2,
+  Copy,
+  ExternalLink,
+  FileCheck2,
+  Hash,
+  Loader2,
+  Printer,
+  QrCode,
+  RefreshCw,
+  ShieldCheck,
+  XCircle,
+} from "lucide-react";
 
-import PageHeader from "../components/PageHeader";
-import Footer from "../components/Footer";
+import Footer from "../components/layout/Footer";
+import Botao from "../components/ui/Botao";
+import CarregandoSkeleton from "../components/ui/CarregandoSkeleton";
+import ErroCarregamento from "../components/ui/ErroCarregamento";
+import NadaEncontrado from "../components/ui/NadaEncontrado";
+import { notifyError, notifyInfo, notifySuccess } from "../components/ui/AppToast";
+import { api } from "../services/api";
+import { formatDateTimeBr } from "../utils/dateTime";
 
-import { Award, CheckCircle2, XCircle, Clock, Copy, Printer } from "lucide-react";
+/* ─────────────────────────────────────────────
+ * Contrato oficial esperado no api.js
+ * ─────────────────────────────────────────────
+ *
+ * api.certificado.validarPublico(codigo_validacao)
+ *
+ * Rota pública esperada:
+ * GET /api/certificado/validar/:codigo_validacao
+ *
+ * Regra v2.0:
+ * - Validação pública somente por codigo_validacao.
+ * - Sem usuario_id/evento_id/turma_id na validação pública.
+ * - Sem chamada para presença.
+ * - Sem expor CPF integral.
+ */
 
-/* Utils locais */
-function maskCPF(cpf) {
-  if (!cpf) return "—";
-  const s = String(cpf).replace(/\D/g, "");
-  if (s.length !== 11) return cpf;
-  return `${s.slice(0, 3)}.${s.slice(3, 6)}.${s.slice(6, 9)}-${s.slice(9)}`.replace(
-    /\d(?=\d{4})/g,
-    "•"
+/* ─────────────────────────────────────────────
+ * Helpers
+ * ───────────────────────────────────────────── */
+
+function cx(...parts) {
+  return parts.filter(Boolean).join(" ");
+}
+
+function extrairData(response) {
+  return response?.data ?? response ?? null;
+}
+
+function obterMensagemErro(error, fallback) {
+  return (
+    error?.response?.data?.message ||
+    error?.data?.message ||
+    error?.message ||
+    fallback
   );
 }
 
-function safeUnwrapApi(res) {
-  // aceita tanto objeto direto quanto { data }
-  if (res && typeof res === "object" && "data" in res) return res.data;
-  return res;
+function validarFacade(nome, fn) {
+  if (typeof fn !== "function") {
+    throw new Error(`Facade ausente no api.js: ${nome}.`);
+  }
 }
 
-function useQueryParams() {
-  const [sp] = useSearchParams();
+function normalizarCodigo(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "");
+}
 
-  const getAny = useCallback(
-    (...keys) => {
-      for (const k of keys) {
-        const v = (sp.get(k) || "").trim();
-        if (v) return v;
-      }
-      return "";
-    },
-    [sp]
+function codigoValidoFormato(value) {
+  return /^[A-Z0-9-]{8,140}$/.test(String(value || ""));
+}
+
+function safeText(value, fallback = "—") {
+  const text = String(value || "").trim();
+  return text || fallback;
+}
+
+function getCodigoFromPayload(payload) {
+  return (
+    payload?.codigo_validacao ||
+    payload?.certificado?.codigo_validacao ||
+    payload?.data?.codigo_validacao ||
+    ""
   );
+}
 
-  let usuario = getAny("usuario", "usuario_id", "user_id", "u");
-  let evento = getAny("evento", "evento_id", "event_id", "e");
+function getCertificado(payload) {
+  if (!payload || typeof payload !== "object") return null;
 
-  // Se veio ?codigo=<url codificada>, extrai de lá
-  if (!usuario || !evento) {
-    const codigo = sp.get("codigo") || sp.get("c") || "";
-    if (codigo) {
-      try {
-        const raw = decodeURIComponent(codigo);
-        const u = new URL(raw);
-        usuario =
-          usuario ||
-          u.searchParams.get("usuario") ||
-          u.searchParams.get("usuario_id") ||
-          u.searchParams.get("u") ||
-          "";
-        evento =
-          evento ||
-          u.searchParams.get("evento") ||
-          u.searchParams.get("evento_id") ||
-          u.searchParams.get("e") ||
-          "";
-      } catch {
-        /* ignora */
-      }
+  if (payload.certificado && typeof payload.certificado === "object") {
+    return payload.certificado;
+  }
+
+  return payload;
+}
+
+function getStatusCertificado(certificado) {
+  return String(certificado?.status || "").trim().toLowerCase();
+}
+
+function certificadoEstaValido(certificado, payload) {
+  if (payload?.valido === true) return true;
+  if (payload?.validado === true) return true;
+
+  const status = getStatusCertificado(certificado);
+
+  return status === "emitido" || status === "enviado";
+}
+
+function statusVisual(certificado, payload) {
+  if (!certificado && payload?.ok === false) {
+    return {
+      estado: "invalido",
+      label: "Não localizado",
+      titulo: "Certificado não localizado",
+      mensagem:
+        payload?.message ||
+        "Não encontramos certificado válido para o código informado.",
+    };
+  }
+
+  const status = getStatusCertificado(certificado);
+
+  if (certificadoEstaValido(certificado, payload)) {
+    return {
+      estado: "valido",
+      label: "Válido",
+      titulo: "Certificado validado com sucesso",
+      mensagem:
+        "Este certificado foi localizado na base oficial da Escola Municipal de Saúde Pública.",
+    };
+  }
+
+  if (status === "cancelado") {
+    return {
+      estado: "cancelado",
+      label: "Cancelado",
+      titulo: "Certificado cancelado",
+      mensagem:
+        "Este certificado foi localizado, mas está cancelado administrativamente.",
+    };
+  }
+
+  if (status === "anulado") {
+    return {
+      estado: "anulado",
+      label: "Anulado",
+      titulo: "Certificado anulado",
+      mensagem:
+        "Este certificado foi localizado, mas foi anulado administrativamente.",
+    };
+  }
+
+  if (status === "substituido") {
+    return {
+      estado: "substituido",
+      label: "Substituído",
+      titulo: "Certificado substituído",
+      mensagem:
+        "Este certificado foi substituído por uma nova emissão documental.",
+    };
+  }
+
+  if (status === "erro_emissao") {
+    return {
+      estado: "erro",
+      label: "Erro técnico",
+      titulo: "Certificado com erro de emissão",
+      mensagem:
+        "Este certificado possui registro de erro técnico e não deve ser usado como documento válido.",
+    };
+  }
+
+  return {
+    estado: "invalido",
+    label: "Inválido",
+    titulo: "Certificado inválido",
+    mensagem:
+      "O certificado não está em situação válida para autenticação pública.",
+  };
+}
+
+function toneByEstado(estado) {
+  if (estado === "valido") {
+    return {
+      icon: CheckCircle2,
+      text: "text-emerald-700 dark:text-emerald-300",
+      badge:
+        "bg-emerald-50 text-emerald-800 ring-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-100 dark:ring-emerald-800/60",
+      panel:
+        "bg-emerald-50 ring-emerald-100 dark:bg-emerald-950/30 dark:ring-emerald-800/60",
+      bar: "from-emerald-700 via-emerald-500 to-cyan-500",
+    };
+  }
+
+  if (estado === "cancelado" || estado === "anulado" || estado === "substituido") {
+    return {
+      icon: AlertTriangle,
+      text: "text-amber-700 dark:text-amber-300",
+      badge:
+        "bg-amber-50 text-amber-800 ring-amber-100 dark:bg-amber-950/40 dark:text-amber-100 dark:ring-amber-800/60",
+      panel:
+        "bg-amber-50 ring-amber-100 dark:bg-amber-950/30 dark:ring-amber-800/60",
+      bar: "from-amber-700 via-orange-500 to-rose-500",
+    };
+  }
+
+  return {
+    icon: XCircle,
+    text: "text-rose-700 dark:text-rose-300",
+    badge:
+      "bg-rose-50 text-rose-800 ring-rose-100 dark:bg-rose-950/40 dark:text-rose-100 dark:ring-rose-800/60",
+    panel:
+      "bg-rose-50 ring-rose-100 dark:bg-rose-950/30 dark:ring-rose-800/60",
+    bar: "from-rose-800 via-rose-600 to-orange-500",
+  };
+}
+
+function getCampo(certificado, ...keys) {
+  for (const key of keys) {
+    const value = certificado?.[key];
+
+    if (value !== null && value !== undefined && String(value).trim() !== "") {
+      return value;
     }
   }
 
-  const isDebug = (sp.get("debug") || "") === "1";
-  return { usuario, evento, isDebug, sp };
+  return "";
 }
 
+function formatarCarga(value) {
+  if (value === null || value === undefined || value === "") return "—";
+
+  const number = Number(value);
+
+  if (Number.isFinite(number) && number > 0) {
+    return `${number} h`;
+  }
+
+  return String(value);
+}
+
+function getPeriodo(certificado) {
+  const periodo = getCampo(certificado, "periodo");
+
+  if (periodo) return periodo;
+
+  const inicio = getCampo(certificado, "data_inicio");
+  const fim = getCampo(certificado, "data_fim");
+
+  if (inicio && fim) return `${inicio} a ${fim}`;
+  if (inicio) return String(inicio);
+
+  return "—";
+}
+
+/* ─────────────────────────────────────────────
+ * Componentes locais
+ * ───────────────────────────────────────────── */
+
+function Badge({ tone, children }) {
+  return (
+    <span
+      className={cx(
+        "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-black ring-1",
+        tone
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function InfoItem({ label, value, mono = false, full = false }) {
+  if (!value || value === "—") return null;
+
+  return (
+    <div
+      className={cx(
+        "rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200 dark:bg-zinc-950 dark:ring-zinc-800",
+        full && "sm:col-span-2"
+      )}
+    >
+      <dt className="text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-zinc-400">
+        {label}
+      </dt>
+      <dd
+        className={cx(
+          "mt-1 break-words text-sm font-bold text-slate-900 dark:text-zinc-100",
+          mono && "font-mono text-xs"
+        )}
+      >
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+function HeroValidacao({ codigo }) {
+  return (
+    <header className="relative overflow-hidden bg-gradient-to-br from-slate-950 via-emerald-950 to-cyan-900 text-white print:bg-white print:text-black">
+      <div className="absolute inset-0 opacity-30 print:hidden">
+        <div className="absolute -left-24 -top-24 h-72 w-72 rounded-full bg-emerald-400 blur-3xl" />
+        <div className="absolute right-0 top-8 h-72 w-72 rounded-full bg-cyan-500 blur-3xl" />
+        <div className="absolute bottom-0 left-1/2 h-64 w-64 -translate-x-1/2 rounded-full bg-amber-500 blur-3xl" />
+      </div>
+
+      <a
+        href="#conteudo"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-xl focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:font-bold focus:text-slate-950"
+      >
+        Ir para o conteúdo
+      </a>
+
+      <div className="relative mx-auto max-w-5xl px-4 py-7 sm:px-6 sm:py-9 print:px-0 print:py-4">
+        <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-black ring-1 ring-white/20 backdrop-blur print:bg-white print:text-black print:ring-slate-300">
+          <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+          Validação pública EMSP-SMS
+        </div>
+
+        <h1 className="mt-4 text-2xl font-black tracking-tight sm:text-4xl">
+          Validar certificado
+        </h1>
+
+        <p className="mt-3 max-w-2xl text-sm text-white/85 sm:text-base print:text-slate-700">
+          Consulte a autenticidade de certificados eletrônicos emitidos pela
+          Escola Municipal de Saúde Pública da Secretaria Municipal de Saúde.
+        </p>
+
+        {codigo ? (
+          <div className="mt-5 rounded-3xl bg-white/10 p-4 text-sm text-white/85 ring-1 ring-white/15 backdrop-blur print:bg-slate-50 print:text-slate-800 print:ring-slate-200">
+            <div className="flex items-start gap-3">
+              <Hash className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+              <p className="break-all">
+                Código consultado: <strong>{codigo}</strong>
+              </p>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </header>
+  );
+}
+
+function ResultadoValidacao({
+  statusInfo,
+  certificado,
+  codigo,
+  dataHora,
+  linkValidacao,
+  onCopiar,
+  onRevalidar,
+  loading,
+}) {
+  const visual = toneByEstado(statusInfo.estado);
+  const Icon = visual.icon;
+
+  const numero = getCampo(certificado, "numero_certificado", "numero");
+  const codigoValidacao =
+    getCodigoFromPayload(certificado) || getCampo(certificado, "codigo_validacao") || codigo;
+
+  const nome = getCampo(certificado, "nome", "participante", "usuario_nome");
+  const identificador = getCampo(
+    certificado,
+    "identificador_mascarado",
+    "cpf_mascarado",
+    "documento_mascarado"
+  );
+  const evento = getCampo(
+    certificado,
+    "evento_titulo",
+    "evento",
+    "curso",
+    "titulo"
+  );
+  const turma = getCampo(certificado, "turma_nome", "nome_turma");
+  const tipo = getCampo(certificado, "tipo", "modalidade");
+  const carga = getCampo(certificado, "carga_horaria");
+  const periodo = getPeriodo(certificado);
+  const emitidoEm = getCampo(
+    certificado,
+    "gerado_em",
+    "emitido_em",
+    "data_emissao"
+  );
+  const hashPdf = getCampo(certificado, "hash_pdf");
+  const hashDados = getCampo(certificado, "hash_dados");
+
+  return (
+    <motion.section
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22 }}
+      className="overflow-hidden rounded-[1.75rem] bg-white shadow-sm ring-1 ring-slate-200 dark:bg-zinc-900 dark:ring-zinc-800 print:rounded-none print:shadow-none print:ring-slate-300"
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      <div className={cx("h-2 bg-gradient-to-r", visual.bar)} aria-hidden="true" />
+
+      <div className="p-5 sm:p-7">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <Badge tone={visual.badge}>
+              <Icon className="h-4 w-4" aria-hidden="true" />
+              {statusInfo.label}
+            </Badge>
+
+            <h2 className={cx("mt-4 text-2xl font-black", visual.text)}>
+              {statusInfo.titulo}
+            </h2>
+
+            <p className="mt-2 max-w-2xl text-sm text-slate-600 dark:text-zinc-300">
+              {statusInfo.mensagem}
+            </p>
+          </div>
+
+          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-3xl bg-slate-50 ring-1 ring-slate-200 dark:bg-zinc-950 dark:ring-zinc-800 print:hidden">
+            <QrCode className="h-7 w-7 text-slate-700 dark:text-zinc-200" />
+          </div>
+        </div>
+
+        {certificado ? (
+          <dl className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <InfoItem label="Certificado nº" value={numero || "—"} mono />
+            <InfoItem label="Código de validação" value={codigoValidacao} mono />
+            <InfoItem label="Participante" value={nome} />
+            <InfoItem label="Identificador" value={identificador} />
+            <InfoItem label="Evento/curso" value={evento} full />
+            <InfoItem label="Turma" value={turma} />
+            <InfoItem label="Tipo/modalidade" value={tipo} />
+            <InfoItem label="Período" value={periodo} />
+            <InfoItem label="Carga horária" value={formatarCarga(carga)} />
+            <InfoItem label="Emitido em" value={emitidoEm} />
+            <InfoItem label="Status documental" value={getStatusCertificado(certificado) || "—"} />
+            <InfoItem label="Hash do PDF" value={hashPdf} mono full />
+            <InfoItem label="Hash dos dados" value={hashDados} mono full />
+          </dl>
+        ) : (
+          <div className={cx("mt-6 rounded-3xl p-4 ring-1", visual.panel)}>
+            <NadaEncontrado
+              titulo="Código não validado"
+              descricao="Confira se o código de validação foi digitado exatamente como aparece no certificado."
+            />
+          </div>
+        )}
+
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center print:hidden">
+          <Botao type="button" variant="primary" onClick={() => window.print()}>
+            <span className="inline-flex items-center gap-2">
+              <Printer className="h-4 w-4" aria-hidden="true" />
+              Imprimir
+            </span>
+          </Botao>
+
+          <Botao type="button" variant="secondary" onClick={onCopiar}>
+            <span className="inline-flex items-center gap-2">
+              <Copy className="h-4 w-4" aria-hidden="true" />
+              Copiar link
+            </span>
+          </Botao>
+
+          <Botao type="button" variant="secondary" onClick={onRevalidar} disabled={loading}>
+            <span className="inline-flex items-center gap-2">
+              {loading ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <RefreshCw className="h-4 w-4" aria-hidden="true" />
+              )}
+              Validar novamente
+            </span>
+          </Botao>
+        </div>
+
+        <div className="mt-6 rounded-3xl bg-slate-50 p-4 text-xs text-slate-600 ring-1 ring-slate-200 dark:bg-zinc-950 dark:text-zinc-300 dark:ring-zinc-800 print:bg-white">
+          <p className="font-black text-slate-950 dark:text-white">
+            Validação pública — Escola Municipal de Saúde Pública / SMS
+          </p>
+          <p className="mt-1 break-all">
+            Link de validação:{" "}
+            <a
+              href={linkValidacao}
+              className="font-bold text-emerald-700 underline underline-offset-2 dark:text-emerald-300"
+            >
+              {linkValidacao}
+            </a>
+          </p>
+          {dataHora ? (
+            <p className="mt-1">
+              Verificação realizada em: <strong>{dataHora}</strong>
+            </p>
+          ) : null}
+        </div>
+      </div>
+    </motion.section>
+  );
+}
+
+/* ─────────────────────────────────────────────
+ * Página principal
+ * ───────────────────────────────────────────── */
+
 export default function ValidarCertificado() {
-  const { usuario, evento, isDebug, sp } = useQueryParams();
+  const reduceMotion = useReducedMotion();
+  const params = useParams();
+  const [searchParams] = useSearchParams();
+
+  const codigo = useMemo(() => {
+    return normalizarCodigo(
+      params?.codigo_validacao || searchParams.get("codigo_validacao") || ""
+    );
+  }, [params?.codigo_validacao, searchParams]);
+
+  const [status, setStatus] = useState("idle");
+  const [erro, setErro] = useState("");
+  const [payload, setPayload] = useState(null);
+  const [dataHora, setDataHora] = useState("");
+
+  const liveRef = useRef(null);
   const mountedRef = useRef(true);
 
-  const [mensagem, setMensagem] = useState("");
-  const [detalhe, setDetalhe] = useState("");
-  const [status, setStatus] = useState("loading"); // loading | sucesso | pendente | erro
-  const [dataHora, setDataHora] = useState("");
-  const [meta, setMeta] = useState(null); // { nome, cpf, evento_titulo, carga_horaria, periodo, hash, ... }
+  const linkValidacao = useMemo(() => {
+    if (typeof window === "undefined") return "";
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
+    if (!codigo) return window.location.href;
+
+    return `${window.location.origin}/validar-certificado/${encodeURIComponent(codigo)}`;
+  }, [codigo]);
+
+  const certificado = useMemo(() => {
+    return getCertificado(payload);
+  }, [payload]);
+
+  const statusInfo = useMemo(() => {
+    return statusVisual(certificado, payload);
+  }, [certificado, payload]);
+
+  const setLive = useCallback((message) => {
+    if (liveRef.current) liveRef.current.textContent = message;
   }, []);
 
-  const safeSet = (fn) => {
-    if (mountedRef.current) fn();
-  };
-
-  // link atual (para copiar)
-  const linkValidacao = useMemo(() => {
-    const url = new URL(window.location.href);
-    if (usuario) url.searchParams.set("usuario", usuario);
-    if (evento) url.searchParams.set("evento", evento);
-    return url.toString();
-  }, [usuario, evento]);
-
-  const copiarLink = async () => {
-    try {
-      await navigator.clipboard.writeText(linkValidacao);
-      toast.success("Link copiado ✅");
-      setDetalhe("Link copiado para a área de transferência.");
-    } catch {
-      // fallback menos invasivo
-      toast.info("Copie manualmente o link exibido no endereço do navegador.");
-      setDetalhe("Não foi possível copiar automaticamente (permissão do navegador).");
-    }
-  };
-
-  useEffect(() => {
-    safeSet(() => setDataHora(formatarDataHoraBrasileira(new Date())));
-
-    if (!usuario || !evento) {
-      safeSet(() => {
-        setMensagem("❌ Link inválido. Parâmetros ausentes.");
-        setStatus("erro");
-      });
+  const validarCertificado = useCallback(async () => {
+    if (!codigo) {
+      setStatus("erro");
+      setErro("Código de validação não informado.");
+      setPayload(null);
+      setLive("Código de validação não informado.");
       return;
     }
 
-    safeSet(() => {
+    if (!codigoValidoFormato(codigo)) {
+      setStatus("erro");
+      setErro("Código de validação em formato inválido.");
+      setPayload(null);
+      setLive("Código de validação inválido.");
+      return;
+    }
+
+    try {
+      validarFacade("api.certificado.validarPublico", api?.certificado?.validarPublico);
+
       setStatus("loading");
-      setMensagem("Verificando…");
-      setDetalhe("");
-    });
+      setErro("");
+      setPayload(null);
+      setDataHora(formatDateTimeBr(new Date()));
+      setLive("Validando certificado.");
 
-    (async () => {
-      try {
-        if (isDebug) console.log("[ValidarCertificado] /presencas/validar", { evento, usuario });
+      const response = await api.certificado.validarPublico(codigo);
+      const data = extrairData(response);
 
-        const res = await apiGet("presencas/validar", {
-          on403: "silent",
-          query: { evento, usuario },
-        });
+      if (!mountedRef.current) return;
 
-        const data = safeUnwrapApi(res);
+      setPayload(data);
+      setStatus("done");
+      setLive("Validação concluída.");
+    } catch (error) {
+      console.error("[ValidarCertificado] erro:", error);
 
-        const metaData = {
-          nome: data?.nome ?? data?.aluno ?? data?.participante ?? "",
-          cpf: data?.cpf ?? data?.documento ?? "",
-          evento_titulo: data?.evento_titulo ?? data?.evento ?? "",
-          carga_horaria: data?.carga_horaria ?? data?.cargaHoraria ?? "",
-          periodo: data?.periodo ?? data?.data ?? "",
-          hash: data?.hash ?? data?.codigo ?? sp.get("codigo") ?? sp.get("c") ?? "",
-        };
+      if (!mountedRef.current) return;
 
-        safeSet(() => setMeta(metaData));
+      const message = obterMensagemErro(
+        error,
+        "Não foi possível validar o certificado. Confira o código e tente novamente."
+      );
 
-        const presente =
-          data?.presente ??
-          data?.ok ??
-          (typeof data?.status === "string" && data.status.toLowerCase() === "ok");
+      setErro(message);
+      setPayload(null);
+      setStatus("erro");
+      setDataHora(formatDateTimeBr(new Date()));
+      setLive("Erro ao validar certificado.");
+    }
+  }, [codigo, setLive]);
 
-        if (presente) {
-          safeSet(() => {
-            setMensagem("✅ Certificado validado com sucesso!");
-            setStatus("sucesso");
-          });
-        } else {
-          safeSet(() => {
-            setMensagem("⚠️ Certificado encontrado, mas presença ainda não registrada para este evento.");
-            setStatus("pendente");
-          });
-        }
-      } catch (e) {
-        if (isDebug) {
-          console.error("[ValidarCertificado] erro:", e);
-          safeSet(() =>
-            setDetalhe(
-              (e?.data?.erro || e?.message || String(e)) +
-                " — verifique conexão, CORS e disponibilidade do endpoint."
-            )
-          );
-        }
+  useEffect(() => {
+    mountedRef.current = true;
+    document.title = "Validar Certificado | Escola da Saúde";
 
-        safeSet(() => {
-          setMensagem("❌ Erro ao validar. Tente novamente mais tarde.");
-          setStatus("erro");
-        });
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [usuario, evento, isDebug]);
+    validarCertificado();
 
-  const tone = {
-    sucesso: "text-green-700 dark:text-green-400",
-    erro: "text-red-600 dark:text-red-400",
-    pendente: "text-yellow-700 dark:text-yellow-400",
-    loading: "text-gray-800 dark:text-gray-200",
-  }[status];
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [validarCertificado]);
 
-  const badge = {
-    sucesso: (
-      <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
-        <CheckCircle2 className="w-4 h-4" /> Validado
-      </span>
-    ),
-    pendente: (
-      <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
-        <Clock className="w-4 h-4" /> Pendente
-      </span>
-    ),
-    erro: (
-      <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300">
-        <XCircle className="w-4 h-4" /> Inválido
-      </span>
-    ),
-    loading: (
-      <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold bg-slate-100 text-slate-800 dark:bg-zinc-800 dark:text-zinc-200">
-        Verificando…
-      </span>
-    ),
-  }[status];
+  const copiarLink = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(linkValidacao);
+      notifySuccess("Link de validação copiado.");
+      setLive("Link de validação copiado.");
+    } catch {
+      notifyInfo("Copie manualmente o link exibido no navegador.");
+      setLive("Não foi possível copiar automaticamente.");
+    }
+  }, [linkValidacao, setLive]);
 
-  const cardVariants = {
-    hidden: { opacity: 0, y: 24 },
-    visible: { opacity: 1, y: 0, transition: { duration: 0.45 } },
-  };
-
-  const renderMetaBox = (mode = "normal") => {
-    if (!meta) return null;
-
-    const showHash = !!meta?.hash;
-    const showAny =
-      meta?.nome || meta?.cpf || meta?.evento_titulo || meta?.periodo || meta?.carga_horaria || showHash;
-
-    if (!showAny) return null;
-
-    return (
-      <div
-        className={[
-          "rounded-xl border border-black/5 dark:border-white/10 p-4 sm:p-5",
-          mode === "print"
-            ? "bg-white"
-            : "bg-zinc-50/70 dark:bg-zinc-800/60",
-        ].join(" ")}
-      >
-        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-          {meta?.nome ? (
-            <div>
-              <dt className="text-slate-500 dark:text-slate-400">Participante</dt>
-              <dd className="font-medium">{meta.nome}</dd>
-            </div>
-          ) : null}
-
-          {meta?.cpf ? (
-            <div>
-              <dt className="text-slate-500 dark:text-slate-400">CPF</dt>
-              <dd className="font-medium">{maskCPF(meta.cpf)}</dd>
-            </div>
-          ) : null}
-
-          {meta?.evento_titulo ? (
-            <div className="sm:col-span-2">
-              <dt className="text-slate-500 dark:text-slate-400">Evento</dt>
-              <dd className="font-medium">{meta.evento_titulo}</dd>
-            </div>
-          ) : null}
-
-          {meta?.periodo ? (
-            <div>
-              <dt className="text-slate-500 dark:text-slate-400">Período</dt>
-              <dd className="font-medium">{meta.periodo}</dd>
-            </div>
-          ) : null}
-
-          {meta?.carga_horaria ? (
-            <div>
-              <dt className="text-slate-500 dark:text-slate-400">Carga horária</dt>
-              <dd className="font-medium">{meta.carga_horaria} h</dd>
-            </div>
-          ) : null}
-
-          {showHash ? (
-            <div className="sm:col-span-2">
-              <dt className="text-slate-500 dark:text-slate-400">Cód. verificação</dt>
-              <dd className="font-mono text-xs sm:text-sm mt-0.5 break-all">{meta.hash}</dd>
-            </div>
-          ) : null}
-        </dl>
-      </div>
-    );
-  };
+  const loading = status === "loading";
 
   return (
-    <div className="flex flex-col min-h-screen bg-zinc-50 dark:bg-neutral-900 text-black dark:text-white">
-      {/* 🟨 Faixa de título (certificados = dourado) */}
-      <PageHeader title="Validar Certificado" icon={Award} variant="dourado" />
+    <div className="flex min-h-dvh flex-col bg-slate-50 text-slate-950 dark:bg-zinc-950 dark:text-white print:bg-white print:text-black">
+      <HeroValidacao codigo={codigo} />
 
-      <main id="conteudo" role="main" className="flex-1">
-        <section
-          aria-label="Validação de Certificado"
-          aria-live="polite"
-          aria-atomic="true"
-          className="min-h-[60vh] flex items-center justify-center px-4 py-10 print:p-0 print:min-h-0"
+      <p ref={liveRef} className="sr-only" aria-live="polite" />
+
+      {loading ? (
+        <div
+          className="sticky top-0 z-50 h-1 w-full bg-emerald-100 dark:bg-emerald-950 print:hidden"
+          role="progressbar"
+          aria-label="Validando certificado"
         >
-          <motion.div
-            initial="hidden"
-            animate="visible"
-            variants={cardVariants}
-            className="w-full max-w-2xl bg-white dark:bg-zinc-900 shadow-lg rounded-2xl p-6 sm:p-8 print:shadow-none print:bg-white"
-          >
-            <p
-              className={`text-lg sm:text-xl font-semibold mb-4 text-center transition-colors ${tone}`}
-              role={status === "erro" ? "alert" : "status"}
-            >
-              {mensagem}
-            </p>
-
-            <div className="flex justify-center mb-6">{badge}</div>
-
-            {isDebug && detalhe && (
-              <p className="text-xs sm:text-sm text-slate-500 mb-4 break-words">{detalhe}</p>
+          <div
+            className={cx(
+              "h-full w-1/3 bg-emerald-700",
+              reduceMotion ? "" : "animate-pulse"
             )}
+          />
+        </div>
+      ) : null}
 
-            {status === "loading" && <CarregandoSkeleton height="120px" />}
+      <main
+        id="conteudo"
+        className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-5 px-4 py-6 sm:px-6 print:px-0"
+      >
+        {loading ? (
+          <section className="rounded-[1.75rem] bg-white p-6 shadow-sm ring-1 ring-slate-200 dark:bg-zinc-900 dark:ring-zinc-800">
+            <div className="flex items-center gap-3 text-sm font-bold text-slate-600 dark:text-zinc-300">
+              <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
+              Validando certificado...
+            </div>
 
-            {/* Meta sempre que possível (sucesso E pendente) */}
-            {(status === "sucesso" || status === "pendente") && (
-              <div className="mt-1">{renderMetaBox()}</div>
-            )}
+            <div className="mt-5 space-y-3">
+              <CarregandoSkeleton height={70} />
+              <CarregandoSkeleton height={140} />
+              <CarregandoSkeleton height={90} />
+            </div>
+          </section>
+        ) : status === "erro" ? (
+          <section className="overflow-hidden rounded-[1.75rem] bg-white shadow-sm ring-1 ring-slate-200 dark:bg-zinc-900 dark:ring-zinc-800">
+            <div className="h-2 bg-gradient-to-r from-rose-800 via-rose-600 to-orange-500" />
 
-            {(status === "pendente" || status === "erro") && (
-              <div className="mt-4">
-                <NadaEncontrado
-                  mensagem={mensagem}
-                  sugestao="Verifique os dados do certificado ou tente novamente mais tarde."
-                />
+            <div className="p-5 sm:p-7">
+              <Badge tone={toneByEstado("invalido").badge}>
+                <XCircle className="h-4 w-4" aria-hidden="true" />
+                Inválido
+              </Badge>
+
+              <h2 className="mt-4 text-2xl font-black text-rose-700 dark:text-rose-300">
+                Não foi possível validar o certificado
+              </h2>
+
+              <ErroCarregamento
+                mensagem={erro || "Código inválido ou certificado não localizado."}
+                onRetry={validarCertificado}
+              />
+
+              <div className="mt-5 rounded-3xl bg-slate-50 p-4 text-sm text-slate-600 ring-1 ring-slate-200 dark:bg-zinc-950 dark:text-zinc-300 dark:ring-zinc-800">
+                <p className="font-black text-slate-950 dark:text-white">
+                  Conferência necessária
+                </p>
+                <p className="mt-1">
+                  Verifique se o código de validação foi informado exatamente
+                  como aparece no certificado, incluindo hífens.
+                </p>
               </div>
-            )}
+            </div>
+          </section>
+        ) : (
+          <ResultadoValidacao
+            statusInfo={statusInfo}
+            certificado={certificado}
+            codigo={codigo}
+            dataHora={dataHora}
+            linkValidacao={linkValidacao}
+            onCopiar={copiarLink}
+            onRevalidar={validarCertificado}
+            loading={loading}
+          />
+        )}
 
-            <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3 print:hidden">
-              <BotaoPrimario type="button" onClick={() => window.print()} aria-label="Imprimir esta página">
-                <Printer className="w-4 h-4 mr-2" />
-                Imprimir
-              </BotaoPrimario>
+        <section className="rounded-[1.5rem] bg-white p-4 text-sm text-slate-600 shadow-sm ring-1 ring-slate-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-800 print:hidden">
+          <div className="flex items-start gap-3">
+            <FileCheck2
+              className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700 dark:text-emerald-300"
+              aria-hidden="true"
+            />
 
-              {usuario && evento && (
-                <button
-                  type="button"
-                  onClick={copiarLink}
-                  className="inline-flex items-center gap-2 rounded-xl px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500"
-                  aria-label="Copiar link de validação"
+            <div>
+              <p className="font-black text-slate-950 dark:text-white">
+                Como funciona a validação?
+              </p>
+              <p className="mt-1">
+                Cada certificado emitido possui número oficial, código único de
+                validação, QR Code e hashes documentais. A consulta pública não
+                exige login e não expõe CPF integral.
+              </p>
+
+              {codigo ? (
+                <a
+                  href={linkValidacao}
+                  className="mt-3 inline-flex items-center gap-2 text-xs font-black text-emerald-700 underline underline-offset-2 dark:text-emerald-300"
                 >
-                  <Copy className="w-4 h-4" />
-                  Copiar link
-                </button>
-              )}
+                  Abrir link público
+                  <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                </a>
+              ) : null}
             </div>
-
-            {/* Selo para impressão (fica bonito e oficial) */}
-            <div className="hidden print:block mt-10">
-              <div className="border-t pt-6">
-                <p className="text-sm font-semibold">Validação pública — Escola Municipal de Saúde de Santos</p>
-                <p className="text-xs mt-1">Link de validação: {linkValidacao}</p>
-                {renderMetaBox("print")}
-              </div>
-            </div>
-
-            {dataHora && (
-              <footer className="mt-8 text-xs sm:text-sm text-slate-500 text-center print:mt-14 print:text-black w-full">
-                Verificação realizada em: <strong>{dataHora}</strong>
-              </footer>
-            )}
-          </motion.div>
+          </div>
         </section>
       </main>
 

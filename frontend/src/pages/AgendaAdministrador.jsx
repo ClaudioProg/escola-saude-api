@@ -1,32 +1,305 @@
-// ✅ src/pages/AgendaAdministrador.jsx — mobile-first, cores novas, a11y e perf
+// ✅ frontend/src/pages/AgendaAdministrador.jsx — v2.0
+// Atualizado em: 14/05/2026
+// Plataforma Escola da Saúde
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Calendar from "react-calendar";
 import "react-calendar/dist/Calendar.css";
+
 import {
+  compareAsc,
+  endOfMonth,
   format,
   isAfter,
   isBefore,
   isWithinInterval,
-  compareAsc,
   startOfMonth,
-  endOfMonth,
 } from "date-fns";
-import { CalendarDays, Download, MapPin, Clock } from "lucide-react";
 import { ptBR } from "date-fns/locale";
-import { toast } from "react-toastify";
-import Skeleton from "react-loading-skeleton";
+
+import {
+  CalendarDays,
+  Clock,
+  Download,
+  MapPin,
+  RefreshCw,
+  Search,
+  X,
+} from "lucide-react";
+
 import { useReducedMotion } from "framer-motion";
 
-import Footer from "../components/Footer";
-import EventoDetalheModal from "../components/EventoDetalheModal";
-import LegendaEventos from "../components/LegendaEventos";
-import { apiGet } from "../services/api";
+import Footer from "../components/layout/Footer";
+import LegendaEventos from "../components/eventos/LegendaEventos";
+import CarregandoSkeleton from "../components/ui/CarregandoSkeleton";
+import { notifyError, notifyInfo } from "../components/ui/AppToast";
+import { api } from "../services/api";
 
-/* ========= HeaderHero ========= */
+/* ─────────────────────────────────────────────
+ * Constantes
+ * ───────────────────────────────────────────── */
+
+const STORAGE_VIEW_DATE_KEY = "agendaAdministrador:viewDate";
+const STORAGE_BUSCA_KEY = "agendaAdministrador:busca";
+const STORAGE_STATUS_KEY = "agendaAdministrador:status";
+
+const STATUS_AGENDA = {
+  TODOS: "todos",
+  PROGRAMADO: "programado",
+  ANDAMENTO: "andamento",
+  ENCERRADO: "encerrado",
+};
+
+const STATUS_CONFIG = {
+  programado: {
+    label: "Programado",
+    chip: "bg-emerald-50 text-emerald-800 ring-emerald-200",
+    card: "bg-emerald-50 text-emerald-950 ring-emerald-200",
+    dot: "bg-emerald-500",
+  },
+  andamento: {
+    label: "Em andamento",
+    chip: "bg-amber-50 text-amber-800 ring-amber-200",
+    card: "bg-amber-50 text-amber-950 ring-amber-200",
+    dot: "bg-amber-500",
+  },
+  encerrado: {
+    label: "Encerrado",
+    chip: "bg-rose-50 text-rose-800 ring-rose-200",
+    card: "bg-rose-50 text-rose-950 ring-rose-200",
+    dot: "bg-rose-500",
+  },
+};
+
+/* ─────────────────────────────────────────────
+ * Helpers date-only
+ * ───────────────────────────────────────────── */
+
+function stripTZ(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\.\d{3,}\s*Z?$/i, "")
+    .replace(/([+-]\d{2}:\d{2}|Z)$/i, "");
+}
+
+function hh(value, fallback = "00:00") {
+  if (typeof value === "string" && /^\d{2}:\d{2}/.test(value)) {
+    return value.slice(0, 5);
+  }
+
+  return fallback;
+}
+
+function toLocalDate(input) {
+  if (!input) return null;
+
+  if (input instanceof Date) {
+    return Number.isNaN(input.getTime()) ? null : input;
+  }
+
+  const value = stripTZ(input);
+  const match = value.match(
+    /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/
+  );
+
+  if (!match) return null;
+
+  const [, year, month, day, hour = "00", minute = "00", second = "00"] =
+    match;
+
+  const date = new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second)
+  );
+
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function ymd(value) {
+  if (!value) return null;
+
+  if (typeof value === "string") {
+    const head = stripTZ(value).slice(0, 10);
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(head)) {
+      return head;
+    }
+  }
+
+  const date = toLocalDate(value);
+
+  if (!date) return null;
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function rangeDiasYMD(dataInicio, dataFim) {
+  const dias = [];
+
+  if (!dataInicio) return dias;
+
+  const inicio = toLocalDate(`${dataInicio}T12:00:00`);
+  const fim = toLocalDate(`${dataFim || dataInicio}T12:00:00`);
+
+  if (!inicio || !fim || inicio > fim) return dias;
+
+  for (
+    const cursor = new Date(inicio);
+    cursor <= fim;
+    cursor.setDate(cursor.getDate() + 1)
+  ) {
+    const dia = ymd(cursor);
+    if (dia) dias.push(dia);
+  }
+
+  return dias;
+}
+
+function formatarDataBR(value) {
+  const data = ymd(value);
+  if (!data) return "—";
+
+  const date = toLocalDate(`${data}T12:00:00`);
+  if (!date) return "—";
+
+  return format(date, "dd/MM/yyyy");
+}
+
+function formatarMesAno(value) {
+  const date = value instanceof Date ? value : new Date();
+
+  return format(date, "MMMM 'de' yyyy", { locale: ptBR }).replace(
+    /^\w/,
+    (char) => char.toUpperCase()
+  );
+}
+
+/* ─────────────────────────────────────────────
+ * Helpers de usuário/localStorage
+ * ───────────────────────────────────────────── */
+
+function obterNomeUsuarioLocal() {
+  try {
+    const usuario = JSON.parse(localStorage.getItem("usuario") || "{}");
+    return usuario?.nome || "";
+  } catch {
+    return "";
+  }
+}
+
+/* ─────────────────────────────────────────────
+ * Helpers de agenda
+ * ───────────────────────────────────────────── */
+
+function deriveStatus(evento) {
+  const statusBackend = String(evento?.status || "").trim().toLowerCase();
+
+  if (
+    statusBackend === STATUS_AGENDA.PROGRAMADO ||
+    statusBackend === STATUS_AGENDA.ANDAMENTO ||
+    statusBackend === STATUS_AGENDA.ENCERRADO
+  ) {
+    return statusBackend;
+  }
+
+  const dataInicio = ymd(evento?.data_inicio);
+  const dataFim = ymd(evento?.data_fim || evento?.data_inicio);
+  const horarioInicio = hh(evento?.horario_inicio, "00:00");
+  const horarioFim = hh(evento?.horario_fim, "23:59");
+
+  const inicio = dataInicio
+    ? toLocalDate(`${dataInicio}T${horarioInicio}`)
+    : null;
+
+  const fim = dataFim ? toLocalDate(`${dataFim}T${horarioFim}`) : null;
+
+  const agora = new Date();
+
+  if (inicio && fim) {
+    if (isBefore(agora, inicio)) return STATUS_AGENDA.PROGRAMADO;
+    if (isWithinInterval(agora, { start: inicio, end: fim })) {
+      return STATUS_AGENDA.ANDAMENTO;
+    }
+    if (isAfter(agora, fim)) return STATUS_AGENDA.ENCERRADO;
+  }
+
+  return STATUS_AGENDA.PROGRAMADO;
+}
+
+function normalizarAgendaResponse(response) {
+  const lista = Array.isArray(response?.data)
+    ? response.data
+    : Array.isArray(response)
+      ? response
+      : [];
+
+  return lista.map((evento) => {
+    const ocorrencias = Array.isArray(evento?.ocorrencias)
+      ? evento.ocorrencias
+          .map((item) => {
+            const data = ymd(item?.data || item);
+
+            if (!data) return null;
+
+            return {
+              data,
+              horario_inicio: hh(
+                item?.horario_inicio,
+                hh(evento?.horario_inicio, "00:00")
+              ),
+              horario_fim: hh(
+                item?.horario_fim,
+                hh(evento?.horario_fim, "23:59")
+              ),
+            };
+          })
+          .filter(Boolean)
+      : [];
+
+    return {
+      id: evento?.id,
+      titulo: evento?.titulo || "Evento",
+      local: evento?.local || null,
+      data_inicio: ymd(evento?.data_inicio),
+      data_fim: ymd(evento?.data_fim || evento?.data_inicio),
+      horario_inicio: hh(evento?.horario_inicio, "00:00"),
+      horario_fim: hh(evento?.horario_fim, "23:59"),
+      status: deriveStatus(evento),
+      organizadores: Array.isArray(evento?.organizadores)
+        ? evento.organizadores
+        : [],
+      ocorrencias,
+      _raw: evento,
+    };
+  });
+}
+
+function obterDiasDoEvento(evento) {
+  if (Array.isArray(evento?.ocorrencias) && evento.ocorrencias.length > 0) {
+    return evento.ocorrencias
+      .map((item) => ymd(item?.data || item))
+      .filter(Boolean);
+  }
+
+  return rangeDiasYMD(ymd(evento?.data_inicio), ymd(evento?.data_fim));
+}
+
+/* ─────────────────────────────────────────────
+ * Componentes locais
+ * ───────────────────────────────────────────── */
+
 function HeaderHero({ nome, carregando, onRefresh, onHoje }) {
   return (
     <header
-      className="bg-gradient-to-br from-violet-950 via-purple-800 to-indigo-700 text-white"
+      className="bg-gradient-to-br from-violet-950 via-purple-900 to-indigo-800 text-white"
       role="banner"
     >
       <a
@@ -36,36 +309,41 @@ function HeaderHero({ nome, carregando, onRefresh, onHoje }) {
         Ir para o conteúdo
       </a>
 
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-6 text-center flex flex-col items-center gap-2 sm:gap-3">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 text-center flex flex-col items-center gap-4">
         <div className="flex items-center gap-2">
-          <CalendarDays className="h-6 w-6 sm:h-7 sm:w-7" aria-hidden="true" />
-          <h1 className="text-lg sm:text-2xl font-extrabold tracking-tight">
+          <CalendarDays className="h-7 w-7" aria-hidden="true" />
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
             Agenda Geral de Eventos
           </h1>
         </div>
-        <p className="text-xs sm:text-sm text-white/90 px-2">
-          {nome ? `Bem-vindo(a), ${nome}.` : "Bem-vindo(a)."} Visualize e consulte os eventos por dia.
+
+        <p className="text-sm sm:text-base text-white/90 max-w-2xl">
+          {nome ? `Bem-vindo(a), ${nome}. ` : ""}
+          Visualize, filtre e consulte os eventos por dia no calendário geral.
         </p>
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
           <button
             type="button"
             onClick={onHoje}
-            className="inline-flex justify-center items-center gap-2 px-4 py-2 text-sm rounded-md transition bg-white/15 hover:bg-white/25 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 w-full sm:w-auto"
+            className="inline-flex justify-center items-center gap-2 px-4 py-2 text-sm rounded-lg bg-white/15 hover:bg-white/25 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 w-full sm:w-auto"
             aria-label="Ir para a data de hoje no calendário"
           >
             Hoje
           </button>
+
           <button
             type="button"
             onClick={onRefresh}
             disabled={carregando}
-            className={`inline-flex justify-center items-center gap-2 px-4 py-2 text-sm rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 w-full sm:w-auto ${
-              carregando ? "opacity-60 cursor-not-allowed bg-white/15" : "bg-white/15 hover:bg-white/25"
-            } text-white`}
+            className="inline-flex justify-center items-center gap-2 px-4 py-2 text-sm rounded-lg bg-white/15 hover:bg-white/25 disabled:opacity-60 disabled:cursor-not-allowed text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 w-full sm:w-auto"
             aria-label="Atualizar agenda"
           >
-            {carregando ? "Atualizando…" : "Atualizar"}
+            <RefreshCw
+              className={`h-4 w-4 ${carregando ? "animate-spin" : ""}`}
+              aria-hidden="true"
+            />
+            {carregando ? "Atualizando..." : "Atualizar"}
           </button>
         </div>
       </div>
@@ -73,425 +351,558 @@ function HeaderHero({ nome, carregando, onRefresh, onHoje }) {
   );
 }
 
-/* ========= Helpers de data ========= */
-const stripTZ = (s) =>
-  String(s).trim().replace(/\.\d{3,}\s*Z?$/i, "").replace(/([+-]\d{2}:\d{2}|Z)$/i, "");
-
-function toLocalDate(input) {
-  if (!input) return null;
-  if (input instanceof Date) return input;
-  const s = stripTZ(input);
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
-  if (!m) return null;
-  const [, y, mo, d, hh = "00", mm = "00", ss = "00"] = m;
-  return new Date(+y, +mo - 1, +d, +hh, +mm, +ss);
-}
-function ymd(val) {
-  if (!val) return null;
-  if (typeof val === "string") {
-    const head = stripTZ(val).slice(0, 10);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(head)) return head;
-  }
-  const d = toLocalDate(val);
-  if (!d || Number.isNaN(+d)) return null;
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-function rangeDiasYMD(iniYMD, fimYMD) {
-  const out = [];
-  if (!iniYMD) return out;
-  const d0 = new Date(`${iniYMD}T12:00:00`);
-  const d1 = new Date(`${(fimYMD || iniYMD)}T12:00:00`);
-  for (let d = new Date(d0); d <= d1; d.setDate(d.getDate() + 1)) {
-    out.push(ymd(d));
-  }
-  return out;
-}
-function deriveStatus(ev) {
-  const di = ev.data_inicio ?? ev.dataInicio ?? ev.data;
-  const df = ev.data_fim ?? ev.data_termino ?? ev.dataTermino ?? ev.data;
-  const hi = (ev.horario_inicio ?? "00:00").slice(0, 5);
-  const hf = (ev.horario_fim ?? "23:59").slice(0, 5);
-  const start = di ? toLocalDate(`${ymd(di)}T${hi}`) : null;
-  const end = df ? toLocalDate(`${ymd(df)}T${hf}`) : null;
-  const agora = new Date();
-  if (start && end) {
-    if (isBefore(agora, start)) return "programado";
-    if (isWithinInterval(agora, { start, end })) return "andamento";
-    if (isAfter(agora, end)) return "encerrado";
-  }
-  return ev.status || "programado";
-}
-
-/* ========= Cores (preferências do Cláudio) ========= */
-const colorByStatus = {
-  programado: { bg: "bg-emerald-100", text: "text-emerald-900", ring: "ring-emerald-300" }, // ✅ verde
-  andamento:  { bg: "bg-amber-100",   text: "text-amber-900",   ring: "ring-amber-300" },   // ✅ amarelo
-  encerrado:  { bg: "bg-rose-100",    text: "text-rose-900",    ring: "ring-rose-300" },    // ✅ vermelho
-};
-const colorByTipo = {
-  curso:     { bg: "bg-violet-100", text: "text-violet-900", ring: "ring-violet-300" },
-  oficina:   { bg: "bg-teal-100",   text: "text-teal-900",   ring: "ring-teal-300" },
-  congresso: { bg: "bg-indigo-100", text: "text-indigo-900", ring: "ring-indigo-300" },
-  webinar:   { bg: "bg-cyan-100",   text: "text-cyan-900",   ring: "ring-cyan-300" },
-};
-function getBadgeColors(ev) {
-  const tipo = String(ev?.tipo || "").toLowerCase();
-  if (tipo && colorByTipo[tipo]) return colorByTipo[tipo];
-  const st = deriveStatus(ev);
-  return colorByStatus[st] || colorByStatus.programado;
-}
-
-/* ========= Badge do dia (CLICA E ABRE MODAL) ========= */
-function DiaBadge({ evento, onClick }) {
-  const c = getBadgeColors(evento);
-  const titulo = String(evento?.titulo ?? evento?.nome ?? "Evento");
-  const di = ymd(evento?.data_inicio ?? evento?.dataInicio ?? evento?.data);
-  const df = ymd(evento?.data_fim ?? evento?.data_termino ?? evento?.dataTermino ?? evento?.data);
-  const label = di && df && di !== df
-    ? `${format(new Date(di), "dd/MM")} – ${format(new Date(df), "dd/MM")}`
-    : (di ? format(new Date(di), "dd/MM") : "");
-
-  const handleKey = (e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      onClick?.(evento);
-    }
-  };
+function StatusChip({ status }) {
+  const config = STATUS_CONFIG[status] || STATUS_CONFIG.programado;
 
   return (
     <span
-      role="button"
-      tabIndex={0}
-      onClick={(e) => { e.stopPropagation(); onClick?.(evento); }}
-      onKeyDown={handleKey}
-      className={`inline-flex items-center justify-center w-full px-2 py-1 rounded-md text-[10px] font-semibold ring-1 ${c.ring} ${c.bg} ${c.text} truncate cursor-pointer`}
-      title={`${titulo}${label ? ` — ${label}` : ""}`}
-      aria-label={`${titulo}${label ? ` — ${label}` : ""}`}
+      className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ${config.chip}`}
     >
-      •
+      <span className={`h-2 w-2 rounded-full ${config.dot}`} />
+      {config.label}
     </span>
   );
 }
 
-/* ========= Badge de total ========= */
-function TotalBadge({ label, value, variant = "programado" }) {
-  const c = colorByStatus[variant] || colorByStatus.programado;
+function TotalBadge({ label, value, status }) {
+  const config = STATUS_CONFIG[status] || STATUS_CONFIG.programado;
+
   return (
     <div
-      className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full ring-1 ${c.ring} ${c.bg} ${c.text} text-xs font-semibold`}
+      className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full ring-1 ${config.chip} text-xs font-bold`}
       title={`${value} ${label}`}
     >
-      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: "currentColor" }} />
+      <span className={`w-2 h-2 rounded-full ${config.dot}`} />
       <span className="uppercase tracking-wide">{label}</span>
       <span className="tabular-nums">{value}</span>
     </div>
   );
 }
 
-/* ========= Chip de tipo ========= */
-function TipoChip({ tipo }) {
-  const t = String(tipo || "").toLowerCase();
-  const c = colorByTipo[t] || { bg: "bg-slate-100", text: "text-slate-900", ring: "ring-slate-300" };
+function DiaBadge({ evento, onClick }) {
+  const status = deriveStatus(evento);
+  const config = STATUS_CONFIG[status] || STATUS_CONFIG.programado;
+  const titulo = String(evento?.titulo || "Evento");
+
+  const handleKeyDown = (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onClick?.(evento);
+    }
+  };
+
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ring-1 ${c.ring} ${c.bg} ${c.text}`}>
-      {t ? t.charAt(0).toUpperCase() + t.slice(1) : "Evento"}
-    </span>
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick?.(evento);
+      }}
+      onKeyDown={handleKeyDown}
+      className={`inline-flex items-center justify-center w-full px-2 py-1 rounded-md text-[10px] font-semibold ring-1 truncate focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-700 ${config.chip}`}
+      title={titulo}
+      aria-label={titulo}
+    >
+      <span className="truncate">{titulo}</span>
+    </button>
   );
 }
 
-/* ========================================================================= */
+function EventoDetalheModalLocal({ evento, onClose }) {
+  const closeRef = useRef(null);
+
+  useEffect(() => {
+    closeRef.current?.focus();
+
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        onClose?.();
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  if (!evento) return null;
+
+  const status = deriveStatus(evento);
+  const config = STATUS_CONFIG[status] || STATUS_CONFIG.programado;
+  const organizadores = Array.isArray(evento?.organizadores)
+    ? evento.organizadores
+    : [];
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 px-3 py-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="agenda-admin-modal-titulo"
+    >
+      <div className="w-full max-w-2xl rounded-2xl bg-white dark:bg-zinc-900 shadow-2xl ring-1 ring-black/10 dark:ring-white/10 overflow-hidden">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 dark:border-zinc-700 px-5 py-4">
+          <div className="min-w-0">
+            <span
+              className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-bold ring-1 ${config.chip}`}
+            >
+              <span className={`h-2 w-2 rounded-full ${config.dot}`} />
+              {config.label}
+            </span>
+
+            <h2
+              id="agenda-admin-modal-titulo"
+              className="mt-3 text-lg sm:text-xl font-extrabold text-slate-950 dark:text-white break-words"
+            >
+              {evento.titulo || "Evento"}
+            </h2>
+          </div>
+
+          <button
+            ref={closeRef}
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-600 hover:bg-slate-100 hover:text-slate-950 dark:text-zinc-300 dark:hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-700"
+            aria-label="Fechar detalhes do evento"
+          >
+            <X className="h-5 w-5" aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="rounded-xl bg-slate-50 dark:bg-zinc-800 p-3 ring-1 ring-slate-200 dark:ring-zinc-700">
+              <p className="text-xs font-semibold text-slate-500 dark:text-zinc-400">
+                Data inicial
+              </p>
+              <p className="mt-1 text-sm font-bold text-slate-950 dark:text-white">
+                {formatarDataBR(evento.data_inicio)}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-slate-50 dark:bg-zinc-800 p-3 ring-1 ring-slate-200 dark:ring-zinc-700">
+              <p className="text-xs font-semibold text-slate-500 dark:text-zinc-400">
+                Data final
+              </p>
+              <p className="mt-1 text-sm font-bold text-slate-950 dark:text-white">
+                {formatarDataBR(evento.data_fim)}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-slate-50 dark:bg-zinc-800 p-3 ring-1 ring-slate-200 dark:ring-zinc-700">
+              <p className="text-xs font-semibold text-slate-500 dark:text-zinc-400">
+                Horário
+              </p>
+              <p className="mt-1 text-sm font-bold text-slate-950 dark:text-white">
+                {hh(evento.horario_inicio, "00:00")} às{" "}
+                {hh(evento.horario_fim, "23:59")}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-slate-50 dark:bg-zinc-800 p-3 ring-1 ring-slate-200 dark:ring-zinc-700">
+              <p className="text-xs font-semibold text-slate-500 dark:text-zinc-400">
+                Local
+              </p>
+              <p className="mt-1 text-sm font-bold text-slate-950 dark:text-white break-words">
+                {evento.local || "Não informado"}
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold text-slate-500 dark:text-zinc-400">
+              organizadores vinculados
+            </p>
+
+            {organizadores.length ? (
+              <ul className="mt-2 flex flex-wrap gap-2">
+                {organizadores.map((organizador) => (
+                  <li
+                    key={organizador?.id || organizador?.nome}
+                    className="rounded-full bg-indigo-50 text-indigo-900 ring-1 ring-indigo-100 px-3 py-1 text-xs font-semibold"
+                  >
+                    {organizador?.nome || "organizador"}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-1 text-sm text-slate-600 dark:text-zinc-300">
+                Nenhum organizador informado.
+              </p>
+            )}
+          </div>
+
+          {Array.isArray(evento.ocorrencias) && evento.ocorrencias.length ? (
+            <div>
+              <p className="text-xs font-semibold text-slate-500 dark:text-zinc-400">
+                Datas de ocorrência
+              </p>
+
+              <ul className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {evento.ocorrencias.map((ocorrencia) => (
+                  <li
+                    key={`${ocorrencia.data}-${ocorrencia.horario_inicio}`}
+                    className="rounded-lg bg-slate-50 dark:bg-zinc-800 px-3 py-2 text-sm text-slate-800 dark:text-zinc-100 ring-1 ring-slate-200 dark:ring-zinc-700"
+                  >
+                    {formatarDataBR(ocorrencia.data)} •{" "}
+                    {hh(ocorrencia.horario_inicio, evento.horario_inicio)} às{" "}
+                    {hh(ocorrencia.horario_fim, evento.horario_fim)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="flex justify-end border-t border-slate-200 dark:border-zinc-700 px-5 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-700"
+          >
+            Fechar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────
+ * Página
+ * ───────────────────────────────────────────── */
 
 export default function AgendaAdministrador() {
-  const nome = (() => {
-    try {
-      const u = JSON.parse(localStorage.getItem("usuario") || "{}");
-      return u?.nome || "";
-    } catch {
-      return localStorage.getItem("nome") || "";
-    }
-  })();
-
   const reduceMotion = useReducedMotion();
+  const liveRef = useRef(null);
+  const erroRef = useRef(null);
+  const mountedRef = useRef(true);
 
-  const [events, setEvents] = useState([]);
+  const [nome] = useState(() => obterNomeUsuarioLocal());
+  const [eventos, setEventos] = useState([]);
   const [selecionado, setSelecionado] = useState(null);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
 
   const [viewDate, setViewDate] = useState(() => {
-    const saved = localStorage.getItem("agenda:viewDate");
-    return saved ? new Date(saved) : new Date();
+    const saved = localStorage.getItem(STORAGE_VIEW_DATE_KEY);
+    const parsed = saved ? toLocalDate(saved) : null;
+    return parsed || new Date();
   });
 
-  // filtros
-  const [busca, setBusca] = useState(() => localStorage.getItem("agenda:busca") || "");
-  const [buscaDebounced, setBuscaDebounced] = useState(busca);
+  const [busca, setBusca] = useState(
+    () => localStorage.getItem(STORAGE_BUSCA_KEY) || ""
+  );
+
+  const [buscaDebounced, setBuscaDebounced] = useState(busca.trim().toLowerCase());
+
   const [filtroStatus, setFiltroStatus] = useState(
-    () => localStorage.getItem("agenda:status") || "todos"
-  );
-  const [filtroTipo, setFiltroTipo] = useState(
-    () => localStorage.getItem("agenda:tipo") || "todos"
+    () => localStorage.getItem(STORAGE_STATUS_KEY) || STATUS_AGENDA.TODOS
   );
 
-  const liveRef = useRef(null);
-  const erroRef = useRef(null);
-  const mounted = useRef(true);
-
-  const setLive = (msg) => {
-    if (liveRef.current) liveRef.current.textContent = msg;
-  };
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => { mounted.current = false; };
+  const setLive = useCallback((message) => {
+    if (liveRef.current) {
+      liveRef.current.textContent = message;
+    }
   }, []);
 
-  async function carregar() {
-    setCarregando(true);
-    setErro("");
-    setLive("Carregando agenda…");
-    try {
-      const data = await apiGet("/api/agenda", { on403: "silent" });
-      if (!mounted.current) return;
-      setEvents(Array.isArray(data) ? data : []);
-      setLive(
-        Array.isArray(data) && data.length
-          ? `Agenda carregada: ${data.length} evento(s).`
-          : "Nenhum evento encontrado para o período."
-      );
-    } catch (err) {
-      console.error(err);
-      setErro("Não foi possível carregar a agenda.");
-      toast.error("❌ Não foi possível carregar a agenda.");
-      setLive("Falha ao carregar a agenda.");
-      setTimeout(() => erroRef.current?.focus(), 0);
-    } finally {
-      if (mounted.current) setCarregando(false);
-    }
-  }
-  useEffect(() => { carregar(); }, []);
-
-  // persistência
-  useEffect(() => { localStorage.setItem("agenda:viewDate", viewDate.toISOString()); }, [viewDate]);
-  useEffect(() => { localStorage.setItem("agenda:status", filtroStatus); }, [filtroStatus]);
-  useEffect(() => { localStorage.setItem("agenda:tipo", filtroTipo); }, [filtroTipo]);
   useEffect(() => {
-    localStorage.setItem("agenda:busca", busca);
-    const t = setTimeout(() => setBuscaDebounced(busca.trim().toLowerCase()), 250);
-    return () => clearTimeout(t);
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_VIEW_DATE_KEY, viewDate.toISOString());
+  }, [viewDate]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_STATUS_KEY, filtroStatus);
+  }, [filtroStatus]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_BUSCA_KEY, busca);
+
+    const timer = setTimeout(() => {
+      setBuscaDebounced(busca.trim().toLowerCase());
+    }, 250);
+
+    return () => clearTimeout(timer);
   }, [busca]);
 
-  // map dia -> eventos
+  const carregarAgenda = useCallback(async () => {
+    setCarregando(true);
+    setErro("");
+    setLive("Carregando agenda geral de eventos.");
+
+    try {
+      if (typeof api?.agenda?.listar !== "function") {
+        throw new Error(
+          "Facade api.agenda.listar não encontrada em frontend/src/services/api.js."
+        );
+      }
+
+      const response = await api.agenda.listar();
+      const agendaNormalizada = normalizarAgendaResponse(response);
+
+      if (!mountedRef.current) return;
+
+      setEventos(agendaNormalizada);
+
+      setLive(
+        agendaNormalizada.length
+          ? `Agenda carregada com ${agendaNormalizada.length} evento(s).`
+          : "Nenhum evento encontrado na agenda geral."
+      );
+    } catch (error) {
+      console.error("[AgendaAdministrador] erro ao carregar agenda:", error);
+
+      if (!mountedRef.current) return;
+
+      setEventos([]);
+      setErro("Não foi possível carregar a agenda geral de eventos.");
+
+      notifyError(
+        "Não foi possível carregar a agenda. Tente novamente ou acione o suporte se o problema continuar."
+      );
+
+      setLive("Falha ao carregar agenda geral de eventos.");
+
+      setTimeout(() => erroRef.current?.focus(), 0);
+    } finally {
+      if (mountedRef.current) {
+        setCarregando(false);
+      }
+    }
+  }, [setLive]);
+
+  useEffect(() => {
+    carregarAgenda();
+  }, [carregarAgenda]);
+
   const eventosBasePorData = useMemo(() => {
     const map = {};
-    for (const evento of events) {
-      let ocorrencias = [];
 
-      if (Array.isArray(evento.ocorrencias) && evento.ocorrencias.length) {
-        ocorrencias = evento.ocorrencias;
-      } else if (Array.isArray(evento.turmas) && evento.turmas.length) {
-        const bag = new Set();
-        for (const t of evento.turmas) {
-          if (Array.isArray(t.datas) && t.datas.length) {
-            for (const d of t.datas) {
-              const y = ymd(d?.data);
-              if (y) bag.add(y);
-            }
-          }
-        }
-        ocorrencias = Array.from(bag).sort();
+    for (const evento of eventos) {
+      const dias = obterDiasDoEvento(evento);
+
+      for (const dia of dias) {
+        if (!map[dia]) map[dia] = [];
+        map[dia].push(evento);
       }
-      if (!ocorrencias.length) {
-        ocorrencias = rangeDiasYMD(
-          ymd(evento.data_inicio ?? evento.dataInicio ?? evento.data),
-          ymd(evento.data_fim ?? evento.data_termino ?? evento.dataTermino ?? evento.data)
-        );
-      }
-      for (const dia of ocorrencias) (map[dia] ||= []).push(evento);
     }
-    for (const k of Object.keys(map)) {
-      map[k].sort((a, b) => {
+
+    for (const dia of Object.keys(map)) {
+      map[dia].sort((a, b) => {
         const aStart = toLocalDate(
-          `${ymd(a.data_inicio ?? a.dataInicio ?? a.data)}T${(a.horario_inicio ?? "00:00").slice(0, 5)}`
+          `${ymd(a.data_inicio || dia)}T${hh(a.horario_inicio, "00:00")}`
         );
         const bStart = toLocalDate(
-          `${ymd(b.data_inicio ?? b.dataInicio ?? b.data)}T${(b.horario_inicio ?? "00:00").slice(0, 5)}`
+          `${ymd(b.data_inicio || dia)}T${hh(b.horario_inicio, "00:00")}`
         );
+
         if (!aStart || !bStart) return 0;
+
         return compareAsc(aStart, bStart);
       });
     }
-    return map;
-  }, [events]);
 
-  // filtros
+    return map;
+  }, [eventos]);
+
   const eventosPorData = useMemo(() => {
-    if (filtroStatus === "todos" && filtroTipo === "todos" && !buscaDebounced) {
-      return eventosBasePorData;
-    }
-    const filtra = (ev) => {
-      const titulo = String(ev?.titulo ?? ev?.nome ?? "").toLowerCase();
-      if (buscaDebounced && !titulo.includes(buscaDebounced)) return false;
-      if (filtroStatus !== "todos" && deriveStatus(ev) !== filtroStatus) return false;
-      if (filtroTipo !== "todos") {
-        const tipo = String(ev?.tipo || "").toLowerCase();
-        if (tipo !== filtroTipo) return false;
+    const filtra = (evento) => {
+      const titulo = String(evento?.titulo || "").toLowerCase();
+
+      if (buscaDebounced && !titulo.includes(buscaDebounced)) {
+        return false;
       }
+
+      if (
+        filtroStatus !== STATUS_AGENDA.TODOS &&
+        deriveStatus(evento) !== filtroStatus
+      ) {
+        return false;
+      }
+
       return true;
     };
+
     const out = {};
+
     for (const [dia, lista] of Object.entries(eventosBasePorData)) {
-      const f = lista.filter(filtra);
-      if (f.length) out[dia] = f;
-    }
-    return out;
-  }, [eventosBasePorData, filtroStatus, filtroTipo, buscaDebounced]);
+      const filtrados = lista.filter(filtra);
 
-  // contagens
-  const contagemMes = useMemo(() => {
-    const ini = startOfMonth(viewDate);
-    const fim = endOfMonth(viewDate);
-    let total = 0;
-    for (const [dia, lista] of Object.entries(eventosPorData)) {
-      const d = toLocalDate(`${dia}T12:00:00`);
-      if (d && d >= ini && d <= fim) total += Array.isArray(lista) ? lista.length : 0;
-    }
-    return total;
-  }, [eventosPorData, viewDate]);
-
-  const totais = useMemo(() => {
-    const ini = startOfMonth(viewDate);
-    const fim = endOfMonth(viewDate);
-    let programado = 0, andamento = 0, encerrado = 0;
-    for (const [dia, lista] of Object.entries(eventosPorData)) {
-      const d = toLocalDate(`${dia}T12:00:00`);
-      if (!d || d < ini || d > fim) continue;
-      for (const ev of lista) {
-        const st = deriveStatus(ev);
-        if (st === "programado") programado++;
-        else if (st === "andamento") andamento++;
-        else encerrado++;
+      if (filtrados.length) {
+        out[dia] = filtrados;
       }
     }
-    return { programado, andamento, encerrado };
+
+    return out;
+  }, [eventosBasePorData, buscaDebounced, filtroStatus]);
+
+  const totaisMes = useMemo(() => {
+    const inicio = startOfMonth(viewDate);
+    const fim = endOfMonth(viewDate);
+
+    const totais = {
+      total: 0,
+      programado: 0,
+      andamento: 0,
+      encerrado: 0,
+    };
+
+    for (const [dia, lista] of Object.entries(eventosPorData)) {
+      const dataDia = toLocalDate(`${dia}T12:00:00`);
+
+      if (!dataDia || dataDia < inicio || dataDia > fim) continue;
+
+      for (const evento of lista) {
+        const status = deriveStatus(evento);
+
+        totais.total += 1;
+
+        if (status === STATUS_AGENDA.PROGRAMADO) totais.programado += 1;
+        else if (status === STATUS_AGENDA.ANDAMENTO) totais.andamento += 1;
+        else totais.encerrado += 1;
+      }
+    }
+
+    return totais;
   }, [eventosPorData, viewDate]);
 
-  const irParaHoje = () => setViewDate(new Date());
+  const diaSelecionadoYMD = useMemo(() => {
+    return ymd(viewDate) || ymd(new Date());
+  }, [viewDate]);
 
-  // conteúdo do tile (com clique funcional)
+  const eventosDoDia = eventosPorData[diaSelecionadoYMD] || [];
+
+  const irParaHoje = useCallback(() => {
+    setViewDate(new Date());
+  }, []);
+
+  const limparFiltros = useCallback(() => {
+    setBusca("");
+    setFiltroStatus(STATUS_AGENDA.TODOS);
+  }, []);
+
   const renderTileContent = useCallback(
     ({ date }) => {
-      const key = format(date, "yyyy-MM-dd");
+      const key = ymd(date);
       const diaEventos = eventosPorData[key] || [];
+
       if (!diaEventos.length) return null;
 
-      const MAX = 3;
-      const extras = Math.max(0, diaEventos.length - MAX);
-      const visiveis = diaEventos.slice(0, MAX);
+      const max = 3;
+      const visiveis = diaEventos.slice(0, max);
+      const extras = Math.max(0, diaEventos.length - max);
 
       return (
         <div className="mt-1 w-full px-1 space-y-1 min-w-0">
-          {visiveis.map((ev, idx) => (
+          {visiveis.map((evento, index) => (
             <DiaBadge
-              key={`${String(ev.id ?? ev.titulo ?? "")}-${key}-${idx}`}
-              evento={ev}
+              key={`${String(evento.id || evento.titulo)}-${key}-${index}`}
+              evento={evento}
               onClick={setSelecionado}
             />
           ))}
 
-          {extras > 0 && (
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => setSelecionado(diaEventos[0])}
-              onKeyDown={(e) => e.key === "Enter" && setSelecionado(diaEventos[0])}
-              className="w-full text-[11px] text-indigo-900 bg-indigo-100 ring-1 ring-indigo-300 rounded-md px-2 py-0.5 hover:brightness-95 focus:outline-none focus:ring-2 focus:ring-offset-1 cursor-pointer text-center"
+          {extras > 0 ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setSelecionado(diaEventos[0]);
+              }}
+              className="w-full text-[11px] text-indigo-900 bg-indigo-50 ring-1 ring-indigo-200 rounded-md px-2 py-0.5 hover:bg-indigo-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-700 text-center"
               title={`Mais ${extras} evento(s)`}
               aria-label={`Mais ${extras} evento(s) neste dia`}
             >
               +{extras} evento(s)
-            </div>
-          )}
+            </button>
+          ) : null}
         </div>
       );
     },
     [eventosPorData]
   );
 
-  // ====== Exportação do mês visível (CSV) ======
-  function exportarMesCSV() {
-    const ini = startOfMonth(viewDate);
+  const exportarMesCSV = useCallback(() => {
+    const inicio = startOfMonth(viewDate);
     const fim = endOfMonth(viewDate);
-    const SEP = ";";
-    const BOM = "\uFEFF";
-    const safe = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const separator = ";";
+    const bom = "\uFEFF";
+    const safe = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
 
     const header = [
       "Evento ID",
       "Título",
-      "Tipo",
-      "Status (derivado)",
-      "Data Início",
-      "Hora Início",
-      "Data Fim",
-      "Hora Fim",
+      "Status",
+      "Data início",
+      "Hora início",
+      "Data fim",
+      "Hora fim",
       "Local",
-    ].join(SEP);
+    ].join(separator);
 
     const rows = [];
+
     for (const [dia, lista] of Object.entries(eventosPorData)) {
-      const d = toLocalDate(`${dia}T12:00:00`);
-      if (!d || d < ini || d > fim) continue;
+      const dataDia = toLocalDate(`${dia}T12:00:00`);
 
-      for (const ev of lista) {
-        const st = deriveStatus(ev);
-        const di = ymd(ev.data_inicio ?? ev.dataInicio ?? ev.data);
-        const df = ymd(ev.data_fim ?? ev.data_termino ?? ev.dataTermino ?? ev.data);
-        const hi = (ev.horario_inicio ?? "00:00").slice(0, 5);
-        const hf = (ev.horario_fim ?? "00:00").slice(0, 5);
-        const local = ev.local ?? ev.endereco ?? ev.unidade ?? "";
+      if (!dataDia || dataDia < inicio || dataDia > fim) continue;
 
-        rows.push([
-          safe(ev.id ?? ""),
-          safe(ev.titulo ?? ev.nome ?? ""),
-          safe(ev.tipo ?? ""),
-          safe(st),
-          safe(di ? format(new Date(di), "dd/MM/yyyy") : ""),
-          safe(hi),
-          safe(df ? format(new Date(df), "dd/MM/yyyy") : ""),
-          safe(hf),
-          safe(local),
-        ].join(SEP));
+      for (const evento of lista) {
+        const status = deriveStatus(evento);
+        const config = STATUS_CONFIG[status] || STATUS_CONFIG.programado;
+
+        rows.push(
+          [
+            safe(evento.id || ""),
+            safe(evento.titulo || ""),
+            safe(config.label),
+            safe(formatarDataBR(evento.data_inicio)),
+            safe(hh(evento.horario_inicio, "00:00")),
+            safe(formatarDataBR(evento.data_fim)),
+            safe(hh(evento.horario_fim, "23:59")),
+            safe(evento.local || ""),
+          ].join(separator)
+        );
       }
     }
 
     if (!rows.length) {
-      toast.info("Não há eventos no mês visível para exportar.");
+      notifyInfo("Não há eventos no mês visível para exportar.");
       return;
     }
 
     const csv = [header, ...rows].join("\n");
-    const blob = new Blob([BOM + csv], { type: "text/csv;charset=utf-8" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    const nomeMes = format(viewDate, "yyyy-MM");
-    a.download = `agenda_${nomeMes}.csv`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1200);
-  }
+    const blob = new Blob([bom + csv], {
+      type: "text/csv;charset=utf-8",
+    });
 
-  // ====== Lista do dia selecionado ======
-  const diaSelecionadoYMD = useMemo(() => format(viewDate, "yyyy-MM-dd"), [viewDate]);
-  const eventosDoDia = eventosPorData[diaSelecionadoYMD] || [];
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `agenda_${format(viewDate, "yyyy-MM")}.csv`;
+    link.click();
+
+    setTimeout(() => URL.revokeObjectURL(link.href), 1200);
+  }, [eventosPorData, viewDate]);
+
+  const possuiFiltros = Boolean(busca || filtroStatus !== STATUS_AGENDA.TODOS);
 
   return (
-    <div className="flex flex-col min-h-screen bg-gelo dark:bg-gray-900 text-black dark:text-white overflow-x-hidden">
-      <HeaderHero nome={nome} carregando={carregando} onRefresh={carregar} onHoje={irParaHoje} />
+    <div className="flex flex-col min-h-screen bg-slate-50 dark:bg-zinc-950 text-slate-950 dark:text-white overflow-x-hidden">
+      <HeaderHero
+        nome={nome}
+        carregando={carregando}
+        onRefresh={carregarAgenda}
+        onHoje={irParaHoje}
+      />
 
-      {carregando && (
+      {carregando ? (
         <div
           className="sticky top-0 left-0 w-full h-1 bg-indigo-100 z-40"
           role="progressbar"
@@ -499,27 +910,35 @@ export default function AgendaAdministrador() {
           aria-valuemax={100}
           aria-label="Carregando agenda"
         >
-          <div className={`h-full bg-indigo-600 ${reduceMotion ? "" : "animate-pulse"} w-1/3`} />
+          <div
+            className={`h-full bg-indigo-700 w-1/3 ${
+              reduceMotion ? "" : "animate-pulse"
+            }`}
+          />
         </div>
-      )}
+      ) : null}
 
-      <main id="conteudo" className="flex-1 max-w-7xl mx-auto px-3 sm:px-4 py-5 sm:py-6 min-w-0">
+      <main
+        id="conteudo"
+        className="flex-1 max-w-7xl mx-auto w-full px-3 sm:px-4 py-5 sm:py-6 min-w-0"
+      >
         <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-        <section className="bg-white dark:bg-zinc-800 rounded-xl p-3 sm:p-5 shadow-md">
+        <section className="bg-white dark:bg-zinc-900 rounded-2xl p-3 sm:p-5 shadow-sm ring-1 ring-slate-200 dark:ring-zinc-700">
           {erro ? (
             <div
               ref={erroRef}
               tabIndex={-1}
-              className="text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded-lg p-3 sm:p-4"
+              className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"
               role="alert"
             >
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-sm">{erro}</p>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <p>{erro}</p>
+
                 <button
                   type="button"
-                  onClick={carregar}
-                  className="px-3 py-1.5 rounded-md text-sm bg-red-100 dark:bg-red-800/40"
+                  onClick={carregarAgenda}
+                  className="px-3 py-2 rounded-lg text-sm font-semibold bg-rose-100 hover:bg-rose-200 text-rose-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-700"
                 >
                   Tentar novamente
                 </button>
@@ -527,208 +946,223 @@ export default function AgendaAdministrador() {
             </div>
           ) : (
             <>
-              {/* Filtros */}
-              <div className="flex flex-col gap-3 sm:gap-4 mb-3 sm:mb-4">
-                <div className="flex items-center gap-2 min-w-0">
-                  <label htmlFor="busca-evento" className="sr-only">
-                    Buscar evento pelo nome
-                  </label>
-                  <input
-                    id="busca-evento"
-                    type="search"
-                    inputMode="search"
-                    placeholder="Buscar evento pelo nome…"
-                    value={busca}
-                    onChange={(e) => setBusca(e.target.value)}
-                    className="flex-1 px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 dark:bg-zinc-900 dark:text-white text-sm min-w-0"
-                    aria-describedby="dica-busca"
-                  />
-                  {busca && (
-                    <button
-                      type="button"
-                      onClick={() => setBusca("")}
-                      className="px-3 py-2 rounded-md bg-gray-200 dark:bg-gray-700 text-sm shrink-0"
-                      aria-label="Limpar busca"
-                    >
-                      Limpar
-                    </button>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <div className="flex flex-col">
-                    <label htmlFor="filtro-status" className="text-xs mb-1 text-slate-700 dark:text-slate-200">
-                      Status
+              <div className="flex flex-col gap-4 mb-4">
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <div className="relative flex-1 min-w-0">
+                    <label htmlFor="busca-evento" className="sr-only">
+                      Buscar evento pelo título
                     </label>
-                    <select
-                      id="filtro-status"
-                      value={filtroStatus}
-                      onChange={(e) => setFiltroStatus(e.target.value)}
-                      className="p-2 rounded-md border dark:border-gray-700 dark:bg-zinc-900 dark:text-white text-sm"
-                    >
-                      <option value="todos">Todos</option>
-                      <option value="programado">Programados</option>
-                      <option value="andamento">Em andamento</option>
-                      <option value="encerrado">Encerrados</option>
-                    </select>
+
+                    <Search
+                      className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400"
+                      aria-hidden="true"
+                    />
+
+                    <input
+                      id="busca-evento"
+                      type="search"
+                      inputMode="search"
+                      placeholder="Buscar evento pelo título..."
+                      value={busca}
+                      onChange={(event) => setBusca(event.target.value)}
+                      className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-950 outline-none focus:ring-2 focus:ring-indigo-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+                      aria-describedby="dica-busca"
+                    />
                   </div>
 
-                  <div className="flex flex-col">
-                    <label htmlFor="filtro-tipo" className="text-xs mb-1 text-slate-700 dark:text-slate-200">
-                      Tipo
-                    </label>
-                    <select
-                      id="filtro-tipo"
-                      value={filtroTipo}
-                      onChange={(e) => setFiltroTipo(e.target.value)}
-                      className="p-2 rounded-md border dark:border-gray-700 dark:bg-zinc-900 dark:text-white text-sm"
-                    >
-                      <option value="todos">Todos</option>
-                      <option value="curso">Curso</option>
-                      <option value="oficina">Oficina</option>
-                      <option value="congresso">Congresso</option>
-                      <option value="webinar">Webinar</option>
-                    </select>
-                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:w-auto">
+                    <div>
+                      <label
+                        htmlFor="filtro-status"
+                        className="sr-only"
+                      >
+                        Filtrar por status
+                      </label>
 
-                  <div className="flex items-end">
-                    {(filtroStatus !== "todos" || filtroTipo !== "todos" || busca) && (
+                      <select
+                        id="filtro-status"
+                        value={filtroStatus}
+                        onChange={(event) =>
+                          setFiltroStatus(event.target.value)
+                        }
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none focus:ring-2 focus:ring-indigo-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+                      >
+                        <option value="todos">Todos os status</option>
+                        <option value="programado">Programados</option>
+                        <option value="andamento">Em andamento</option>
+                        <option value="encerrado">Encerrados</option>
+                      </select>
+                    </div>
+
+                    {possuiFiltros ? (
                       <button
                         type="button"
-                        onClick={() => { setFiltroStatus("todos"); setFiltroTipo("todos"); setBusca(""); }}
-                        className="w-full px-3 py-2 text-sm rounded-md bg-indigo-600 hover:bg-indigo-700 text-white"
-                        aria-label="Limpar filtros da agenda"
+                        onClick={limparFiltros}
+                        className="rounded-lg bg-indigo-700 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-700"
                       >
                         Limpar filtros
                       </button>
-                    )}
+                    ) : null}
                   </div>
                 </div>
 
-                <p id="dica-busca" className="text-xs text-gray-600 dark:text-gray-300">
-                  Dica: use busca + filtros para encontrar rapidamente um evento.
+                <p
+                  id="dica-busca"
+                  className="text-xs text-slate-600 dark:text-zinc-300"
+                >
+                  Use a busca e o filtro de status para localizar rapidamente
+                  eventos no calendário.
                 </p>
               </div>
 
-              {/* Mês + contagem + badges + export */}
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-3">
-                <div className="text-sm text-gray-600 dark:text-gray-300">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+                <div className="text-sm text-slate-700 dark:text-zinc-300">
                   Mês visível:{" "}
-                  <strong className="text-gray-900 dark:text-white">
-                    {format(viewDate, "MMMM 'de' yyyy", { locale: ptBR }).replace(/^\w/, (c) => c.toUpperCase())}
+                  <strong className="text-slate-950 dark:text-white">
+                    {formatarMesAno(viewDate)}
                   </strong>{" "}
-                  • <span aria-live="polite">{contagemMes} evento(s)</span>
+                  •{" "}
+                  <span aria-live="polite">
+                    {totaisMes.total} evento(s)
+                  </span>
                 </div>
 
                 <div className="flex flex-wrap gap-2 items-center">
-                  <TotalBadge label="Programados" value={totais.programado} variant="programado" />
-                  <TotalBadge label="Em andamento" value={totais.andamento} variant="andamento" />
-                  <TotalBadge label="Encerrados" value={totais.encerrado} variant="encerrado" />
+                  <TotalBadge
+                    label="Programados"
+                    value={totaisMes.programado}
+                    status="programado"
+                  />
+
+                  <TotalBadge
+                    label="Em andamento"
+                    value={totaisMes.andamento}
+                    status="andamento"
+                  />
+
+                  <TotalBadge
+                    label="Encerrados"
+                    value={totaisMes.encerrado}
+                    status="encerrado"
+                  />
+
                   <button
                     type="button"
                     onClick={exportarMesCSV}
-                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-slate-800 text-white text-xs hover:bg-slate-900"
-                    title="Exportar os eventos do mês visível em CSV"
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-700"
+                    title="Exportar eventos do mês visível em CSV"
                   >
-                    <Download className="w-3.5 h-3.5" />
-                    Exportar mês (CSV)
+                    <Download className="w-4 h-4" aria-hidden="true" />
+                    Exportar mês
                   </button>
                 </div>
               </div>
 
-              {/* Calendário */}
-              <div className="rounded-xl overflow-hidden ring-1 ring-indigo-200 dark:ring-indigo-900">
+              <div className="rounded-2xl overflow-hidden ring-1 ring-indigo-100 dark:ring-zinc-700 bg-white dark:bg-zinc-900">
                 {carregando ? (
                   <div className="p-4 space-y-3">
-                    <Skeleton height={28} />
-                    <Skeleton height={240} />
+                    <CarregandoSkeleton height={28} />
+                    <CarregandoSkeleton height={240} />
                   </div>
                 ) : (
                   <Calendar
                     value={viewDate}
-                    onActiveStartDateChange={({ activeStartDate }) =>
-                      setViewDate(activeStartDate || new Date())
-                    }
-                    onViewChange={({ activeStartDate }) =>
-                      setViewDate(activeStartDate || new Date())
-                    }
-                    onClickMonth={(dt) => setViewDate(dt)}
-                    onClickDay={(dt) => setViewDate(dt)}
+                    onActiveStartDateChange={({ activeStartDate }) => {
+                      setViewDate(activeStartDate || new Date());
+                    }}
+                    onViewChange={({ activeStartDate }) => {
+                      setViewDate(activeStartDate || new Date());
+                    }}
+                    onClickMonth={(date) => setViewDate(date)}
+                    onClickDay={(date) => setViewDate(date)}
                     locale="pt-BR"
                     className="react-calendar react-calendar-custom !bg-transparent"
                     prevLabel="‹"
                     nextLabel="›"
-                    aria-label="Calendário de eventos"
-                    tileClassName="!rounded-lg hover:!bg-gray-200 dark:hover:!bg-zinc-700 focus:!ring-2 focus:!ring-indigo-500"
-                    navigationLabel={({ date }) =>
-                      format(date, "MMMM yyyy", { locale: ptBR }).replace(/^\w/, (c) => c.toUpperCase())
-                    }
+                    aria-label="Calendário geral de eventos"
+                    tileClassName="!rounded-lg hover:!bg-slate-100 dark:hover:!bg-zinc-800 focus:!ring-2 focus:!ring-indigo-700"
+                    navigationLabel={({ date }) => formatarMesAno(date)}
                     tileContent={renderTileContent}
                   />
                 )}
               </div>
 
-              {/* Lista do dia selecionado */}
-              <div className="mt-5">
-                <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100 mb-2">
-                  {`Eventos em ${format(viewDate, "dd/MM/yyyy")}`}
+              <section className="mt-5" aria-labelledby="eventos-dia-titulo">
+                <h2
+                  id="eventos-dia-titulo"
+                  className="text-sm font-bold text-slate-800 dark:text-zinc-100 mb-2"
+                >
+                  Eventos em {formatarDataBR(diaSelecionadoYMD)}
                 </h2>
 
                 {!eventosDoDia.length ? (
-                  <div className="text-sm text-slate-600 dark:text-slate-300">
+                  <div className="rounded-xl bg-slate-50 dark:bg-zinc-800 p-4 text-sm text-slate-600 dark:text-zinc-300 ring-1 ring-slate-200 dark:ring-zinc-700">
                     Nenhum evento neste dia.
                   </div>
                 ) : (
                   <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                    {eventosDoDia.map((ev) => {
-                      const st = deriveStatus(ev);
-                      const c = colorByStatus[st] || colorByStatus.programado;
-                      const di = ymd(ev.data_inicio ?? ev.dataInicio ?? ev.data);
-                      const df = ymd(ev.data_fim ?? ev.data_termino ?? ev.dataTermino ?? ev.data);
-                      const hi = (ev.horario_inicio ?? "00:00").slice(0, 5);
-                      const hf = (ev.horario_fim ?? "00:00").slice(0, 5);
+                    {eventosDoDia.map((evento) => {
+                      const status = deriveStatus(evento);
+                      const config =
+                        STATUS_CONFIG[status] || STATUS_CONFIG.programado;
 
                       return (
                         <li
-                          key={ev.id ?? `${ev.titulo}-${di}-${hi}`}
-                          className={`rounded-xl ring-1 ${c.ring} ${c.bg} ${c.text} p-3`}
+                          key={
+                            evento.id ||
+                            `${evento.titulo}-${evento.data_inicio}-${evento.horario_inicio}`
+                          }
+                          className={`rounded-2xl ring-1 p-4 ${config.card}`}
                         >
-                          <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
-                              <p className="font-semibold break-words">{ev.titulo ?? ev.nome ?? "Evento"}</p>
-                              <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-                                <TipoChip tipo={ev.tipo} />
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ring-1 ring-black/10 bg-white/60 text-black">
-                                  {st.charAt(0).toUpperCase() + st.slice(1)}
-                                </span>
+                              <p className="font-extrabold break-words">
+                                {evento.titulo || "Evento"}
+                              </p>
+
+                              <div className="mt-2">
+                                <StatusChip status={status} />
                               </div>
                             </div>
                           </div>
 
-                          <div className="mt-2 text-sm flex flex-col gap-1">
+                          <div className="mt-3 text-sm flex flex-col gap-2">
                             <div className="inline-flex items-center gap-2">
-                              <Clock className="w-4 h-4" />
+                              <Clock className="w-4 h-4" aria-hidden="true" />
                               <span>
-                                {di ? format(new Date(di), "dd/MM/yyyy") : "—"} {hi && `• ${hi}`}
-                                {(df && df !== di) && ` — ${format(new Date(df), "dd/MM/yyyy")}${hf ? ` • ${hf}` : ""}`}
+                                {formatarDataBR(evento.data_inicio)} •{" "}
+                                {hh(evento.horario_inicio, "00:00")}
+                                {evento.data_fim &&
+                                evento.data_fim !== evento.data_inicio
+                                  ? ` — ${formatarDataBR(evento.data_fim)} • ${hh(
+                                      evento.horario_fim,
+                                      "23:59"
+                                    )}`
+                                  : ` às ${hh(evento.horario_fim, "23:59")}`}
                               </span>
                             </div>
-                            {(ev.local || ev.endereco || ev.unidade) && (
+
+                            {evento.local ? (
                               <div className="inline-flex items-center gap-2">
-                                <MapPin className="w-4 h-4" />
+                                <MapPin
+                                  className="w-4 h-4"
+                                  aria-hidden="true"
+                                />
                                 <span className="break-words">
-                                  {ev.local || ev.endereco || ev.unidade}
+                                  {evento.local}
                                 </span>
                               </div>
-                            )}
+                            ) : null}
                           </div>
 
-                          <div className="mt-3 flex justify-end">
+                          <div className="mt-4 flex justify-end">
                             <button
                               type="button"
-                              onClick={() => setSelecionado(ev)}
-                              className="px-3 py-1.5 rounded-md bg-black/80 text-white text-xs hover:bg-black"
-                              aria-label={`Ver detalhes do evento ${ev.titulo ?? ev.nome ?? ""}`}
+                              onClick={() => setSelecionado(evento)}
+                              className="px-3 py-2 rounded-lg bg-slate-950 text-white text-xs font-semibold hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-700"
+                              aria-label={`Ver detalhes do evento ${
+                                evento.titulo || ""
+                              }`}
                             >
                               Ver detalhes
                             </button>
@@ -738,7 +1172,7 @@ export default function AgendaAdministrador() {
                     })}
                   </ul>
                 )}
-              </div>
+              </section>
             </>
           )}
         </section>
@@ -747,13 +1181,12 @@ export default function AgendaAdministrador() {
           <LegendaEventos />
         </div>
 
-        {selecionado && (
-          <EventoDetalheModal
+        {selecionado ? (
+          <EventoDetalheModalLocal
             evento={selecionado}
-            aoFechar={() => setSelecionado(null)}
-            visivel
+            onClose={() => setSelecionado(null)}
           />
-        )}
+        ) : null}
       </main>
 
       <Footer />

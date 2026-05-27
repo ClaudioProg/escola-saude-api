@@ -1,27 +1,61 @@
-// ✅ src/App.jsx — PREMIUM REFINADO
-// - basename dinâmico e normalizado
-// - announcer de rota (a11y)
-// - destrava scroll ao trocar de rota
-// - scroll-to-top por navegação
-// - redirecionos legados (.html e aliases antigos)
-// - wrappers para rotas com params
-// - logs estratégicos em rotas públicas críticas
-// - fallback 404 público real
-// - rota pública explícita para redefinição de senha
-// - PrivateShell aplica AppShell + PrivateRoute
-// - role guard separado da checagem de auth
-// - Suspense fallback acessível
-// - lazy loading também para páginas admin pesadas
-// - alias explícito para certificados avulsos
-// - diagnóstico reforçado para rota crítica de certificados avulsos
+// ✅ frontend/src/App.jsx — v2.3
+// Atualizado em: 19/05/2026
+//
+// Plataforma Escola da Saúde
+//
+// Rotas oficiais da aplicação.
+//
+// Revisão premium:
+// - rotas públicas e privadas organizadas;
+// - sem aliases legados;
+// - sem rotas duplicadas;
+// - sem prefixo admin como contrato genérico;
+// - rotas em português, preferencialmente no singular;
+// - lazy loading;
+// - shell privado oficial;
+// - proteção por perfil;
+// - fallback acessível;
+// - 404 premium;
+// - anti-scroll-lock em troca de rota;
+// - sem PWA prompt manual;
+// - redefinição de senha sem token na URL.
+//
+// Alterações aplicadas:
+// - incluído domínio oficial "Calendário Anual de EPS";
+// - incluído domínio oficial "Cursos Online";
+// - incluído domínio oficial "Pesquisas";
+// - incluído domínio oficial "Interações";
+// - incluído domínio oficial "Auditoria";
+// - incluído domínio oficial "Caixa de Mensagens Institucional";
+// - incluído domínio oficial "Painel de Pendências Administrativas";
+// - incluído domínio oficial "Saúde da Plataforma";
+
+// - incluído domínio oficial "Modo Apresentação de Interações";
+// - rota usuário: /interacao;
+// - rota usuário: /mensagem;
+// - rotas administrador:
+//   - /administrador/interacao/votacao;
+//   - /administrador/interacao/quiz;
+//   - /administrador/interacao/nuvem-palavras;
+//   - /administrador/interacao/apresentacao/:id;
+//   - /administrador/auditoria;
+//   - /administrador/mensagem;
+//   - /administrador/pendencia;
+//   - /administrador/saude-plataforma;
+// - removido contrato legado de votação:
+//   - /votacao/:votacaoId;
+//   - /gestao/votacao.
+//
+// Observação:
+// - CursoTeste.jsx não foi montado como rota oficial por ser página de teste.
+// - Páginas legadas AdminVotacao.jsx e VotacaoUsuario.jsx não devem ser usadas
+//   no novo contrato de Interações.
 
 import {
   BrowserRouter,
   Routes,
   Route,
   useLocation,
-  useSearchParams,
-  useNavigate,
   Navigate,
   useParams,
   Outlet,
@@ -29,83 +63,157 @@ import {
 } from "react-router-dom";
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import {
-  RefreshCw,
-  Smartphone,
-  ShieldCheck,
   AlertTriangle,
   ArrowLeft,
   Home,
-  LogIn,
   KeyRound,
+  LogIn,
+  ShieldCheck,
 } from "lucide-react";
 
-import PrivateRoute from "./components/PrivateRoute";
-import EscolaAppShell from "./layout/EscolaAppShell";
+import PrivateRoute from "./components/layout/PrivateRoute";
+import EscolaAppShell from "./components/layout/EscolaAppShell";
+import { forceUnlockScroll } from "./utils/scroll";
 
-/* 🔄 Lazy loading das páginas */
+/* ─────────────────────────────────────────────────────────────
+   Lazy loading — páginas públicas
+────────────────────────────────────────────────────────────── */
+
 const Login = lazy(() => import("./pages/Login"));
 const Cadastro = lazy(() => import("./pages/Cadastro"));
-const ValidarCertificado = lazy(() => import("./pages/ValidarCertificado"));
-const HistoricoEventos = lazy(() => import("./pages/HistoricoEventos"));
-const RecuperarSenha = lazy(() => import("./pages/RecuperarSenha"));
+const EsqueciSenha = lazy(() => import("./pages/EsqueciSenha"));
 const RedefinirSenha = lazy(() => import("./pages/RedefinirSenha"));
-const Scanner = lazy(() => import("./pages/Scanner"));
 
+const ValidarCertificado = lazy(() => import("./pages/ValidarCertificado"));
+const ConfirmarPresenca = lazy(() => import("./pages/ConfirmarPresenca"));
+const HistoricoEventos = lazy(() => import("./pages/HistoricoEventos"));
+const Privacidade = lazy(() => import("./pages/Privacidade"));
+
+/* ─────────────────────────────────────────────────────────────
+   Lazy loading — usuário
+────────────────────────────────────────────────────────────── */
+
+const DashboardUsuario = lazy(() => import("./pages/DashboardUsuario"));
 const Eventos = lazy(() => import("./pages/Eventos"));
 const MinhasPresencas = lazy(() => import("./pages/MinhasPresencas"));
-const MeusCertificados = lazy(() => import("./pages/MeusCertificados"));
-
-const Teste = lazy(() => import("./pages/Teste"));
-const AgendaSalasUsuario = lazy(() => import("./pages/AgendaSalasUsuario"));
-const SolicitacaoCurso = lazy(() => import("./pages/SolicitacaoCurso"));
-const RepositorioTrabalhos = lazy(() => import("./pages/RepositorioTrabalhos"));
-const UsuarioSubmissao = lazy(() => import("./pages/UsuarioSubmissao"));
-const AvaliadorSubmissao = lazy(() => import("./pages/AvaliadorSubmissao"));
-
-const DashboardInstrutor = lazy(() => import("./pages/DashboardInstrutor"));
-const AgendaInstrutor = lazy(() => import("./pages/AgendaInstrutor"));
-const InstrutorPresenca = lazy(() => import("./pages/InstrutorPresenca"));
-const CertificadosInstrutor = lazy(() => import("./pages/CertificadosInstrutor"));
-const AvaliacaoInstrutor = lazy(() => import("./pages/AvaliacaoInstrutor"));
-
-const DashboardAdministrador = lazy(() => import("./pages/DashboardAdministrador"));
-const DashboardAnalitico = lazy(() => import("./pages/DashboardAnalitico"));
-const GestaoInstrutor = lazy(() => import("./pages/GestaoInstrutor"));
-const RelatoriosCustomizados = lazy(() => import("./pages/RelatoriosCustomizados"));
-const SolicitacaoCursoAdmin = lazy(() => import("./pages/SolicitacaoCursoAdmin"));
-const ListaPresencasTurma = lazy(() => import("./pages/ListaPresencasTurma"));
-const GestaoCertificados = lazy(() => import("./pages/GestaoCertificados"));
-const GestaoUsuarios = lazy(() => import("./pages/GestaoUsuarios"));
-const GerenciarEventos = lazy(() => import("./pages/GerenciarEventos"));
-const PresencasPorTurma = lazy(() => import("./pages/PresencasPorTurma"));
+const CertificadoUsuario = lazy(() => import("./pages/CertificadoUsuario"));
 const Perfil = lazy(() => import("./pages/Perfil"));
 const Ajuda = lazy(() => import("./pages/Ajuda"));
 const Notificacao = lazy(() => import("./pages/Notificacao"));
+
+const AgendaSalasUsuario = lazy(() => import("./pages/AgendaSalasUsuario"));
+const CalendarioAnualEPS = lazy(() => import("./pages/CalendarioAnualEPS"));
+const CursosOnline = lazy(() => import("./pages/CursosOnline"));
+const Pesquisas = lazy(() => import("./pages/Pesquisas"));
+const Interacoes = lazy(() => import("./pages/Interacoes"));
+const MensagemUsuario = lazy(() => import("./pages/MensagemUsuario"));
+
+const RepositorioTrabalhos = lazy(() => import("./pages/RepositorioTrabalhos"));
+const UsuarioSubmissao = lazy(() => import("./pages/UsuarioSubmissao"));
+const ManualUsuario = lazy(() => import("./pages/Manual"));
+const Scanner = lazy(() => import("./pages/Scanner"));
+
+/* ─────────────────────────────────────────────────────────────
+   Lazy loading — organizador / avaliador
+────────────────────────────────────────────────────────────── */
+
+const DashboardOrganizador = lazy(() => import("./pages/DashboardOrganizador"));
+const AgendaOrganizador = lazy(() => import("./pages/AgendaOrganizador"));
+const OrganizadorPresenca = lazy(() => import("./pages/OrganizadorPresenca"));
+const CertificadosOrganizador = lazy(() =>
+  import("./pages/CertificadosOrganizador")
+);
+const AvaliacaoOrganizador = lazy(() => import("./pages/AvaliacaoOrganizador"));
+const AvaliadorSubmissao = lazy(() => import("./pages/AvaliadorSubmissao"));
+const PresencasPorTurma = lazy(() => import("./pages/PresencasPorTurma"));
+
+/* ─────────────────────────────────────────────────────────────
+   Lazy loading — administrador
+────────────────────────────────────────────────────────────── */
+
+const DashboardAdministrador = lazy(() =>
+  import("./pages/DashboardAdministrador")
+);
+const DashboardAnalitico = lazy(() => import("./pages/DashboardAnalitico"));
+
 const AgendaAdministrador = lazy(() => import("./pages/AgendaAdministrador"));
-const GestaoPresencas = lazy(() => import("./pages/GestaoPresenca"));
-const GestaoInformacoes = lazy(() => import("./pages/GestaoInformacoes"));
-const CancelarInscricaoAdmin = lazy(() => import("./pages/CancelarInscricaoAdmin"));
-const AdminAvaliacao = lazy(() => import("./pages/AdminAvaliacao"));
-const VotacaoUsuario = lazy(() => import("./pages/VotacaoUsuario"));
 const AgendaSalasAdmin = lazy(() => import("./pages/AgendaSalasAdmin"));
+const CalendarioAnualEPSAdmin = lazy(() =>
+  import("./pages/CalendarioAnualEPSAdmin")
+);
+const CalendarioBloqueiosAdmin = lazy(() =>
+  import("./pages/CalendarioBloqueiosAdmin")
+);
+
+const CursosOnlineAdmin = lazy(() => import("./pages/CursosOnlineAdmin"));
+const PesquisasAdmin = lazy(() => import("./pages/PesquisasAdmin"));
+
+const InteracoesVotacaoAdmin = lazy(() =>
+  import("./pages/InteracoesVotacaoAdmin")
+);
+const InteracoesQuizAdmin = lazy(() => import("./pages/InteracoesQuizAdmin"));
+const InteracoesNuvemPalavrasAdmin = lazy(() =>
+  import("./pages/InteracoesNuvemPalavrasAdmin")
+);
+const InteracoesApresentacao = lazy(() =>
+  import("./pages/InteracoesApresentacao")
+);
+
+const AuditoriaAdmin = lazy(() => import("./pages/AuditoriaAdmin"));
+const MensagemAdmin = lazy(() => import("./pages/MensagemAdmin"));
+const PendenciasAdmin = lazy(() => import("./pages/PendenciasAdmin"));
+const SaudePlataformaAdmin = lazy(() =>
+  import("./pages/SaudePlataformaAdmin")
+);
+
+const GerenciarEventos = lazy(() => import("./pages/GerenciarEventos"));
+const GestaoInformacoes = lazy(() => import("./pages/GestaoInformacoes"));
+const GestaoUsuarios = lazy(() => import("./pages/GestaoUsuarios"));
+const GestaoOrganizador = lazy(() => import("./pages/GestaoOrganizador"));
+const GestaoCertificados = lazy(() => import("./pages/GestaoCertificados"));
+const GestaoPresencas = lazy(() => import("./pages/GestaoPresenca"));
+
+const ListaPresencasTurma = lazy(() => import("./pages/ListaPresencasTurma"));
+const RelatoriosCustomizados = lazy(() =>
+  import("./pages/RelatoriosCustomizados")
+);
+
+const AdminAvaliacao = lazy(() => import("./pages/AdminAvaliacao"));
 const AdminChamadaForm = lazy(() => import("./pages/AdminChamadaForm"));
-const CalendarioBloqueiosAdmin = lazy(() => import("./pages/CalendarioBloqueiosAdmin"));
+const AdminSubmissao = lazy(() => import("./pages/AdminSubmissao"));
+
+const CancelarInscricaoAdmin = lazy(() =>
+  import("./pages/CancelarInscricaoAdmin")
+);
 const CertificadosAvulsos = lazy(() => import("./pages/CertificadosAvulsos"));
 const QRCodesEventosAdmin = lazy(() => import("./pages/QRCodesEventosAdmin"));
 
-const ConfirmarPresenca = lazy(() => import("./pages/ConfirmarPresenca"));
-const ManualUsuario = lazy(() => import("./pages/usuario/Manual"));
-const Privacidade = lazy(() => import("./pages/Privacidade"));
-const HomeEscola = lazy(() => import("./pages/HomeEscola"));
-const AdminVotacao = lazy(() => import("./pages/AdminVotacao"));
-const AdminSubmissao = lazy(() => import("./pages/AdminSubmissao"));
+/* ─────────────────────────────────────────────────────────────
+   Constantes
+────────────────────────────────────────────────────────────── */
 
 const IS_DEV =
-  typeof import.meta !== "undefined" &&
-  Boolean(import.meta.env?.DEV);
+  typeof import.meta !== "undefined" && Boolean(import.meta.env?.DEV);
+
+const PERFIL = {
+  usuario: "usuario",
+  organizador: "organizador",
+  administrador: "administrador",
+};
+
+const PERFIL_PERMITIDO = {
+  usuario: [PERFIL.usuario, PERFIL.organizador, PERFIL.administrador],
+  organizador: [PERFIL.organizador, PERFIL.administrador],
+  administrador: [PERFIL.administrador],
+};
+
+/* ─────────────────────────────────────────────────────────────
+   Helpers
+────────────────────────────────────────────────────────────── */
 
 function debugLog(scope, payload) {
   if (!IS_DEV) return;
+
   try {
     console.log(scope, payload);
   } catch {
@@ -116,7 +224,9 @@ function debugLog(scope, payload) {
 function normalizeBasename(value) {
   const raw = String(value || "/").trim();
 
-  if (!raw || raw === "/") return "/";
+  if (!raw || raw === "/") {
+    return "/";
+  }
 
   const cleaned = raw
     .replace(/^https?:\/\/[^/]+/i, "")
@@ -126,21 +236,10 @@ function normalizeBasename(value) {
   return cleaned || "/";
 }
 
-function maskToken(token) {
-  const value = String(token || "");
-  if (!value) return { present: false, length: 0, preview: "" };
+/* ─────────────────────────────────────────────────────────────
+   Comportamento global / acessibilidade
+────────────────────────────────────────────────────────────── */
 
-  return {
-    present: true,
-    length: value.length,
-    preview:
-      value.length <= 10
-        ? "***"
-        : `${value.slice(0, 6)}...${value.slice(-4)}`,
-  };
-}
-
-/* A11y: Announcer de mudanças de rota */
 function RouteChangeAnnouncer() {
   const location = useLocation();
   const [message, setMessage] = useState("Carregado");
@@ -149,6 +248,7 @@ function RouteChangeAnnouncer() {
     const rawPath = location.pathname.replace(/^\/+/, "") || "início";
     const safePath =
       rawPath.length > 120 ? `${rawPath.slice(0, 117)}...` : rawPath;
+
     setMessage(`Página carregada: ${safePath}`);
   }, [location.pathname]);
 
@@ -159,16 +259,16 @@ function RouteChangeAnnouncer() {
   );
 }
 
-/* Logs estratégicos em rotas públicas críticas */
 function PublicRouteDiagnostics() {
   const location = useLocation();
 
   useEffect(() => {
     const path = location.pathname || "/";
+
     const isAuthPublicRoute =
       path.startsWith("/login") ||
       path.startsWith("/cadastro") ||
-      path.startsWith("/recuperar-senha") ||
+      path.startsWith("/esqueci-senha") ||
       path.startsWith("/redefinir-senha");
 
     if (!isAuthPublicRoute) return;
@@ -183,16 +283,19 @@ function PublicRouteDiagnostics() {
   return null;
 }
 
-/* Logs estratégicos para telas críticas */
 function CriticalRouteDiagnostics() {
   const location = useLocation();
 
   useEffect(() => {
     const path = location.pathname || "/";
+
     const isCriticalRoute =
-      path.startsWith("/certificados-avulsos") ||
-      path.startsWith("/admin/certificados-avulsos") ||
-      path.startsWith("/gestao-certificados");
+      path.startsWith("/administrador") ||
+      path.startsWith("/gestao") ||
+      path.startsWith("/certificado-avulso") ||
+      path.startsWith("/relatorio-customizado") ||
+      path.startsWith("/chamada") ||
+      path.startsWith("/submissao");
 
     if (!isCriticalRoute) return;
 
@@ -206,208 +309,147 @@ function CriticalRouteDiagnostics() {
   return null;
 }
 
-/* Hotfix global: destrava scroll preso ao trocar de rota */
 function ScrollUnlockOnRouteChange() {
   const location = useLocation();
 
   useEffect(() => {
-    const unlock = () => {
-      const html = document.documentElement;
-      const body = document.body;
+    forceUnlockScroll();
 
-      if (!html || !body) return;
+    const timer = window.setTimeout(() => {
+      forceUnlockScroll();
+    }, 0);
 
-      html.style.overflow = "";
-      html.style.touchAction = "";
-      html.classList.remove("overflow-hidden", "modal-open", "no-scroll");
-
-      body.style.overflow = "";
-      body.style.touchAction = "";
-      body.classList.remove("overflow-hidden", "modal-open", "no-scroll");
-
-      if (body.style.position === "fixed") {
-        const top = parseInt(body.style.top || "0", 10) || 0;
-        body.style.position = "";
-        body.style.top = "";
-        body.style.left = "";
-        body.style.right = "";
-        body.style.width = "";
-
-        try {
-          window.scrollTo({ top: -top, behavior: "auto" });
-        } catch {
-          window.scrollTo(0, -top);
-        }
-      }
+    return () => {
+      window.clearTimeout(timer);
     };
-
-    unlock();
-    const t = window.setTimeout(unlock, 0);
-
-    return () => window.clearTimeout(t);
   }, [location.key]);
 
   return null;
 }
 
-/* UX: Scroll para o topo em cada navegação */
 function ScrollToTop() {
   const { pathname } = useLocation();
 
   useEffect(() => {
     try {
-      window.scrollTo({ top: 0, behavior: "auto" });
-    } catch {
       window.scrollTo(0, 0);
+    } catch {
+      // noop
     }
   }, [pathname]);
 
   return null;
 }
 
-/* Alias para URLs antigas .html */
-function HtmlAliasRedirect() {
-  const nav = useNavigate();
-  const loc = useLocation();
+/* ─────────────────────────────────────────────────────────────
+   Wrappers
+────────────────────────────────────────────────────────────── */
 
-  useEffect(() => {
-    const semHtml = loc.pathname.replace(/\.html$/i, "");
-    const destino = `${semHtml}${loc.search || ""}${loc.hash || ""}`;
+function AdminChamadaFormWrapper() {
+  const { id } = useParams();
 
-    debugLog("[APP][HTML_ALIAS_REDIRECT]", {
-      from: `${loc.pathname}${loc.search || ""}${loc.hash || ""}`,
-      to: destino,
-    });
+  return <AdminChamadaForm chamadaId={id} />;
+}
 
-    nav(destino, { replace: true });
-  }, [loc.pathname, loc.search, loc.hash, nav]);
+function AdminSubmissaoRouteWrapper() {
+  const { chamadaId } = useParams();
 
   return (
-    <div className="min-h-[60vh] flex items-center justify-center text-sm text-gray-600 dark:text-gray-300">
-      Redirecionando…
-    </div>
+    <AdminSubmissao chamadaId={chamadaId ? Number(chamadaId) : undefined} />
   );
 }
 
-/* Alias simples de rota */
-function RouteAliasRedirect({ to }) {
-  const location = useLocation();
-  const destination = useMemo(
-    () => `${to}${location.search || ""}${location.hash || ""}`,
-    [to, location.search, location.hash]
-  );
-
-  useEffect(() => {
-    debugLog("[APP][ROUTE_ALIAS_REDIRECT]", {
-      from: `${location.pathname}${location.search || ""}${location.hash || ""}`,
-      to: destination,
-    });
-  }, [location.pathname, location.search, location.hash, destination]);
-
-  return <Navigate to={destination} replace />;
-}
-
-/* Wrapper legado para QR antigo com ?codigo= */
-function ValidarPresencaRouter() {
-  const [sp] = useSearchParams();
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    const codigoRaw = sp.get("codigo") || sp.get("c") || "";
-    let raw = codigoRaw;
-
-    try {
-      raw = decodeURIComponent(codigoRaw);
-    } catch {
-      // noop
-    }
-
-    let turmaId = null;
-    let token = null;
-
-    try {
-      const u = new URL(raw);
-
-      turmaId =
-        u.searchParams.get("turma") ||
-        u.searchParams.get("turma_id") ||
-        u.searchParams.get("id");
-
-      token = u.searchParams.get("t") || u.searchParams.get("token");
-
-      if (!turmaId) {
-        const parts = (u.pathname || "").split("/").filter(Boolean);
-        const idx = parts.indexOf("presenca");
-        if (idx >= 0 && parts[idx + 1]) turmaId = parts[idx + 1];
-      }
-
-      if (!turmaId) {
-        const m = (u.pathname || "").match(/\/presenca\/(\d+)/);
-        if (m?.[1]) turmaId = m[1];
-      }
-
-      if (!turmaId) {
-        const decPath = decodeURIComponent(u.pathname || "");
-        const m2 = decPath.match(/\/presenca\/(\d+)/);
-        if (m2?.[1]) turmaId = m2[1];
-      }
-    } catch {
-      const dec = (() => {
-        try {
-          return decodeURIComponent(raw);
-        } catch {
-          return raw;
-        }
-      })();
-
-      const qs = dec.includes("?") ? dec.split("?")[1] : "";
-      const qsp = new URLSearchParams(qs);
-
-      token = qsp.get("t") || qsp.get("token") || token;
-      turmaId =
-        qsp.get("turma") ||
-        qsp.get("turma_id") ||
-        qsp.get("id") ||
-        turmaId;
-
-      if (!turmaId) {
-        const pathOnly = dec.split("?")[0] || "";
-        const parts = pathOnly.split("/").filter(Boolean);
-        const idx = parts.indexOf("presenca");
-        if (idx >= 0 && parts[idx + 1]) turmaId = parts[idx + 1];
-      }
-
-      if (!turmaId) {
-        const m = dec.match(/\/presenca\/(\d+)/);
-        if (m?.[1]) turmaId = m[1];
-      }
-    }
-
-    const search = new URLSearchParams();
-    if (turmaId) search.set("turma", String(turmaId));
-    if (token) search.set("t", token);
-
-    const dest = `/presenca${search.toString() ? `?${search.toString()}` : ""}`;
-
-    debugLog("[APP][QR_LEGACY_REDIRECT]", {
-      turmaId,
-      tokenPresent: Boolean(token),
-      dest,
-    });
-
-    navigate(dest, { replace: true });
-  }, [sp, navigate]);
-
+function AuthCheckingScreen() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-zinc-900">
-      <div className="text-sm text-gray-600 dark:text-gray-200">
-        Redirecionando…
+    <div className="grid min-h-screen place-items-center bg-gradient-to-br from-emerald-50 via-white to-teal-50 px-6 dark:from-zinc-950 dark:via-zinc-950 dark:to-emerald-950/30">
+      <div className="w-full max-w-md rounded-3xl border border-emerald-100 bg-white/90 p-6 shadow-xl dark:border-emerald-900/40 dark:bg-zinc-900/85">
+        <div className="flex items-center gap-4">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 dark:bg-emerald-900/30">
+            <ShieldCheck className="h-7 w-7 text-emerald-700 dark:text-emerald-300" />
+          </div>
+
+          <div className="min-w-0">
+            <h1 className="text-base font-extrabold text-zinc-900 dark:text-white">
+              Verificando sua sessão
+            </h1>
+
+            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+              Aguarde um instante enquanto validamos seu acesso.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-5 space-y-2">
+          <div className="h-2.5 w-full overflow-hidden rounded-full bg-emerald-100 dark:bg-zinc-800">
+            <div className="h-full w-1/2 animate-pulse rounded-full bg-emerald-600" />
+          </div>
+
+          <div className="grid gap-2 pt-2">
+            <div className="h-3 w-4/5 animate-pulse rounded bg-zinc-200/80 dark:bg-zinc-800" />
+            <div className="h-3 w-3/5 animate-pulse rounded bg-zinc-200/80 dark:bg-zinc-800" />
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-/* Página 404 pública real */
+function PrivateShell() {
+  return (
+    <PrivateRoute fallback={<AuthCheckingScreen />}>
+      <EscolaAppShell>
+        <Outlet />
+      </EscolaAppShell>
+    </PrivateRoute>
+  );
+}
+
+function RoleGate({ permitido, children }) {
+  return (
+    <PrivateRoute permitido={permitido} fallback={<AuthCheckingScreen />}>
+      {children}
+    </PrivateRoute>
+  );
+}
+
+function ProtectedPage({ permitido, element }) {
+  return <RoleGate permitido={permitido}>{element}</RoleGate>;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Fallback Suspense
+────────────────────────────────────────────────────────────── */
+
+function SuspenseFallback() {
+  return (
+    <div className="flex min-h-[60vh] items-center justify-center p-6">
+      <div className="w-full max-w-sm rounded-3xl border border-slate-200 bg-white/70 p-5 shadow-sm dark:border-white/10 dark:bg-zinc-900/55">
+        <div className="flex items-center gap-3">
+          <span className="inline-block h-3 w-3 animate-pulse rounded-full bg-emerald-600" />
+
+          <span
+            role="status"
+            aria-live="polite"
+            className="text-sm font-semibold text-slate-700 dark:text-zinc-200"
+          >
+            Carregando…
+          </span>
+        </div>
+
+        <div className="mt-4 space-y-2">
+          <div className="h-3 w-3/5 animate-pulse rounded bg-slate-200/70 dark:bg-white/10" />
+          <div className="h-3 w-4/5 animate-pulse rounded bg-slate-200/70 dark:bg-white/10" />
+          <div className="h-3 w-2/3 animate-pulse rounded bg-slate-200/70 dark:bg-white/10" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   404
+────────────────────────────────────────────────────────────── */
+
 function NotFoundPage() {
   const location = useLocation();
 
@@ -420,33 +462,33 @@ function NotFoundPage() {
   }, [location]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-cyan-50 dark:from-zinc-950 dark:via-zinc-950 dark:to-emerald-950/20 px-6 py-10">
+    <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-cyan-50 px-6 py-10 dark:from-zinc-950 dark:via-zinc-950 dark:to-emerald-950/20">
       <div className="mx-auto flex min-h-[80vh] max-w-3xl items-center justify-center">
-        <div className="w-full rounded-3xl border border-emerald-100 dark:border-emerald-900/40 bg-white/95 dark:bg-zinc-900/90 shadow-xl p-6 sm:p-8">
+        <div className="w-full rounded-3xl border border-emerald-100 bg-white/95 p-6 shadow-xl dark:border-emerald-900/40 dark:bg-zinc-900/90 sm:p-8">
           <div className="flex flex-col gap-6 sm:flex-row sm:items-start">
             <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-amber-100 dark:bg-amber-900/30">
               <AlertTriangle className="h-8 w-8 text-amber-700 dark:text-amber-300" />
             </div>
 
             <div className="min-w-0 flex-1">
-              <span className="inline-flex rounded-full border border-amber-200 dark:border-amber-800 px-3 py-1 text-xs font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+              <span className="inline-flex rounded-full border border-amber-200 px-3 py-1 text-xs font-bold uppercase tracking-wide text-amber-700 dark:border-amber-800 dark:text-amber-300">
                 Erro 404
               </span>
 
-              <h1 className="mt-3 text-2xl sm:text-3xl font-black tracking-tight text-zinc-900 dark:text-white">
+              <h1 className="mt-3 text-2xl font-black tracking-tight text-zinc-900 dark:text-white sm:text-3xl">
                 Página não encontrada
               </h1>
 
-              <p className="mt-3 text-sm sm:text-base leading-6 text-zinc-600 dark:text-zinc-300">
-                O endereço acessado não corresponde a uma rota válida da plataforma.
-                Isso pode acontecer por link antigo, URL digitada incorretamente ou
-                redirecionamento inválido.
+              <p className="mt-3 text-sm leading-6 text-zinc-600 dark:text-zinc-300 sm:text-base">
+                O endereço acessado não corresponde a uma rota oficial da
+                plataforma. Verifique o link ou retorne ao acesso principal.
               </p>
 
-              <div className="mt-5 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/60 p-4">
+              <div className="mt-5 rounded-2xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-950/60">
                 <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                   Endereço acessado
                 </p>
+
                 <p className="mt-1 break-all text-sm font-medium text-zinc-800 dark:text-zinc-100">
                   {location.pathname}
                   {location.search}
@@ -464,17 +506,17 @@ function NotFoundPage() {
                 </Link>
 
                 <Link
-                  to="/recuperar-senha"
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-zinc-200 dark:border-zinc-700 px-5 py-3 text-sm font-bold text-zinc-800 dark:text-zinc-100 transition hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
+                  to="/esqueci-senha"
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-zinc-200 px-5 py-3 text-sm font-bold text-zinc-800 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-800/60"
                 >
                   <KeyRound className="h-4 w-4" />
-                  Recuperar senha
+                  Esqueci senha
                 </Link>
 
                 <button
                   type="button"
                   onClick={() => window.history.back()}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-zinc-200 dark:border-zinc-700 px-5 py-3 text-sm font-bold text-zinc-800 dark:text-zinc-100 transition hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-zinc-200 px-5 py-3 text-sm font-bold text-zinc-800 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-800/60"
                 >
                   <ArrowLeft className="h-4 w-4" />
                   Voltar
@@ -484,7 +526,7 @@ function NotFoundPage() {
               <div className="mt-4">
                 <Link
                   to="/login"
-                  className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-700 dark:text-emerald-300 hover:underline"
+                  className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-700 hover:underline dark:text-emerald-300"
                 >
                   <Home className="h-4 w-4" />
                   Ir para o acesso principal
@@ -498,571 +540,499 @@ function NotFoundPage() {
   );
 }
 
-/* Aviso global de atualização do PWA */
-function PwaUpdatePrompt() {
-  const [open, setOpen] = useState(false);
-  const [updating, setUpdating] = useState(false);
+/* ─────────────────────────────────────────────────────────────
+   Rotas públicas
+────────────────────────────────────────────────────────────── */
 
-  useEffect(() => {
-    const onUpdate = () => setOpen(true);
-    window.addEventListener("pwa-update-available", onUpdate);
-    return () => window.removeEventListener("pwa-update-available", onUpdate);
-  }, []);
-
-  const handleUpdate = async () => {
-    try {
-      setUpdating(true);
-
-      if (typeof window.__APP_UPDATE_SW__ === "function") {
-        await window.__APP_UPDATE_SW__(true);
-      }
-
-      window.location.reload();
-    } catch (error) {
-      console.error("[PWA] Erro ao atualizar app:", error);
-      window.location.reload();
-    }
-  };
-
-  if (!open) return null;
-
+function PublicRoutes() {
   return (
-    <div className="fixed inset-x-0 bottom-4 z-[9999] px-4">
-      <div className="mx-auto max-w-md rounded-2xl border border-cyan-200 dark:border-cyan-900 bg-white dark:bg-zinc-950 shadow-2xl p-4">
-        <div className="flex items-start gap-3">
-          <div className="rounded-2xl p-2 bg-cyan-100 dark:bg-cyan-900/30">
-            <Smartphone className="w-5 h-5 text-cyan-700 dark:text-cyan-200" />
-          </div>
+    <>
+      <Route path="/login" element={<Login />} />
+      <Route path="/cadastro" element={<Cadastro />} />
 
-          <div className="min-w-0 flex-1">
-            <h3 className="text-sm font-extrabold text-zinc-900 dark:text-white">
-              Nova versão disponível
-            </h3>
-            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-              Atualize o aplicativo para usar a versão mais recente e evitar falhas de funcionamento.
-            </p>
+      <Route path="/esqueci-senha" element={<EsqueciSenha />} />
+      <Route path="/redefinir-senha" element={<RedefinirSenha />} />
 
-            <div className="mt-3 flex gap-2">
-              <button
-                type="button"
-                onClick={handleUpdate}
-                disabled={updating}
-                className="inline-flex items-center gap-2 rounded-xl bg-cyan-700 hover:bg-cyan-800 text-white px-4 py-2 text-sm font-extrabold disabled:opacity-60"
-              >
-                <RefreshCw className={`w-4 h-4 ${updating ? "animate-spin" : ""}`} />
-                {updating ? "Atualizando..." : "Atualizar agora"}
-              </button>
+      <Route path="/privacidade" element={<Privacidade />} />
+      <Route path="/validar-certificado" element={<ValidarCertificado />} />
 
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                disabled={updating}
-                className="rounded-xl border border-zinc-200 dark:border-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-800 dark:text-zinc-200 disabled:opacity-60"
-              >
-                Depois
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+      <Route path="/presenca" element={<ConfirmarPresenca />} />
+      <Route path="/presenca/:turmaId" element={<ConfirmarPresenca />} />
+
+      <Route path="/historico" element={<HistoricoEventos />} />
+    </>
   );
 }
 
-/* Wrappers para rotas com params */
-function AdminChamadaFormWrapper() {
-  const { id } = useParams();
-  return <AdminChamadaForm chamadaId={id} />;
-}
+/* ─────────────────────────────────────────────────────────────
+   Rotas privadas — usuário
+────────────────────────────────────────────────────────────── */
 
-function AdminSubmissaoRouteWrapper() {
-  const { chamadaId } = useParams();
-  return <AdminSubmissao chamadaId={chamadaId ? Number(chamadaId) : undefined} />;
-}
-
-/* Wrapper público para redefinição de senha */
-function RedefinirSenhaRouteWrapper() {
-  const { token } = useParams();
-
-  useEffect(() => {
-    const masked = maskToken(token);
-
-    debugLog("[AUTH][RESET_ROUTE_ACCESSED]", {
-      tokenPresent: masked.present,
-      tokenLength: masked.length,
-      tokenPreview: masked.preview,
-    });
-  }, [token]);
-
-  if (!token) {
-    debugLog("[AUTH][RESET_ROUTE_MISSING_TOKEN]", {
-      pathname: "/redefinir-senha/:token",
-    });
-
-    return <Navigate to="/recuperar-senha" replace />;
-  }
-
-  return <RedefinirSenha />;
-}
-
-/* ✅ Splash elegante durante checagem auth */
-function AuthCheckingScreen() {
+function UsuarioRoutes() {
   return (
-    <div className="min-h-screen grid place-items-center bg-gradient-to-br from-emerald-50 via-white to-teal-50 dark:from-zinc-950 dark:via-zinc-950 dark:to-emerald-950/30 px-6">
-      <div className="w-full max-w-md rounded-3xl border border-emerald-100 dark:border-emerald-900/40 bg-white/90 dark:bg-zinc-900/85 shadow-xl p-6">
-        <div className="flex items-center gap-4">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 dark:bg-emerald-900/30">
-            <ShieldCheck className="h-7 w-7 text-emerald-700 dark:text-emerald-300" />
-          </div>
+    <>
+      <Route index element={<Navigate to="/painel" replace />} />
 
-          <div className="min-w-0">
-            <h1 className="text-base font-extrabold text-zinc-900 dark:text-white">
-              Verificando sua sessão
-            </h1>
-            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-              Aguarde um instante enquanto validamos seu acesso.
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-5 space-y-2">
-          <div className="h-2.5 w-full overflow-hidden rounded-full bg-emerald-100 dark:bg-zinc-800">
-            <div className="h-full w-1/2 animate-pulse rounded-full bg-emerald-600" />
-          </div>
-          <div className="grid gap-2 pt-2">
-            <div className="h-3 w-4/5 rounded bg-zinc-200/80 dark:bg-zinc-800 animate-pulse" />
-            <div className="h-3 w-3/5 rounded bg-zinc-200/80 dark:bg-zinc-800 animate-pulse" />
-          </div>
-        </div>
-      </div>
-    </div>
+      <Route path="painel" element={<DashboardUsuario />} />
+      <Route path="notificacao" element={<Notificacao />} />
+      <Route path="evento" element={<Eventos />} />
+      <Route path="minha-presenca" element={<MinhasPresencas />} />
+      <Route path="certificado" element={<CertificadoUsuario />} />
+      <Route path="reserva" element={<AgendaSalasUsuario />} />
+      <Route path="calendario-eps" element={<CalendarioAnualEPS />} />
+      <Route path="curso-online" element={<CursosOnline />} />
+      <Route path="pesquisa" element={<Pesquisas />} />
+      <Route path="interacao" element={<Interacoes />} />
+      <Route path="mensagem" element={<MensagemUsuario />} />
+      <Route path="submissao" element={<UsuarioSubmissao />} />
+      <Route path="trabalho" element={<RepositorioTrabalhos />} />
+      <Route path="manual" element={<ManualUsuario />} />
+      <Route path="scanner" element={<Scanner />} />
+      <Route path="perfil" element={<Perfil />} />
+      <Route path="ajuda" element={<Ajuda />} />
+    </>
   );
 }
 
-/* ✅ Layout privado */
-function PrivateShell() {
+/* ─────────────────────────────────────────────────────────────
+   Rotas privadas — organizador / avaliador
+────────────────────────────────────────────────────────────── */
+
+function OrganizadorRoutes() {
   return (
-    <PrivateRoute fallback={<AuthCheckingScreen />}>
-      <EscolaAppShell>
-        <Outlet />
-      </EscolaAppShell>
-    </PrivateRoute>
+    <>
+      <Route
+        path="organizador"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.organizador}
+            element={<DashboardOrganizador />}
+          />
+        }
+      />
+
+      <Route
+        path="organizador/agenda"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.organizador}
+            element={<AgendaOrganizador />}
+          />
+        }
+      />
+
+      <Route
+        path="organizador/presenca"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.organizador}
+            element={<OrganizadorPresenca />}
+          />
+        }
+      />
+
+      <Route
+        path="organizador/presenca/:turmaId"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.organizador}
+            element={<PresencasPorTurma />}
+          />
+        }
+      />
+
+      <Route
+        path="organizador/certificado"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.organizador}
+            element={<CertificadosOrganizador />}
+          />
+        }
+      />
+
+      <Route
+        path="organizador/avaliacao"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.organizador}
+            element={<AvaliacaoOrganizador />}
+          />
+        }
+      />
+
+      <Route
+        path="organizador/submissao"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.organizador}
+            element={<AvaliadorSubmissao />}
+          />
+        }
+      />
+    </>
   );
 }
 
-/* ✅ Guard só de perfil dentro do shell já autenticado */
-function OnlyRoles({ permitido, children }) {
+/* ─────────────────────────────────────────────────────────────
+   Rotas privadas — administrador
+────────────────────────────────────────────────────────────── */
+
+function AdministradorRoutes() {
   return (
-    <PrivateRoute permitido={permitido} fallback={<AuthCheckingScreen />}>
-      {children}
-    </PrivateRoute>
+    <>
+      <Route
+        path="administrador"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<DashboardAdministrador />}
+          />
+        }
+      />
+
+      <Route
+        path="dashboard-analitico"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<DashboardAnalitico />}
+          />
+        }
+      />
+
+      <Route
+        path="administrador/agenda"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<AgendaAdministrador />}
+          />
+        }
+      />
+
+      <Route
+        path="administrador/reserva"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<AgendaSalasAdmin />}
+          />
+        }
+      />
+
+      <Route
+        path="administrador/calendario-eps"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<CalendarioAnualEPSAdmin />}
+          />
+        }
+      />
+
+      <Route
+        path="administrador/curso-online"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<CursosOnlineAdmin />}
+          />
+        }
+      />
+
+      <Route
+        path="administrador/pesquisa"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<PesquisasAdmin />}
+          />
+        }
+      />
+
+      <Route
+        path="administrador/interacao/votacao"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<InteracoesVotacaoAdmin />}
+          />
+        }
+      />
+
+      <Route
+        path="administrador/interacao/quiz"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<InteracoesQuizAdmin />}
+          />
+        }
+      />
+
+      <Route
+        path="administrador/interacao/nuvem-palavras"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<InteracoesNuvemPalavrasAdmin />}
+          />
+        }
+      />
+
+      <Route
+        path="administrador/interacao/apresentacao/:id"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<InteracoesApresentacao />}
+          />
+        }
+      />
+
+      <Route
+        path="administrador/auditoria"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<AuditoriaAdmin />}
+          />
+        }
+      />
+
+      <Route
+        path="administrador/mensagem"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<MensagemAdmin />}
+          />
+        }
+      />
+
+      <Route
+        path="administrador/pendencia"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<PendenciasAdmin />}
+          />
+        }
+      />
+
+      <Route
+        path="administrador/saude-plataforma"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<SaudePlataformaAdmin />}
+          />
+        }
+      />
+
+      <Route
+        path="certificado-avulso"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<CertificadosAvulsos />}
+          />
+        }
+      />
+
+      <Route
+        path="relatorio-customizado"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<RelatoriosCustomizados />}
+          />
+        }
+      />
+
+      <Route
+        path="gestao/informacao"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<GestaoInformacoes />}
+          />
+        }
+      />
+
+      <Route
+        path="gestao/usuario"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<GestaoUsuarios />}
+          />
+        }
+      />
+
+      <Route
+        path="gestao/organizador"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<GestaoOrganizador />}
+          />
+        }
+      />
+
+      <Route
+        path="gestao/evento"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<GerenciarEventos />}
+          />
+        }
+      />
+
+      <Route
+        path="gestao/presenca"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<GestaoPresencas />}
+          />
+        }
+      />
+
+      <Route
+        path="gestao/certificado"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<GestaoCertificados />}
+          />
+        }
+      />
+
+      <Route
+        path="gestao/avaliacao"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<AdminAvaliacao />}
+          />
+        }
+      />
+
+      <Route
+        path="gestao/qrcode"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<QRCodesEventosAdmin />}
+          />
+        }
+      />
+
+      <Route
+        path="gestao/cancelamento-inscricao"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<CancelarInscricaoAdmin />}
+          />
+        }
+      />
+
+      <Route
+        path="gestao/calendario-bloqueio"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<CalendarioBloqueiosAdmin />}
+          />
+        }
+      />
+
+      <Route
+        path="gestao/lista-presenca-turma"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<ListaPresencasTurma />}
+          />
+        }
+      />
+
+      <Route
+        path="chamada/nova"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<AdminChamadaForm />}
+          />
+        }
+      />
+
+      <Route
+        path="chamada/:id"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<AdminChamadaFormWrapper />}
+          />
+        }
+      />
+
+      <Route
+        path="gestao/submissao"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<AdminSubmissaoRouteWrapper />}
+          />
+        }
+      />
+
+      <Route
+        path="chamada/:chamadaId/submissao"
+        element={
+          <ProtectedPage
+            permitido={PERFIL_PERMITIDO.administrador}
+            element={<AdminSubmissaoRouteWrapper />}
+          />
+        }
+      />
+    </>
   );
 }
 
-function ProtectedPage({ permitido, element }) {
-  return <OnlyRoles permitido={permitido}>{element}</OnlyRoles>;
-}
+/* ─────────────────────────────────────────────────────────────
+   App
+────────────────────────────────────────────────────────────── */
 
-/* App */
 export default function App() {
-  const BASENAME = normalizeBasename(
-    import.meta.env.VITE_APP_BASENAME || import.meta.env.BASE_URL || "/"
+  const basename = useMemo(
+    () => normalizeBasename(import.meta.env.BASE_URL || "/"),
+    []
   );
 
   return (
-    <BrowserRouter basename={BASENAME}>
-      <div className="min-h-screen">
+    <BrowserRouter basename={basename}>
+      <div className="min-h-screen bg-[var(--app-bg)] text-[var(--app-fg)]">
         <RouteChangeAnnouncer />
         <PublicRouteDiagnostics />
         <CriticalRouteDiagnostics />
         <ScrollUnlockOnRouteChange />
         <ScrollToTop />
-        <PwaUpdatePrompt />
 
-        <Suspense
-          fallback={
-            <div className="min-h-[60vh] p-6 flex items-center justify-center">
-              <div className="w-full max-w-sm rounded-3xl border border-slate-200 dark:border-white/10 bg-white/70 dark:bg-zinc-900/55 shadow-sm p-5">
-                <div className="flex items-center gap-3">
-                  <span className="inline-block h-3 w-3 animate-pulse rounded-full bg-emerald-600" />
-                  <span
-                    role="status"
-                    aria-live="polite"
-                    className="text-sm font-semibold text-slate-700 dark:text-zinc-200"
-                  >
-                    Carregando…
-                  </span>
-                </div>
-
-                <div className="mt-4 space-y-2">
-                  <div className="h-3 w-3/5 rounded bg-slate-200/70 dark:bg-white/10 animate-pulse" />
-                  <div className="h-3 w-4/5 rounded bg-slate-200/70 dark:bg-white/10 animate-pulse" />
-                  <div className="h-3 w-2/3 rounded bg-slate-200/70 dark:bg-white/10 animate-pulse" />
-                </div>
-              </div>
-            </div>
-          }
-        >
+        <Suspense fallback={<SuspenseFallback />}>
           <Routes>
-            {/* 🌐 públicas */}
-            <Route path="/login" element={<Login />} />
-            <Route path="/cadastro" element={<Cadastro />} />
+            {PublicRoutes()}
 
-            <Route path="/ajuda/cadastro.html" element={<HtmlAliasRedirect />} />
-            <Route path="/privacidade" element={<Privacidade />} />
-            <Route path="/privacidade.html" element={<HtmlAliasRedirect />} />
-
-            <Route path="/validar-certificado" element={<ValidarCertificado />} />
-            <Route path="/validar-certificado.html" element={<HtmlAliasRedirect />} />
-
-            <Route path="/validar" element={<ValidarCertificado />} />
-            <Route path="/validar-presenca" element={<ValidarPresencaRouter />} />
-
-            <Route path="/presenca" element={<ConfirmarPresenca />} />
-            <Route path="/presenca/:turmaId" element={<ConfirmarPresenca />} />
-
-            <Route path="/historico" element={<HistoricoEventos />} />
-            <Route path="/recuperar-senha" element={<RecuperarSenha />} />
-            <Route path="/esqueci-senha" element={<RouteAliasRedirect to="/recuperar-senha" />} />
-            <Route path="/recuperar-senha.html" element={<HtmlAliasRedirect />} />
-
-            <Route path="/redefinir-senha" element={<Navigate to="/recuperar-senha" replace />} />
-            <Route path="/redefinir-senha/:token" element={<RedefinirSenhaRouteWrapper />} />
-
-            {/* 🔐 protegidas */}
             <Route element={<PrivateShell />}>
-              <Route index element={<HomeEscola />} />
-
-              <Route path="scanner" element={<Scanner />} />
-
-              {/* ✅ Painel do Usuário */}
-              <Route path="usuario/dashboard" element={<HomeEscola />} />
-              <Route path="dashboard-usuario" element={<HomeEscola />} />
-              <Route path="home-escola" element={<HomeEscola />} />
-              <Route path="painel" element={<HomeEscola />} />
-
-              {/* compat legado */}
-              <Route path="dashboard" element={<Navigate to="/usuario/dashboard" replace />} />
-              <Route path="usuario" element={<Navigate to="/usuario/dashboard" replace />} />
-
-              {/* Usuário */}
-              <Route path="eventos" element={<Eventos />} />
-              <Route path="minhas-presencas" element={<MinhasPresencas />} />
-              <Route path="certificados" element={<MeusCertificados />} />
-              <Route path="perfil" element={<Perfil />} />
-              <Route path="ajuda" element={<Ajuda />} />
-              <Route path="notificacao" element={<Notificacao />} />
-              <Route path="teste" element={<Teste />} />
-              <Route path="solicitar-curso" element={<SolicitacaoCurso />} />
-              <Route path="repositorio-trabalhos" element={<RepositorioTrabalhos />} />
-              <Route path="usuario/manual" element={<ManualUsuario />} />
-              <Route path="manual" element={<ManualUsuario />} />
-              <Route path="submissao" element={<UsuarioSubmissao />} />
-
-              {/* 🧑‍🏫 Instrutor / Avaliador */}
-              <Route
-                path="instrutor"
-                element={
-                  <ProtectedPage
-                    permitido={["instrutor", "administrador"]}
-                    element={<DashboardInstrutor />}
-                  />
-                }
-              />
-              <Route
-                path="agenda-instrutor"
-                element={
-                  <ProtectedPage
-                    permitido={["instrutor", "administrador"]}
-                    element={<AgendaInstrutor />}
-                  />
-                }
-              />
-              <Route
-                path="turmas/presencas/:turmaId"
-                element={
-                  <ProtectedPage
-                    permitido={["instrutor", "administrador"]}
-                    element={<PresencasPorTurma />}
-                  />
-                }
-              />
-              <Route
-                path="instrutor/presenca"
-                element={
-                  <ProtectedPage
-                    permitido={["instrutor", "administrador"]}
-                    element={<InstrutorPresenca />}
-                  />
-                }
-              />
-              <Route
-                path="instrutor/certificados"
-                element={
-                  <ProtectedPage
-                    permitido={["instrutor", "administrador"]}
-                    element={<CertificadosInstrutor />}
-                  />
-                }
-              />
-              <Route
-                path="instrutor/avaliacao"
-                element={
-                  <ProtectedPage
-                    permitido={["instrutor", "administrador"]}
-                    element={<AvaliacaoInstrutor />}
-                  />
-                }
-              />
-              <Route
-                path="avaliador/submissao"
-                element={
-                  <ProtectedPage
-                    permitido={["instrutor", "administrador"]}
-                    element={<AvaliadorSubmissao />}
-                  />
-                }
-              />
-
-              {/* Admin */}
-              <Route
-                path="administrador"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<DashboardAdministrador />}
-                  />
-                }
-              />
-              <Route
-                path="dashboard-analitico"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<DashboardAnalitico />}
-                  />
-                }
-              />
-              <Route
-                path="gerenciar-eventos"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<GerenciarEventos />}
-                  />
-                }
-              />
-              <Route
-                path="gestao-instrutor"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<GestaoInstrutor />}
-                  />
-                }
-              />
-              <Route
-                path="gestao-usuarios"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<GestaoUsuarios />}
-                  />
-                }
-              />
-              <Route
-                path="gestao-certificados"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<GestaoCertificados />}
-                  />
-                }
-              />
-              <Route
-                path="gestao-informacoes"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<GestaoInformacoes />}
-                  />
-                }
-              />
-              <Route
-                path="lista-presencas-turma"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<ListaPresencasTurma />}
-                  />
-                }
-              />
-              <Route
-                path="relatorios-customizados"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<RelatoriosCustomizados />}
-                  />
-                }
-              />
-              <Route
-                path="agenda-administrador"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<AgendaAdministrador />}
-                  />
-                }
-              />
-              <Route
-                path="certificados-avulsos"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<CertificadosAvulsos />}
-                  />
-                }
-              />
-              <Route
-                path="admin/certificados-avulsos"
-                element={<Navigate to="/certificados-avulsos" replace />}
-              />
-              <Route
-                path="gestao-presenca"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<GestaoPresencas />}
-                  />
-                }
-              />
-              <Route
-                path="admin/qr-codes"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<QRCodesEventosAdmin />}
-                  />
-                }
-              />
-              <Route
-                path="admin/cancelar-inscricao"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<CancelarInscricaoAdmin />}
-                  />
-                }
-              />
-              <Route
-                path="admin/avaliacao"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<AdminAvaliacao />}
-                  />
-                }
-              />
-
-              {/* Salas */}
-              <Route
-                path="admin/solicitacao-curso"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<SolicitacaoCursoAdmin />}
-                  />
-                }
-              />
-              <Route
-                path="admin/agenda-salas"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<AgendaSalasAdmin />}
-                  />
-                }
-              />
-              <Route
-                path="agenda-salas"
-                element={
-                  <ProtectedPage
-                    permitido={["usuario", "instrutor", "administrador"]}
-                    element={<AgendaSalasUsuario />}
-                  />
-                }
-              />
-              <Route
-                path="admin/calendario-bloqueios"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<CalendarioBloqueiosAdmin />}
-                  />
-                }
-              />
-
-              {/* Votações */}
-              <Route
-                path="admin/votacao"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<AdminVotacao />}
-                  />
-                }
-              />
-              <Route
-                path="votacao/:votacaoId"
-                element={
-                  <ProtectedPage
-                    permitido={["usuario", "instrutor", "administrador"]}
-                    element={<VotacaoUsuario />}
-                  />
-                }
-              />
-
-              {/* Submissões Admin */}
-              <Route
-                path="admin/chamadas/new"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<AdminChamadaForm />}
-                  />
-                }
-              />
-              <Route
-                path="admin/chamadas/:id"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<AdminChamadaFormWrapper />}
-                  />
-                }
-              />
-              <Route
-                path="admin/submissao"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<AdminSubmissaoRouteWrapper />}
-                  />
-                }
-              />
-              <Route
-                path="admin/chamadas/:chamadaId/submissao"
-                element={
-                  <ProtectedPage
-                    permitido={["administrador"]}
-                    element={<AdminSubmissaoRouteWrapper />}
-                  />
-                }
-              />
+              {UsuarioRoutes()}
+              {OrganizadorRoutes()}
+              {AdministradorRoutes()}
             </Route>
 
-            {/* 404 */}
             <Route path="*" element={<NotFoundPage />} />
           </Routes>
         </Suspense>

@@ -1,342 +1,56 @@
 /* ============================================================
-   🧭 Escola da Saúde — index.css (Tailwind Premium Layer) v2
-   - Integração Tailwind
-   - Fullscreen real
-   - Base: color-scheme + body default (light/dark)
-   - Forms / Modais / QR / Toast / Calendar infra
-   - Scrollbar, selection, autofill & motion a11y
-   - NÃO define layout estrutural (AppShell manda)
-============================================================ */
+   Escola da Saúde — Tailwind Entry
+   Função:
+   - Carregar Tailwind.
+   - Carregar a base visual global oficial.
+   - Manter apenas estilos específicos de bibliotecas externas.
+   ============================================================ */
 
-/* ------------------------------------------------------------
-   Tailwind (ordem obrigatória)
------------------------------------------------------------- */
+@import "./styles/base.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* ------------------------------------------------------------
-   Base: fullscreen real + color-scheme + fundo padrão
+/* ------------------------------------------------------------ */
+   Leitor QR — html5-qrcode
 ------------------------------------------------------------ */
-@layer base {
-  html,
-  body {
-    width: 100%;
-    min-width: 0;
-    height: 100%;
-    margin: 0;
-    padding: 0;
-  }
-
-  html {
-    scroll-behavior: smooth;
-  }
-
-  body {
-    min-height: 100dvh;
-    @apply bg-white text-gray-900 dark:bg-zinc-950 dark:text-gray-100;
-    text-rendering: optimizeLegibility;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  #root {
-    width: 100%;
-    min-height: 100%;
-    max-width: none;
-    margin: 0;
-    padding: 0;
-    background: transparent;
-  }
-
-  :root {
-    color-scheme: light;
-  }
-
-  html.dark {
-    color-scheme: dark;
-  }
-
-  /* fallback opcional quando não houver classe .dark aplicada */
-  @media (prefers-color-scheme: dark) {
-    html:not(.dark) body {
-      @apply bg-zinc-950 text-gray-100;
-    }
-  }
-
-  ::selection {
-    background: rgba(22, 163, 74, 0.28);
-  }
-
-  :focus-visible {
-    outline: 2px solid transparent;
-    box-shadow: 0 0 0 2px rgba(20, 83, 45, 0.6);
-    border-radius: 0.75rem;
-  }
-
-  @media (forced-colors: active) {
-    :focus-visible {
-      outline: 2px solid Highlight;
-      box-shadow: none;
-    }
-  }
-
-  /* Scrollbar */
-  *::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
-  }
-
-  *::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  *::-webkit-scrollbar-thumb {
-    background: rgba(15, 23, 42, 0.18);
-    border-radius: 999px;
-    border: 2px solid transparent;
-    background-clip: padding-box;
-  }
-
-  html.dark *::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.18);
-  }
-
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: rgba(15, 23, 42, 0.28) transparent;
-  }
-
-  html.dark * {
-    scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
-  }
-}
-
-/* ------------------------------------------------------------
-   Motion a11y
------------------------------------------------------------- */
-@media (prefers-reduced-motion: reduce) {
-  html {
-    scroll-behavior: auto !important;
-  }
-
-  * {
-    animation: none !important;
-    transition: none !important;
-  }
-}
-
-/* ------------------------------------------------------------
-   Normalização leve de inputs nativos
------------------------------------------------------------- */
-@layer base {
-  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not([type="hidden"]),
-  select,
-  textarea {
-    font: inherit;
-    @apply bg-white text-gray-900 placeholder:text-gray-400
-           border border-gray-300 rounded-lg
-           dark:bg-zinc-900 dark:text-gray-100 dark:placeholder:text-gray-500 dark:border-zinc-700;
-  }
-
-  input:disabled,
-  select:disabled,
-  textarea:disabled {
-    @apply bg-gray-100 text-gray-500 dark:bg-zinc-900/60 dark:text-zinc-400;
-  }
-
-  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not([type="hidden"]):focus-visible,
-  select:focus-visible,
-  textarea:focus-visible {
-    @apply outline-none ring-2 ring-green-900/60 border-green-900 dark:ring-green-500/40 dark:border-green-500/40;
-  }
-
-  input[type="date"]::-webkit-calendar-picker-indicator,
-  input[type="time"]::-webkit-calendar-picker-indicator {
-    opacity: 0.9;
-    filter: none;
-  }
-
-  html.dark input[type="date"]::-webkit-calendar-picker-indicator,
-  html.dark input[type="time"]::-webkit-calendar-picker-indicator {
-    filter: invert(1) saturate(0) brightness(1.2);
-  }
-
-  input:-webkit-autofill,
-  select:-webkit-autofill,
-  textarea:-webkit-autofill {
-    -webkit-text-fill-color: #0f172a;
-    box-shadow: 0 0 0 1000px #fff inset;
-    transition: background-color 5000s ease-in-out 0s;
-  }
-
-  html.dark input:-webkit-autofill,
-  html.dark select:-webkit-autofill,
-  html.dark textarea:-webkit-autofill {
-    -webkit-text-fill-color: #f4f4f5;
-    box-shadow: 0 0 0 1000px #0b1220 inset;
-  }
-}
-
-/* ------------------------------------------------------------
-   📷 Leitor QR (html5-qrcode)
------------------------------------------------------------- */
-#leitor-qr #qr-shaded-region,
-#leitor-qr #qr-shaded-region * {
-  background: transparent !important;
-  border: none !important;
-}
 
 #leitor-qr,
 #leitor-qr * {
   background-color: transparent !important;
 }
 
+#leitor-qr #qr-shaded-region,
+#leitor-qr #qr-shaded-region * {
+  background: transparent !important;
+  border: none !important;
+}
+
 #leitor-qr canvas {
-  outline: 2px dashed #14532d !important;
+  outline: 2px dashed var(--brand-900) !important;
   outline-offset: -8px;
-  border-radius: 1rem;
+  border-radius: var(--app-radius-md);
 }
 
-html.dark #leitor-qr canvas {
-  outline-color: #22c55e !important;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  #leitor-qr canvas {
-    transition: none !important;
-  }
+html.dark #leitor-qr canvas,
+html[data-theme="dark"] #leitor-qr canvas {
+  outline-color: var(--brand-500) !important;
 }
 
 /* ------------------------------------------------------------
-   🧩 Campos com ícone
+   React-Toastify
 ------------------------------------------------------------ */
-@layer components {
-  .campo-com-icone {
-    @apply relative w-full;
-  }
 
-  .campo-com-icone .icone-esquerda {
-    @apply absolute left-3 top-2.5 text-gray-400 pointer-events-none;
-  }
-
-  .campo {
-    @apply form-input w-full pl-10 pr-3 py-2 rounded-xl
-           border border-gray-300
-           bg-white text-gray-900 placeholder:text-gray-400
-           focus:outline-none focus:ring-2 focus:ring-green-900/60 focus:border-green-900
-           dark:bg-zinc-900 dark:text-gray-100 dark:placeholder:text-gray-500 dark:border-zinc-700
-           disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed
-           dark:disabled:bg-zinc-900/60 dark:disabled:text-zinc-400
-           aria-[invalid=true]:border-red-500 aria-[invalid=true]:ring-red-500;
-  }
-
-  select.campo {
-    @apply form-select;
-  }
-
-  textarea.campo {
-    @apply form-textarea resize-y min-h-[100px];
-  }
-
-  .campo:focus-visible {
-    box-shadow: 0 0 0 2px rgba(20, 83, 45, 0.6);
-  }
-}
-
-/* ------------------------------------------------------------
-   🪟 Modais
------------------------------------------------------------- */
-@layer components {
-  .overlay {
-    @apply fixed inset-0 bg-black/60 z-[1000] backdrop-blur-[1px];
-    -webkit-backdrop-filter: blur(1px);
-  }
-
-  .overlay[aria-hidden="true"] {
-    pointer-events: none;
-  }
-
-  .modal {
-    @apply fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2
-           bg-white dark:bg-zinc-900
-           rounded-2xl
-           shadow-2xl
-           p-6 md:p-8
-           w-[92%] max-w-[600px]
-           max-h-[85vh]
-           overflow-y-auto
-           border border-gray-200 dark:border-white/10
-           z-[1001];
-  }
-
-  .modal :focus-visible {
-    box-shadow: 0 0 0 2px rgba(20, 83, 45, 0.6);
-  }
-}
-
-@media (max-width: 480px) {
-  .modal {
-    @apply p-5 w-[94%] max-h-[88vh];
-  }
-}
-
-/* ------------------------------------------------------------
-   📅 Agenda (React Calendar)
------------------------------------------------------------- */
-.react-calendar-custom {
-  width: 100% !important;
-  max-width: none !important;
-  background: transparent;
-  font-size: clamp(0.95rem, 1.1vw, 1.05rem);
-}
-
-.react-calendar-custom .react-calendar__navigation {
-  display: flex;
-  justify-content: center;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
-}
-
-.react-calendar-custom .react-calendar__navigation button {
-  font: inherit;
-  background: transparent;
-  border-radius: 0.75rem;
-  padding: 0.5rem 0.75rem;
-}
-
-.react-calendar-custom .react-calendar__tile {
-  border-radius: 0.75rem;
-}
-
-/* ------------------------------------------------------------
-   📱 Mobile / Touch refinements
------------------------------------------------------------- */
-@layer utilities {
-  .tap-safe {
-    -webkit-tap-highlight-color: transparent;
-  }
-}
-
-/* ------------------------------------------------------------
-   🔔 React-Toastify
------------------------------------------------------------- */
 .Toastify__toast-container {
   z-index: 9999 !important;
 }
 
 .Toastify__toast {
-  border-radius: 0.75rem !important;
   min-height: 44px !important;
-  box-shadow:
-    0 10px 15px -3px rgb(0 0 0 / 0.15),
-    0 4px 6px -4px rgb(0 0 0 / 0.12) !important;
-  border: none !important;
-}
-
-.Toastify__toast-theme--colored {
-  color: #fff !important;
+  border: 1px solid var(--app-border) !important;
+  border-radius: var(--app-radius-sm) !important;
+  box-shadow: var(--app-shadow-lg) !important;
 }
 
 .Toastify__toast-body {
@@ -345,88 +59,83 @@ html.dark #leitor-qr canvas {
   padding: 0.5rem 0.75rem !important;
 }
 
-.Toastify__close-button {
+.Toastify__toast-theme--colored {
   color: #fff !important;
-  opacity: 0.9 !important;
 }
 
 .Toastify__toast--success {
-  background: #16a34a !important;
+  background: var(--status-success) !important;
 }
 
 .Toastify__toast--warning {
-  background: #d97706 !important;
+  background: var(--status-warning) !important;
+  color: #111827 !important;
 }
 
 .Toastify__toast--error {
-  background: #dc2626 !important;
+  background: var(--status-danger) !important;
 }
 
 .Toastify__toast--info,
 .Toastify__toast--loading {
-  background: #2563eb !important;
+  background: var(--status-info) !important;
+}
+
+.Toastify__close-button {
+  color: currentColor !important;
+  opacity: 0.9 !important;
 }
 
 .Toastify__spinner {
   border-color: rgba(255, 255, 255, 0.35) !important;
-  border-top-color: #fff !important;
+  border-top-color: currentColor !important;
 }
 
 .Toastify__progress-bar {
   background: rgba(255, 255, 255, 0.7) !important;
 }
 
-html.dark .Toastify__toast {
-  box-shadow:
-    0 12px 24px -8px rgb(0 0 0 / 0.45),
-    0 6px 10px -6px rgb(0 0 0 / 0.3) !important;
-}
-
 /* ------------------------------------------------------------
-   🧪 Utilidades premium extras
+   Utilidades específicas
 ------------------------------------------------------------ */
+
 @layer utilities {
+  .tap-safe {
+    -webkit-tap-highlight-color: transparent;
+  }
+
   .skeleton {
     position: relative;
     overflow: hidden;
     background: linear-gradient(
       90deg,
-      rgba(148, 163, 184, .25) 25%,
-      rgba(148, 163, 184, .35) 37%,
-      rgba(148, 163, 184, .25) 63%
+      rgba(148, 163, 184, 0.25) 25%,
+      rgba(148, 163, 184, 0.35) 37%,
+      rgba(148, 163, 184, 0.25) 63%
     );
     background-size: 400% 100%;
     animation: skeleton-shimmer 1.6s ease-in-out infinite;
   }
 
-  .dark .skeleton {
+  html.dark .skeleton,
+  html[data-theme="dark"] .skeleton {
     background: linear-gradient(
       90deg,
-      rgba(63, 63, 70, .25) 25%,
-      rgba(63, 63, 70, .4) 37%,
-      rgba(63, 63, 70, .25) 63%
+      rgba(63, 63, 70, 0.25) 25%,
+      rgba(63, 63, 70, 0.4) 37%,
+      rgba(63, 63, 70, 0.25) 63%
     );
+    background-size: 400% 100%;
   }
 
   @keyframes skeleton-shimmer {
     0% {
       background-position: 100% 0;
     }
+
     100% {
       background-position: 0 0;
     }
-  }
-
-  .visually-hidden {
-    position: absolute !important;
-    width: 1px !important;
-    height: 1px !important;
-    padding: 0 !important;
-    margin: -1px !important;
-    overflow: hidden !important;
-    clip: rect(0, 0, 0, 0) !important;
-    white-space: nowrap !important;
-    border: 0 !important;
   }
 }
 
@@ -437,11 +146,11 @@ html.dark .Toastify__toast {
 }
 
 /* ------------------------------------------------------------
-   🖨️ Impressão
+   Impressão — bibliotecas externas
 ------------------------------------------------------------ */
+
 @media print {
-  .overlay,
-  .modal {
+  .Toastify__toast-container {
     display: none !important;
   }
 }

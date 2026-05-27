@@ -1,7 +1,7 @@
 {
   "name": "Plataforma Escola da Saúde",
-  "short_name": "EscolaSaúde",
-  "description": "Plataforma oficial da Escola Municipal de Saúde de Santos — eventos, certificados, cursos e capacitações.",
+  "short_name": "Escola Saúde",
+  "description": "Plataforma oficial da Escola da Saúde de Santos para eventos, inscrições, presenças, avaliações, certificados e serviços educacionais.",
   "lang": "pt-BR",
   "dir": "ltr",
   "start_url": "/?source=pwa",
@@ -32,7 +32,13 @@
       "src": "/icons/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
     },
     {
       "src": "/icons/icon-256.png",
@@ -49,7 +55,13 @@
       "src": "/icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     },
     {
       "src": "/icons/icon-512-mono.png",

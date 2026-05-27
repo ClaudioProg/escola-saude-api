@@ -1,446 +1,350 @@
-// ✅ src/main.jsx — PREMIUM REFINADO (2026)
-// - Tema aplicado antes do React
-// - Bootstrap global de sessão
-// - Sem toast indevido no bootstrap de autenticação
-// - Logs DEV estratégicos
-// - ErrorBoundary premium
-// - PWA update safe
-// - Correção: /redefinir-senha é rota pública real
-// - HMR-safe em watchers/listeners globais
-// - Tema/storage mais defensivo
+// 📁 src/main.jsx — v2.0
+// Plataforma Escola da Saúde
+//
+// Bootstrap oficial da aplicação.
+//
+// Responsabilidades:
+// - aplicar tema antes do React;
+// - configurar ReactModal;
+// - configurar GoogleOAuthProvider;
+// - configurar ToastContainer;
+// - proteger a árvore com ErrorBoundary;
+// - montar o App.
+//
+// Não usar:
+// - chaves legadas de tema;
+// - chaves alternativas de token;
+// - PWA manual;
+// - App.css;
+// - redirects globais duplicando PrivateRoute.
 
 import React from "react";
 import ReactDOM from "react-dom/client";
 import ReactModal from "react-modal";
 import { GoogleOAuthProvider } from "@react-oauth/google";
 import { ToastContainer, toast } from "react-toastify";
+
 import "react-toastify/dist/ReactToastify.css";
+import "./index.css";
 
 import App from "./App";
-import "./index.css";
-import "./App.css";
 
 import {
   ESCOLA_THEME_KEY,
   applyThemeToHtml,
+  getStoredTheme,
   watchSystemTheme,
 } from "./theme/escolaTheme";
 
-import api from "./services/api";
+/* ─────────────────────────────────────────
+   Flags / env
+───────────────────────────────────────── */
 
-/* ──────────────────────────────────────────────────────────────
-   Flags / Helpers
-────────────────────────────────────────────────────────────── */
-const IS_DEV = !!import.meta.env.DEV;
-const IS_PROD = !!import.meta.env.PROD;
-const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+const IS_DEV = Boolean(import.meta.env.DEV);
+const GOOGLE_CLIENT_ID = String(import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim();
 
-const PUBLIC_AUTH_ROUTES = [
-  "/login",
-  "/cadastro",
-  "/recuperar-senha",
-  "/esqueci-senha",
-  "/redefinir-senha",
-];
-
-const PUBLIC_ALWAYS_ALLOWED_PREFIXES = [
-  "/validar",
-  "/presenca",
-  "/historico",
-  "/privacidade",
-];
+/* ─────────────────────────────────────────
+   Logs DEV
+───────────────────────────────────────── */
 
 function logDev(...args) {
-  if (IS_DEV) console.log(...args);
+  if (IS_DEV) {
+    console.log(...args);
+  }
 }
 
 function warnDev(...args) {
-  if (IS_DEV) console.warn(...args);
-}
-
-function maskClientId(id) {
-  if (!id) return "(vazio)";
-  const p = String(id);
-  return `${p.slice(0, 10)}… (${p.length} chars)`;
-}
-
-function safeGetLS(key) {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
+  if (IS_DEV) {
+    console.warn(...args);
   }
 }
 
-function safeSetLS(key, value) {
-  try {
-    localStorage.setItem(key, value);
-    return true;
-  } catch {
-    return false;
-  }
-}
+function maskValue(value) {
+  const text = String(value || "");
 
-function getStoredToken() {
-  return (
-    safeGetLS("token") ||
-    safeGetLS("authToken") ||
-    safeGetLS("access_token") ||
-    null
-  );
-}
-
-function isAuthRoute(pathname) {
-  const path = String(pathname || "");
-  return PUBLIC_AUTH_ROUTES.some((route) => path.startsWith(route));
-}
-
-function isAlwaysPublicRoute(pathname) {
-  const path = String(pathname || "");
-  return PUBLIC_ALWAYS_ALLOWED_PREFIXES.some((route) =>
-    path.startsWith(route)
-  );
-}
-
-function canSilentlyRedirectToLogin(pathname) {
-  const path = String(pathname || "");
-  return !isAuthRoute(path) && !isAlwaysPublicRoute(path);
-}
-
-/* ──────────────────────────────────────────────────────────────
-   ✅ TEMA — boot ANTES do React montar
-────────────────────────────────────────────────────────────── */
-function readSavedEscolaThemeWithMigration() {
-  const saved = safeGetLS(ESCOLA_THEME_KEY);
-  if (saved === "light" || saved === "dark" || saved === "system") return saved;
-
-  const legacy = safeGetLS("theme");
-  if (legacy === "light" || legacy === "dark" || legacy === "system") {
-    safeSetLS(ESCOLA_THEME_KEY, legacy);
-    return legacy;
+  if (!text) {
+    return "(vazio)";
   }
 
-  return "system";
+  if (text.length <= 12) {
+    return "***";
+  }
+
+  return `${text.slice(0, 8)}…${text.slice(-4)} (${text.length} chars)`;
 }
 
-const bootTheme = readSavedEscolaThemeWithMigration();
-applyThemeToHtml(bootTheme);
+/* ─────────────────────────────────────────
+   Tema — antes do React
+───────────────────────────────────────── */
 
-let stopWatch = null;
-if (bootTheme === "system") {
-  stopWatch = watchSystemTheme(() => applyThemeToHtml("system"));
+function bootTheme() {
+  const savedTheme = getStoredTheme() || "system";
+
+  applyThemeToHtml(savedTheme);
+
+  if (savedTheme !== "system") {
+    return () => {};
+  }
+
+  return watchSystemTheme(() => {
+    applyThemeToHtml("system");
+  });
 }
 
-/* ──────────────────────────────────────────────────────────────
-   🔎 Tripwire DEV
-────────────────────────────────────────────────────────────── */
-let __themeTripwireDispose = null;
+const stopThemeWatcher = bootTheme();
 
-(function installThemeTripwireDev() {
-  if (!IS_DEV) return;
-  if (typeof document === "undefined") return;
+/* ─────────────────────────────────────────
+   Diagnóstico DEV
+───────────────────────────────────────── */
+
+let disposeThemeDiagnostics = null;
+let disposeGoogleDiagnostics = null;
+
+function installThemeDiagnosticsDev() {
+  if (!IS_DEV || typeof document === "undefined") {
+    return () => {};
+  }
 
   const root = document.documentElement;
 
-  const log = () => {
+  const logTheme = () => {
     const isDark = root.classList.contains("dark");
-    const stack = Number(document.body?.dataset?.__modal_stack_count__ || "0");
 
-    console.log(
-      "[TEMA] <html> =",
-      isDark ? "dark" : "light",
-      "| escola_theme =",
-      safeGetLS(ESCOLA_THEME_KEY),
-      "| modalStack =",
-      stack
-    );
+    console.log("[TEMA]", {
+      html: isDark ? "dark" : "light",
+      dataTheme: root.getAttribute("data-theme"),
+      storageKey: ESCOLA_THEME_KEY,
+      stored: (() => {
+        try {
+          return localStorage.getItem(ESCOLA_THEME_KEY);
+        } catch {
+          return null;
+        }
+      })(),
+    });
   };
 
-  const mo = new MutationObserver(log);
-  mo.observe(root, { attributes: true, attributeFilter: ["class"] });
+  const observer = new MutationObserver(logTheme);
 
-  log();
-  console.log("[TEMA] Tripwire DEV instalado (MutationObserver, read-only).");
+  observer.observe(root, {
+    attributes: true,
+    attributeFilter: ["class", "data-theme"],
+  });
 
-  __themeTripwireDispose = () => {
+  logTheme();
+
+  return () => {
     try {
-      mo.disconnect();
+      observer.disconnect();
     } catch {
-      /* noop */
+      // noop
     }
   };
-})();
+}
 
-/* ──────────────────────────────────────────────────────────────
-   A11y: react-modal — app element
-────────────────────────────────────────────────────────────── */
-(function ensureModalAppElement() {
-  try {
-    const el = document.getElementById("root");
-    if (el) {
-      ReactModal.setAppElement(el);
-    } else {
-      requestAnimationFrame(() => {
-        const later = document.getElementById("root");
-        if (later) ReactModal.setAppElement(later);
-      });
-    }
-  } catch (e) {
-    if (IS_DEV) {
-      console.warn("[react-modal] setAppElement falhou:", e);
-    }
+function installGoogleDiagnosticsDev() {
+  if (!IS_DEV || typeof window === "undefined") {
+    return () => {};
   }
-})();
-
-/* ──────────────────────────────────────────────────────────────
-   DEV: logs estratégicos do Google Sign-In
-────────────────────────────────────────────────────────────── */
-let __gsiDevCleanup = null;
-
-(function setupGSIDevDiagnostics() {
-  if (!IS_DEV) return;
 
   console.groupCollapsed(
     "%c[GSI:init]",
     "color:#14532d;font-weight:800",
     "Diagnóstico do Google Sign-In"
   );
-  console.log("• window.location.origin:", window.location.origin);
-  console.log("• Ambiente:", IS_DEV ? "dev" : "prod");
-  console.log("• VITE_GOOGLE_CLIENT_ID:", maskClientId(clientId));
-  console.groupEnd();
+console.log("origin:", window.location.origin);
+console.log("clientId:", GOOGLE_CLIENT_ID);
+console.groupEnd();
 
-  try {
-    window.__GID = clientId;
-  } catch {
-    /* noop */
-  }
+  const onError = (event) => {
+    const source = event?.filename || "";
 
-  const onError = (ev) => {
-    const src = ev?.filename || "";
-    if (/accounts\.google\.com|gstatic\.com/i.test(src)) {
-      console.error("[GSI:error] script", src, ev?.message || ev?.error);
+    if (/accounts\.google\.com|gstatic\.com/i.test(source)) {
+      console.error("[GSI:error]", {
+        source,
+        message: event?.message,
+      });
     }
   };
 
-  const onUnhandled = (ev) => {
-    const msg = ev?.reason?.message || String(ev?.reason || "");
-    if (/accounts\.google\.com|gstatic\.com/i.test(msg)) {
-      console.error("[GSI:unhandledrejection]", msg);
+  const onUnhandledRejection = (event) => {
+    const message = event?.reason?.message || String(event?.reason || "");
+
+    if (/accounts\.google\.com|gstatic\.com/i.test(message)) {
+      console.error("[GSI:unhandledrejection]", message);
     }
   };
 
   window.addEventListener("error", onError);
-  window.addEventListener("unhandledrejection", onUnhandled);
+  window.addEventListener("unhandledrejection", onUnhandledRejection);
 
-  __gsiDevCleanup = () => {
-    try {
-      window.removeEventListener("error", onError);
-      window.removeEventListener("unhandledrejection", onUnhandled);
-    } catch {
-      /* noop */
-    }
+  return () => {
+    window.removeEventListener("error", onError);
+    window.removeEventListener("unhandledrejection", onUnhandledRejection);
   };
-})();
-
-if (!clientId) {
-  console.warn("⚠️ VITE_GOOGLE_CLIENT_ID ausente! Verifique o .env.");
 }
 
-/* ──────────────────────────────────────────────────────────────
-   ✅ Bootstrap global de sessão
-────────────────────────────────────────────────────────────── */
-async function bootstrapAuthSession() {
-  const pathname = window.location.pathname;
-  const token = getStoredToken();
+disposeThemeDiagnostics = installThemeDiagnosticsDev();
+disposeGoogleDiagnostics = installGoogleDiagnosticsDev();
 
-  logDev("[AUTH] bootstrap iniciado", {
-    pathname,
-    hasToken: !!token,
-    isAuthRoute: isAuthRoute(pathname),
-    isAlwaysPublicRoute: isAlwaysPublicRoute(pathname),
-  });
+if (!GOOGLE_CLIENT_ID) {
+  warnDev("[GSI] VITE_GOOGLE_CLIENT_ID ausente.");
+}
 
-  if (!token) {
-    if (canSilentlyRedirectToLogin(pathname)) {
-      logDev("[AUTH] sem token -> redirecionando para /login", { pathname });
-      window.location.replace("/login");
-      return;
-    }
+/* ─────────────────────────────────────────
+   ReactModal
+───────────────────────────────────────── */
 
-    logDev("[AUTH] rota pública sem token -> seguindo normalmente", {
-      pathname,
-    });
-    return;
-  }
-
+function setupReactModal() {
   try {
-    const data = await api.authMe({
-      auth: true,
-      on401: "silent",
-      on403: "silent",
-    });
+    const root = document.getElementById("root");
 
-    const usuario = data?.usuario || data?.user || null;
-
-    if (usuario) {
-      logDev("[AUTH] sessão válida", {
-        userId: usuario?.id,
-        email: usuario?.email,
-        perfil: usuario?.perfil,
-      });
-      return;
-    }
-
-    warnDev("[AUTH] authMe respondeu sem usuário válido", { pathname });
-
-    api.clearSession();
-
-    if (canSilentlyRedirectToLogin(pathname)) {
-      logDev("[AUTH] sessão sem usuário -> redirecionando para /login", {
-        pathname,
-      });
-      window.location.replace("/login");
+    if (root) {
+      ReactModal.setAppElement(root);
     }
   } catch (error) {
-    warnDev("[AUTH] falha no bootstrap", {
-      message: error?.message,
-      status: error?.status,
-      code: error?.code,
-      pathname,
-    });
-
-    api.clearSession();
-
-    if (canSilentlyRedirectToLogin(pathname)) {
-      window.location.replace("/login");
-    }
+    warnDev("[react-modal] setAppElement falhou.", error);
   }
 }
 
-/* ──────────────────────────────────────────────────────────────
-   ErrorBoundary premium
-────────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────
+   ErrorBoundary
+───────────────────────────────────────── */
+
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, info: null, error: null };
-    this._toastShown = false;
+
+    this.state = {
+      hasError: false,
+      error: null,
+      info: null,
+    };
+
+    this.toastShown = false;
   }
 
   static getDerivedStateFromError(error) {
-    return { hasError: true, error };
+    return {
+      hasError: true,
+      error,
+    };
   }
 
   componentDidCatch(error, info) {
-    if (IS_DEV) {
-      console.error("[App ErrorBoundary]", error, info);
-    }
+    logDev("[ErrorBoundary]", {
+      error,
+      info,
+    });
 
-    this.setState({ info });
+    this.setState({
+      info,
+    });
 
-    if (!this._toastShown) {
-      this._toastShown = true;
+    if (!this.toastShown) {
+      this.toastShown = true;
+
       try {
         toast.error("Ocorreu um erro inesperado.");
       } catch {
-        /* noop */
+        // noop
       }
     }
   }
 
-  handleReload = () => window.location.reload();
+  handleReload = () => {
+    window.location.reload();
+  };
 
-  handleCopy = async () => {
+  handleCopyDetails = async () => {
     try {
       const payload = JSON.stringify(
-        { error: String(this.state.error), info: this.state.info },
+        {
+          error: String(this.state.error),
+          info: this.state.info,
+        },
         null,
         2
       );
+
       await navigator.clipboard.writeText(payload);
-      toast.success("Detalhes copiados!");
+
+      toast.success("Detalhes copiados.");
     } catch {
       toast.warn("Não foi possível copiar os detalhes.");
     }
   };
 
   render() {
-    if (this.state.hasError) {
-      return (
-        <div className="min-h-screen grid place-items-center p-6 bg-white text-gray-900 dark:bg-zinc-950 dark:text-white">
-          <div
-            role="alert"
-            aria-live="assertive"
-            className="w-full max-w-md rounded-2xl border border-gray-200 dark:border-white/10 shadow p-6 text-center"
-          >
-            <h1 className="text-xl font-extrabold mb-2">
-              Ocorreu um erro inesperado
-            </h1>
-            <p className="text-sm text-gray-600 dark:text-zinc-300 mb-5">
-              Tente recarregar a página. Se persistir, envie os detalhes ao
-              suporte.
-            </p>
-
-            <div className="flex items-center justify-center gap-3">
-              <button
-                onClick={this.handleReload}
-                className="inline-flex items-center justify-center rounded-xl px-4 py-2 font-extrabold bg-green-900 text-white hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-green-900/60"
-              >
-                Recarregar
-              </button>
-
-              <button
-                onClick={this.handleCopy}
-                className="inline-flex items-center justify-center rounded-xl px-4 py-2 font-extrabold bg-zinc-800 text-white hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-green-900/60"
-              >
-                Copiar detalhes
-              </button>
-            </div>
-
-            {IS_DEV && this.state.info ? (
-              <pre className="text-left text-xs mt-4 overflow-auto max-h-48 opacity-80">
-                {JSON.stringify(this.state.info, null, 2)}
-              </pre>
-            ) : null}
-          </div>
-        </div>
-      );
+    if (!this.state.hasError) {
+      return this.props.children;
     }
 
-    return this.props.children;
+    return (
+      <div className="grid min-h-screen place-items-center bg-[var(--app-bg)] p-6 text-[var(--app-fg)]">
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="w-full max-w-lg rounded-3xl border border-[var(--app-border)] bg-[var(--app-card)] p-6 text-center shadow-[var(--app-shadow-lg)]"
+        >
+          <h1 className="text-xl font-extrabold">
+            Ocorreu um erro inesperado
+          </h1>
+
+          <p className="mt-3 text-sm leading-6 text-[var(--app-muted)]">
+            Tente recarregar a página. Se o erro persistir, copie os detalhes e
+            envie ao suporte.
+          </p>
+
+          <div className="mt-5 flex flex-col justify-center gap-3 sm:flex-row">
+            <button
+              type="button"
+              onClick={this.handleReload}
+              className="app-btn"
+            >
+              Recarregar
+            </button>
+
+            <button
+              type="button"
+              onClick={this.handleCopyDetails}
+              className="app-btn-ghost"
+            >
+              Copiar detalhes
+            </button>
+          </div>
+
+          {IS_DEV && this.state.info ? (
+            <pre className="mt-5 max-h-56 overflow-auto rounded-2xl bg-black/5 p-4 text-left text-xs opacity-80 dark:bg-white/5">
+              {JSON.stringify(this.state.info, null, 2)}
+            </pre>
+          ) : null}
+        </div>
+      </div>
+    );
   }
 }
 
-/* ──────────────────────────────────────────────────────────────
-   Toasts — botão de fechar acessível
-────────────────────────────────────────────────────────────── */
-function CloseBtn({ closeToast }) {
+/* ─────────────────────────────────────────
+   Toasts
+───────────────────────────────────────── */
+
+function ToastCloseButton({ closeToast }) {
   return (
     <button
       type="button"
       onClick={closeToast}
       aria-label="Fechar notificação"
-      className="inline-flex items-center justify-center h-7 w-7 rounded-full focus:outline-none focus:ring-2 focus:ring-green-900/60"
       title="Fechar"
+      className="inline-flex h-7 w-7 items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-white/80"
     >
-      ✕
+      ×
     </button>
   );
 }
 
-/* ──────────────────────────────────────────────────────────────
-   Render
-────────────────────────────────────────────────────────────── */
-async function startApp() {
-  await bootstrapAuthSession();
-
-  const container = document.getElementById("root");
-  if (!container) throw new Error("#root não encontrado no DOM.");
-
-  const root = ReactDOM.createRoot(container);
-
-  const Toasts = (
+function AppToasts() {
+  return (
     <ToastContainer
       position="top-right"
       autoClose={4000}
@@ -450,141 +354,141 @@ async function startApp() {
       pauseOnHover
       draggable
       theme="colored"
-      closeButton={<CloseBtn />}
+      closeButton={<ToastCloseButton />}
       toastClassName="rounded-xl shadow-lg ring-1 ring-black/10"
       bodyClassName="text-sm leading-relaxed"
       role="status"
     />
   );
+}
 
-  const AppTree = clientId ? (
-    <GoogleOAuthProvider
-      clientId={clientId}
-      onScriptLoadSuccess={() => {
-        if (IS_DEV) {
-          console.info(
-            "%c[GSI] SDK carregada.",
-            "color:#16a34a;font-weight:800"
-          );
-        }
-      }}
-      onScriptLoadError={() => {
-        console.error("[GSI] Falha ao carregar a SDK do Google.");
-        try {
-          toast.warn(
-            "Falha ao carregar login Google. Você ainda pode usar login por e-mail/senha."
-          );
-        } catch {
-          /* noop */
-        }
-      }}
-    >
-      <App />
-      {Toasts}
-    </GoogleOAuthProvider>
-  ) : (
+/* ─────────────────────────────────────────
+   App tree
+───────────────────────────────────────── */
+
+function AppProviders() {
+  const app = (
     <>
       <App />
-      {Toasts}
+      <AppToasts />
     </>
   );
 
-  root.render(
-    <React.StrictMode>
-      <ErrorBoundary>{AppTree}</ErrorBoundary>
-    </React.StrictMode>
+  if (!GOOGLE_CLIENT_ID) {
+    return app;
+  }
+
+  return (
+    <GoogleOAuthProvider
+      clientId={GOOGLE_CLIENT_ID}
+      onScriptLoadSuccess={() => {
+        logDev("[GSI] SDK carregada.");
+      }}
+      onScriptLoadError={() => {
+        console.error("[GSI] Falha ao carregar SDK do Google.");
+
+        try {
+          toast.warn(
+            "Falha ao carregar login Google. Você ainda pode usar login por e-mail e senha."
+          );
+        } catch {
+          // noop
+        }
+      }}
+    >
+      {app}
+    </GoogleOAuthProvider>
   );
 }
 
-startApp().catch((error) => {
-  console.error("[BOOT] Falha crítica ao iniciar aplicação:", error);
+/* ─────────────────────────────────────────
+   Render
+───────────────────────────────────────── */
 
+function renderBootError(error) {
   const container = document.getElementById("root");
-  if (!container) return;
+
+  if (!container) {
+    return;
+  }
+
+  const message = String(error?.message || error || "Erro desconhecido")
+    .replace(/[<>&]/g, (char) => {
+      const map = {
+        "<": "&lt;",
+        ">": "&gt;",
+        "&": "&amp;",
+      };
+
+      return map[char] || char;
+    });
 
   container.innerHTML = `
-    <div style="min-height:100vh;display:grid;place-items:center;padding:24px;font-family:Arial,sans-serif;background:#fafafa;color:#111827;">
+    <div style="min-height:100vh;display:grid;place-items:center;padding:24px;font-family:Arial,sans-serif;background:#f8fafc;color:#111827;">
       <div style="max-width:560px;width:100%;background:#fff;border:1px solid #e5e7eb;border-radius:20px;padding:24px;box-shadow:0 10px 30px rgba(0,0,0,.08);">
         <h1 style="font-size:22px;font-weight:800;margin:0 0 10px;">Falha ao iniciar a plataforma</h1>
         <p style="margin:0 0 16px;color:#4b5563;">Ocorreu um erro no carregamento inicial da aplicação.</p>
-        <pre style="white-space:pre-wrap;font-size:12px;max-height:200px;overflow:auto;background:#f3f4f6;padding:12px;border-radius:12px;">${String(error?.message || error)}</pre>
+        <pre style="white-space:pre-wrap;font-size:12px;max-height:200px;overflow:auto;background:#f3f4f6;padding:12px;border-radius:12px;">${message}</pre>
         <button onclick="window.location.reload()" style="margin-top:16px;border:0;background:#065f46;color:#fff;padding:12px 16px;border-radius:12px;font-weight:700;cursor:pointer;">
           Recarregar
         </button>
       </div>
     </div>
   `;
-});
+}
 
-/* ──────────────────────────────────────────────────────────────
-   PWA (prod): informar atualização aplicada e recarregar
-────────────────────────────────────────────────────────────── */
-let __pwaDispose = null;
+function startApp() {
+  setupReactModal();
 
-(function setupPWA() {
-  if (!IS_PROD) return;
-  if (typeof window === "undefined" || !("serviceWorker" in navigator)) {
-    return;
+  const container = document.getElementById("root");
+
+  if (!container) {
+    throw new Error("#root não encontrado no DOM.");
   }
 
-  let reloaded = false;
+  ReactDOM.createRoot(container).render(
+    <React.StrictMode>
+      <ErrorBoundary>
+        <AppProviders />
+      </ErrorBoundary>
+    </React.StrictMode>
+  );
+}
 
-  const onControllerChange = () => {
-    if (reloaded) return;
-    reloaded = true;
+try {
+  startApp();
+} catch (error) {
+  console.error("[BOOT] Falha crítica ao iniciar aplicação.", error);
+  renderBootError(error);
+}
 
-    try {
-      toast.info("Atualização aplicada — recarregando…", { autoClose: 1200 });
-    } catch {
-      /* noop */
-    }
+/* ─────────────────────────────────────────
+   Cleanup HMR / unload
+───────────────────────────────────────── */
 
-    setTimeout(() => window.location.reload(), 1200);
-  };
-
-  navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
-
-  __pwaDispose = () => {
-    try {
-      navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
-    } catch {
-      /* noop */
-    }
-  };
-})();
-
-/* ──────────────────────────────────────────────────────────────
-   Cleanup watchers fora do React
-────────────────────────────────────────────────────────────── */
 function cleanupGlobals() {
   try {
-    stopWatch?.();
+    stopThemeWatcher?.();
   } catch {
-    /* noop */
+    // noop
   }
 
   try {
-    __themeTripwireDispose?.();
+    disposeThemeDiagnostics?.();
   } catch {
-    /* noop */
+    // noop
   }
 
   try {
-    __gsiDevCleanup?.();
+    disposeGoogleDiagnostics?.();
   } catch {
-    /* noop */
-  }
-
-  try {
-    __pwaDispose?.();
-  } catch {
-    /* noop */
+    // noop
   }
 }
 
 window.addEventListener?.("beforeunload", cleanupGlobals);
 
-if (import.meta?.hot) {
+if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     cleanupGlobals();
   });

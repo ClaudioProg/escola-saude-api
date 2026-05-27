@@ -1,451 +1,689 @@
-// ✅ src/pages/ConfirmarPresenca.jsx (premium: UX/a11y + abort seguro + CTAs consistentes + paleta fixa 3 cores)
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { apiPost } from "../services/api";
-import Footer from "../components/Footer";
+// ✅ frontend/src/pages/ConfirmarPresenca.jsx — v2.0
+// Atualizado em: 14/05/2026
+// Plataforma Escola da Saúde
+//
+// Página de confirmação de presença via QR.
+//
+// Contratos aplicados:
+// - rota backend oficial: POST /presenca/qr
+// - função oficial de API: apiPresencaConfirmarQr
+// - parâmetro oficial na URL: turma_id
+// - payload oficial: { turma_id }
+// - sem /presencas
+// - sem /confirmar-qr/:turmaId
+// - sem apiPost direto na página
+// - sem Footer antigo
+// - sem turmaId como contrato interno principal
+// - sem query antiga "turma"
+// - sem toast direto
+// - validação local apenas para UX; regra final fica no backend
+// - redirecionamento preservando turma_id
+// - acessível, mobile-first, dark mode e reduced motion.
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useLocation,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
+import { motion, useReducedMotion } from "framer-motion";
 import {
   CheckCircle2,
-  XCircle,
-  Loader2,
-  QrCode,
   Home,
-  UserCheck,
+  Loader2,
   LogIn,
-  UserPlus,
+  QrCode,
   RefreshCw,
   ShieldCheck,
+  UserCheck,
+  UserPlus,
+  XCircle,
 } from "lucide-react";
-import { useReducedMotion, motion } from "framer-motion";
 
-/* ---------------- Helpers locais ---------------- */
-function safeAtob(s) {
+import { apiPresencaConfirmarQr } from "../services/api";
+
+/* ─────────────────────────────────────────────────────────────
+ * Helpers
+ * ───────────────────────────────────────────────────────────── */
+
+function classNames(...classes) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function safeAtob(value) {
   try {
-    return atob(s);
+    return atob(value);
   } catch {
-    const pad = s.length % 4 === 2 ? "==" : s.length % 4 === 3 ? "=" : "";
+    const pad =
+      value.length % 4 === 2 ? "==" : value.length % 4 === 3 ? "=" : "";
+
     try {
-      return atob(s + pad);
+      return atob(value + pad);
     } catch {
       return "";
     }
   }
 }
+
 function getRawToken() {
   try {
     const raw = localStorage.getItem("token");
+
     return raw ? raw.trim() : null;
   } catch {
     return null;
   }
 }
-// token simples: aceita "Bearer x.y.z" e "x.y.z"; checa nbf/exp
+
 function getValidToken() {
   const raw = getRawToken();
+
   if (!raw) return null;
+
   const token = raw.startsWith("Bearer ") ? raw.slice(7).trim() : raw;
   const parts = token.split(".");
+
   if (parts.length !== 3) return null;
+
   try {
-    const payloadStr = safeAtob(parts[1].replace(/-/g, "+").replace(/_/g, "/"));
+    const payloadStr = safeAtob(
+      parts[1].replace(/-/g, "+").replace(/_/g, "/")
+    );
+
     const payload = JSON.parse(payloadStr || "{}");
     const now = Date.now() / 1000;
+
     if (payload?.nbf && now < payload.nbf) return null;
     if (payload?.exp && now >= payload.exp) return null;
+
     return token;
   } catch {
     return null;
   }
 }
 
-/* ---------------- HeaderHero ---------------- */
-function HeaderHero({ status }) {
-  const isOk = status === "ok";
-  const isErr = status === "err";
-  // Paleta fixa de 3 cores (Confirmar Presença): emerald → teal → cyan
-  const gradient = "from-emerald-900 via-teal-700 to-cyan-600";
+function toPositiveInt(value) {
+  const number = Number(value);
+
+  return Number.isInteger(number) && number > 0 ? number : null;
+}
+
+function isAbortLike(error) {
+  const name = String(error?.name || "");
+  const message = String(error?.message || error || "").toLowerCase();
 
   return (
-    <header className={`relative isolate overflow-hidden bg-gradient-to-br ${gradient} text-white`} role="banner">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 text-center">
+    name === "AbortError" ||
+    message.includes("aborted") ||
+    message.includes("abort") ||
+    message.includes("canceled") ||
+    message.includes("cancelled")
+  );
+}
+
+function getApiStatus(error) {
+  return Number(error?.status || error?.response?.status || 0);
+}
+
+function getApiMessage(error) {
+  return (
+    error?.data?.message ||
+    error?.response?.data?.message ||
+    error?.message ||
+    ""
+  );
+}
+
+function getMensagemErro(error) {
+  const status = getApiStatus(error);
+  const backendMessage = getApiMessage(error);
+
+  if (status === 401) {
+    return {
+      status,
+      titulo: "Você precisa estar logado para registrar presença.",
+      detalhe:
+        "Entre na sua conta para confirmar a presença nesta turma. Após o login, retornaremos automaticamente para esta tela.",
+      subtitulo: "A confirmação é autenticada.",
+      requiresLogin: true,
+    };
+  }
+
+  if (status === 403) {
+    return {
+      status,
+      titulo: backendMessage || "Acesso negado para confirmar presença.",
+      detalhe:
+        "Verifique se você está logado com a conta correta e se está inscrito nesta turma.",
+      subtitulo: "Conta ou inscrição inválida.",
+      requiresLogin: false,
+    };
+  }
+
+  if (status === 409) {
+    return {
+      status,
+      titulo:
+        backendMessage ||
+        "Ainda não é possível confirmar presença para esta turma.",
+      detalhe:
+        "A confirmação só funciona no dia e horário permitidos. Confirme com a organização o cronograma da turma.",
+      subtitulo: "Fora do período permitido.",
+      requiresLogin: false,
+    };
+  }
+
+  if (status === 404) {
+    return {
+      status,
+      titulo: backendMessage || "Turma não encontrada.",
+      detalhe:
+        "O QR Code pode estar desatualizado ou pertencer a outra turma. Solicite o QR correto à organização.",
+      subtitulo: "QR Code inválido ou desatualizado.",
+      requiresLogin: false,
+    };
+  }
+
+  return {
+    status,
+    titulo: backendMessage || "Não foi possível confirmar a presença no momento.",
+    detalhe: "Tente novamente. Se persistir, procure a equipe de suporte.",
+    subtitulo: "Falha temporária.",
+    requiresLogin: false,
+  };
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * Componentes locais
+ * ───────────────────────────────────────────────────────────── */
+
+function HeaderHero({ status, subtitle }) {
+  const isOk = status === "ok";
+  const isErr = status === "err";
+
+  return (
+    <header
+      className="relative isolate overflow-hidden bg-gradient-to-br from-emerald-950 via-teal-800 to-cyan-700 text-white"
+      role="banner"
+    >
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -top-24 left-1/2 h-[300px] w-[800px] max-w-[95vw] -translate-x-1/2 rounded-full bg-cyan-300/25 blur-3xl"
+      />
+
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-white/10 blur-3xl"
+      />
+
+      <div className="relative mx-auto flex min-h-[180px] max-w-5xl flex-col items-center justify-center gap-3 px-4 py-8 text-center sm:px-6 sm:py-10">
         <div className="inline-flex items-center gap-2">
-          <QrCode className="w-6 h-6" aria-hidden="true" />
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Confirmação de Presença</h1>
+          <QrCode className="h-6 w-6" aria-hidden="true" />
+
+          <h1 className="text-2xl font-black tracking-tight sm:text-3xl">
+            Confirmação de Presença
+          </h1>
         </div>
 
-        <p className="mt-2 text-sm sm:text-base text-white/90">
-          Escaneie o QR e deixe o resto com a gente. A confirmação é autenticada e idempotente.
+        <p className="max-w-2xl text-sm text-white/90 sm:text-base">
+          {subtitle ||
+            "Use o QR Code oficial da turma para registrar sua presença com segurança."}
         </p>
 
-        {/* estado visual sutil */}
-        <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/15 ring-1 ring-white/15">
+        <div className="mt-1 inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1.5 ring-1 ring-white/15">
           {isOk ? (
             <>
-              <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
-              <span className="text-sm">Presença confirmada</span>
+              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+              <span className="text-sm font-bold">Presença confirmada</span>
             </>
           ) : isErr ? (
             <>
-              <XCircle className="w-4 h-4" aria-hidden="true" />
-              <span className="text-sm">Ação necessária</span>
+              <XCircle className="h-4 w-4" aria-hidden="true" />
+              <span className="text-sm font-bold">Ação necessária</span>
             </>
           ) : (
             <>
-              <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
-              <span className="text-sm">Processando…</span>
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              <span className="text-sm font-bold">Processando</span>
             </>
           )}
         </div>
 
-        <div className="mt-4 inline-flex items-start gap-2 rounded-2xl bg-white/10 ring-1 ring-white/15 px-3 py-2 text-left">
-          <ShieldCheck className="w-4 h-4 mt-0.5 text-white/90" aria-hidden="true" />
-          <p className="text-xs sm:text-sm text-white/90 leading-relaxed">
-            Dica: se estiver com dúvidas, confirme se está logado com a conta correta antes de tentar novamente.
+        <div className="mt-3 inline-flex max-w-2xl items-start gap-2 rounded-2xl bg-white/10 px-3 py-2 text-left ring-1 ring-white/15">
+          <ShieldCheck
+            className="mt-0.5 h-4 w-4 shrink-0 text-white/90"
+            aria-hidden="true"
+          />
+
+          <p className="text-xs leading-relaxed text-white/90 sm:text-sm">
+            A confirmação é autenticada e validada pelas regras oficiais da
+            turma no backend.
           </p>
         </div>
       </div>
 
-      {/* Glow decorativo */}
       <div
+        className="absolute inset-x-0 bottom-0 h-px bg-white/25"
         aria-hidden="true"
-        className="pointer-events-none absolute -top-24 left-1/2 h-[300px] w-[800px] -translate-x-1/2 rounded-full blur-3xl opacity-25 bg-cyan-300"
       />
     </header>
   );
 }
 
-/* ---------------- Página ---------------- */
+function StatusIcon({ status }) {
+  if (status === "ok") {
+    return (
+      <span className="grid h-14 w-14 shrink-0 place-items-center rounded-3xl bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-200">
+        <CheckCircle2 className="h-8 w-8" aria-hidden="true" />
+      </span>
+    );
+  }
+
+  if (status === "err") {
+    return (
+      <span className="grid h-14 w-14 shrink-0 place-items-center rounded-3xl bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-200">
+        <XCircle className="h-8 w-8" aria-hidden="true" />
+      </span>
+    );
+  }
+
+  return (
+    <span className="grid h-14 w-14 shrink-0 place-items-center rounded-3xl bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-200">
+      <Loader2 className="h-8 w-8 animate-spin" aria-hidden="true" />
+    </span>
+  );
+}
+
+function InfoBox({ turma_id, nowStr }) {
+  return (
+    <div className="mt-5 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-zinc-700 dark:bg-zinc-950/50">
+        <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-zinc-400">
+          Turma
+        </p>
+
+        <p className="mt-1 font-black text-slate-950 dark:text-white">
+          {toPositiveInt(turma_id) || "—"}
+        </p>
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-zinc-700 dark:bg-zinc-950/50">
+        <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-zinc-400">
+          Horário local
+        </p>
+
+        <p className="mt-1 font-black text-slate-950 dark:text-white">
+          {nowStr}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * Página
+ * ───────────────────────────────────────────────────────────── */
+
 export default function ConfirmarPresenca() {
   const reduceMotion = useReducedMotion();
 
   const [searchParams] = useSearchParams();
-  const { turmaId: turmaIdFromPath } = useParams();
+  const { turma_id: turmaIdFromPath } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
 
-  // turma pode vir como /presenca?turma=123 ou /presenca/123
-  const turmaId = useMemo(
-    () => searchParams.get("turma") || turmaIdFromPath || "",
-    [searchParams, turmaIdFromPath]
-  );
+  const turma_id = useMemo(() => {
+    return searchParams.get("turma_id") || turmaIdFromPath || "";
+  }, [searchParams, turmaIdFromPath]);
 
-  // estados
-  const [status, setStatus] = useState("loading"); // "loading" | "ok" | "err"
-  const [msg, setMsg] = useState("Confirmando presença…");
+  const [status, setStatus] = useState("loading");
+  const [msg, setMsg] = useState("Confirmando presença...");
   const [detail, setDetail] = useState("");
   const [attempts, setAttempts] = useState(0);
   const [requiresLogin, setRequiresLogin] = useState(false);
+  const [subtitle, setSubtitle] = useState("");
 
-  // a11y
   const liveRef = useRef(null);
   const titleRef = useRef(null);
-
-  // abort seguro (unmount + retry)
   const abortRef = useRef(null);
   const mountedRef = useRef(true);
+  const inFlightRef = useRef(0);
 
   const [nowStr] = useState(() =>
-    new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short" }).format(new Date())
+    new Intl.DateTimeFormat("pt-BR", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date())
   );
 
   useEffect(() => {
     mountedRef.current = true;
+
     return () => {
       mountedRef.current = false;
-      abortRef.current?.abort?.("route-change");
+
+      try {
+        abortRef.current?.abort?.("route-change");
+      } catch {
+        // noop
+      }
     };
   }, []);
 
   const setLive = useCallback((text) => {
-    if (liveRef.current) liveRef.current.textContent = text;
+    if (liveRef.current) {
+      liveRef.current.textContent = text;
+    }
   }, []);
 
   const buildNext = useCallback(() => {
-    // mantém a rota atual e garante o query ?turma=
-    const base = location.pathname;
-    const q = new URLSearchParams(location.search);
-    q.set("turma", String(turmaId || ""));
-    return `${base}?${q.toString()}`;
-  }, [location.pathname, location.search, turmaId]);
+    const query = new URLSearchParams(location.search);
+
+    query.set("turma_id", String(turma_id || ""));
+
+    return `${location.pathname}?${query.toString()}`;
+  }, [location.pathname, location.search, turma_id]);
 
   const goToLogin = useCallback(() => {
     const next = buildNext();
-    navigate(`/login?next=${encodeURIComponent(next)}`, { replace: true });
+
+    navigate(`/login?next=${encodeURIComponent(next)}`, {
+      replace: true,
+    });
   }, [buildNext, navigate]);
 
   const goToRegister = useCallback(() => {
     const next = buildNext();
-    // 🔧 rota pública de cadastro no app
-    navigate(`/cadastro?next=${encodeURIComponent(next)}`, { replace: true });
+
+    navigate(`/cadastro?next=${encodeURIComponent(next)}`, {
+      replace: true,
+    });
   }, [buildNext, navigate]);
 
   const focusTitleSoon = useCallback(() => {
-    // garante foco pós-render (melhor p/ leitores de tela)
     requestAnimationFrame(() => titleRef.current?.focus?.());
   }, []);
 
-  // ação principal
   const confirmar = useCallback(
-    async (controller) => {
-      if (!turmaId || !/^\d+$/.test(String(turmaId))) {
+    async ({ silent = false } = {}) => {
+      const turmaIdSeguro = toPositiveInt(turma_id);
+
+      if (!turmaIdSeguro) {
         setStatus("err");
-        setMsg("Parâmetro 'turma' ausente ou inválido.");
-        setDetail("Use o QR correto desta sala/turma.");
+        setMsg("Parâmetro turma_id ausente ou inválido.");
+        setDetail("Use o QR Code correto desta turma.");
         setRequiresLogin(false);
-        setLive("Parâmetro inválido.");
+        setSubtitle("Não foi possível identificar a turma.");
+        setLive("Parâmetro turma_id inválido.");
         focusTitleSoon();
         return;
       }
 
-      // ✅ Pré-checagem: não logado → mensagem + CTA
       const tokenOk = getValidToken();
+
       if (!tokenOk) {
         setStatus("err");
         setMsg("Você precisa estar logado para registrar presença.");
         setDetail(
-          "Entre na sua conta para confirmar a presença nesta turma. Voltaremos automaticamente para esta tela após o login."
+          "Entre na sua conta para confirmar a presença nesta turma. Após o login, retornaremos automaticamente para esta tela."
         );
         setRequiresLogin(true);
+        setSubtitle("A confirmação é autenticada.");
         setLive("Login necessário para confirmar presença.");
         focusTitleSoon();
         return;
       }
 
       try {
+        abortRef.current?.abort?.("new-attempt");
+      } catch {
+        // noop
+      }
+
+      const controller = new AbortController();
+
+      abortRef.current = controller;
+      inFlightRef.current += 1;
+
+      const myFlight = inFlightRef.current;
+
+      if (!silent) {
         setStatus("loading");
-        setMsg("Confirmando presença…");
+        setMsg("Confirmando presença...");
         setDetail("");
         setRequiresLogin(false);
+        setSubtitle("Aguarde alguns segundos.");
         setLive("Iniciando confirmação.");
+      }
 
-        // Cancela tentativa anterior (se houver)
-        abortRef.current?.abort?.("new-attempt");
-        abortRef.current = controller;
+      try {
+        await apiPresencaConfirmarQr(turmaIdSeguro, {
+          signal: controller.signal,
+        });
 
-        // OBS: apiPost já prefixa /api quando necessário
-        await apiPost(`/presencas/confirmar-qr/${encodeURIComponent(turmaId)}`, {}, { signal: controller?.signal });
-
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || myFlight !== inFlightRef.current) return;
 
         setStatus("ok");
-        setMsg("✅ Presença confirmada com sucesso!");
-        setDetail("");
+        setMsg("Presença confirmada com sucesso!");
+        setDetail("Você já pode fechar esta tela ou conferir em Minhas presenças.");
+        setRequiresLogin(false);
+        setSubtitle("Registro concluído.");
         setLive("Presença confirmada.");
         focusTitleSoon();
-      } catch (e) {
-        if (e?.name === "AbortError") return;
+      } catch (error) {
+        if (isAbortLike(error)) return;
+        if (!mountedRef.current || myFlight !== inFlightRef.current) return;
 
-        const code = e?.status || e?.response?.status;
-        const serverMsg = e?.response?.data?.mensagem || e?.response?.data?.message || "";
+        const info = getMensagemErro(error);
 
-        if (code === 401) {
-          // não logado → login e volta pra cá
+        if (info.status === 401) {
           goToLogin();
           return;
         }
 
-        if (!mountedRef.current) return;
-
         setStatus("err");
-
-        if (code === 403) {
-          setMsg("Acesso negado: você não está inscrito nesta turma.");
-          setDetail(
-            "Verifique se seu cadastro está correto para este evento/turma. Se você não estiver logado com a conta correta, entre e tente novamente."
-          );
-          setRequiresLogin(false);
-        } else if (code === 409) {
-          // 409: fora do período ou "já confirmada"
-          const already = /já (foi )?confirmad/i.test(serverMsg);
-          setMsg(already ? "Sua presença já foi confirmada." : "Hoje não está dentro do período/datas desta turma.");
-          setDetail(
-            already
-              ? "Não é necessário repetir a leitura do QR. Se precisar, confira suas presenças."
-              : "Confirme com a equipe a data correta ou o cronograma da turma."
-          );
-          setRequiresLogin(false);
-        } else {
-          setMsg("Não foi possível confirmar a presença no momento.");
-          setDetail("Tente novamente. Se persistir, procure a equipe de suporte.");
-          setRequiresLogin(false);
-        }
-
+        setMsg(info.titulo);
+        setDetail(info.detalhe);
+        setRequiresLogin(info.requiresLogin);
+        setSubtitle(info.subtitulo);
         setLive("Falha na confirmação de presença.");
         focusTitleSoon();
       }
     },
-    [turmaId, setLive, focusTitleSoon, goToLogin]
+    [focusTitleSoon, goToLogin, setLive, turma_id]
   );
 
-  // auto-executa ao montar e quando turmaId muda (com cancelamento seguro)
   useEffect(() => {
-    const controller = new AbortController();
-    confirmar(controller);
-    return () => controller.abort("route-change");
-  }, [turmaId, confirmar]);
+    confirmar({ silent: false });
 
-  const onRetry = () => {
-    setAttempts((n) => n + 1);
-    const controller = new AbortController();
-    confirmar(controller);
-  };
+    return () => {
+      try {
+        abortRef.current?.abort?.("route-change");
+      } catch {
+        // noop
+      }
+    };
+  }, [confirmar]);
 
-  const onGoHome = () => navigate("/", { replace: true });
-  const onGoMyPresences = () => navigate("/minhas-presencas");
+  const onRetry = useCallback(() => {
+    setAttempts((value) => value + 1);
+    confirmar({ silent: false });
+  }, [confirmar]);
 
-  const titleColor =
-    status === "ok"
-      ? "text-emerald-700 dark:text-emerald-400"
-      : status === "err"
-      ? "text-red-700 dark:text-red-400"
-      : "text-zinc-900 dark:text-zinc-100";
+  const onGoHome = useCallback(() => {
+    navigate("/", {
+      replace: true,
+    });
+  }, [navigate]);
+
+  const onGoMyPresences = useCallback(() => {
+    navigate("/minhas-presencas");
+  }, [navigate]);
+
+  const titleColor = classNames(
+    status === "ok" && "text-emerald-700 dark:text-emerald-300",
+    status === "err" && "text-rose-700 dark:text-rose-300",
+    status === "loading" && "text-slate-950 dark:text-zinc-100"
+  );
 
   return (
-    <div className="flex flex-col min-h-screen bg-white text-gray-900 dark:bg-zinc-900 dark:text-white">
-      <HeaderHero status={status} />
+    <div className="flex min-h-dvh flex-col bg-white text-slate-950 dark:bg-zinc-950 dark:text-white">
+      <HeaderHero status={status} subtitle={subtitle} />
 
-      {/* barra de progresso fina no topo */}
       {status === "loading" && (
         <div
-          className="sticky top-0 left-0 w-full h-1 bg-emerald-100 dark:bg-emerald-950 z-40"
+          className="sticky top-0 z-40 h-1 w-full bg-emerald-100 dark:bg-emerald-950"
           role="progressbar"
           aria-valuemin={0}
           aria-valuemax={100}
           aria-label="Processando confirmação"
         >
-          <div className="h-full bg-emerald-700 dark:bg-emerald-600 animate-pulse w-1/3" />
+          <div className="h-full w-1/3 animate-pulse bg-emerald-700 dark:bg-emerald-500" />
         </div>
       )}
 
-      <main role="main" className="flex-1 px-3 sm:px-4 py-8">
-        {/* Live region acessível */}
-        <p ref={liveRef} className="sr-only" aria-live="polite" />
+      <main role="main" className="flex-1 px-3 py-8 sm:px-4">
+        <p
+          ref={liveRef}
+          className="sr-only"
+          aria-live="polite"
+          aria-atomic="true"
+        />
 
-        <section className="max-w-xl mx-auto">
+        <section className="mx-auto max-w-xl">
           <motion.div
             initial={reduceMotion ? false : { opacity: 0, y: 10 }}
             animate={reduceMotion ? {} : { opacity: 1, y: 0 }}
             transition={{ duration: 0.22 }}
-            className="bg-white dark:bg-zinc-800 rounded-2xl shadow-sm ring-1 ring-zinc-200/60 dark:ring-zinc-700/60 p-5"
+            className="rounded-[2rem] bg-white p-5 shadow-sm ring-1 ring-slate-200/70 dark:bg-zinc-900 dark:ring-zinc-800"
           >
-            {/* título focável para leitores de tela após transição de estado */}
-            <h2 ref={titleRef} tabIndex={-1} className={`text-lg font-semibold ${titleColor}`}>
-              {msg}
-            </h2>
+            <div className="flex items-start gap-4">
+              <StatusIcon status={status} />
 
-            {/* detalhes amigáveis */}
-            {detail && <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">{detail}</p>}
+              <div className="min-w-0 flex-1">
+                <h2
+                  ref={titleRef}
+                  tabIndex={-1}
+                  className={classNames(
+                    "text-lg font-black outline-none",
+                    titleColor
+                  )}
+                >
+                  {msg}
+                </h2>
 
-            {/* contexto da operação */}
-            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3">
-                <p className="text-zinc-500 dark:text-zinc-400">Turma</p>
-                <p className="font-extrabold text-zinc-900 dark:text-zinc-100">
-                  {/^\d+$/.test(String(turmaId)) ? turmaId : "—"}
-                </p>
-              </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3">
-                <p className="text-zinc-500 dark:text-zinc-400">Horário local</p>
-                <p className="font-extrabold text-zinc-900 dark:text-zinc-100">{nowStr}</p>
+                {detail && (
+                  <p className="mt-2 text-sm leading-relaxed text-slate-600 dark:text-zinc-300">
+                    {detail}
+                  </p>
+                )}
               </div>
             </div>
 
-            {/* ações */}
-            <div className="mt-5 flex flex-wrap items-center gap-2">
+            <InfoBox turma_id={turma_id} nowStr={nowStr} />
+
+            <div className="mt-4 inline-flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-200">
+              <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
+              Confirmação autenticada e controlada pelo backend.
+            </div>
+
+            <div className="mt-6 flex flex-wrap items-center gap-2">
               {status === "loading" ? (
                 <button
                   type="button"
                   disabled
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-700 text-white text-sm font-bold disabled:opacity-60"
+                  className="inline-flex items-center gap-2 rounded-2xl bg-emerald-700 px-4 py-2 text-sm font-black text-white disabled:opacity-70"
                 >
-                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
-                  Processando…
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  Processando...
                 </button>
               ) : status === "ok" ? (
                 <>
                   <button
                     type="button"
                     onClick={onGoMyPresences}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold transition"
+                    className="inline-flex items-center gap-2 rounded-2xl bg-emerald-700 px-4 py-2 text-sm font-black text-white transition hover:bg-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
                   >
-                    <UserCheck className="w-4 h-4" aria-hidden="true" />
+                    <UserCheck className="h-4 w-4" aria-hidden="true" />
                     Ver minhas presenças
                   </button>
 
                   <button
                     type="button"
                     onClick={onGoHome}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 text-sm font-bold hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                    className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 px-4 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
                   >
-                    <Home className="w-4 h-4" aria-hidden="true" />
+                    <Home className="h-4 w-4" aria-hidden="true" />
                     Ir para a Home
+                  </button>
+                </>
+              ) : requiresLogin ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={goToLogin}
+                    className="inline-flex items-center gap-2 rounded-2xl bg-emerald-700 px-4 py-2 text-sm font-black text-white transition hover:bg-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                  >
+                    <LogIn className="h-4 w-4" aria-hidden="true" />
+                    Entrar e confirmar
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={goToRegister}
+                    className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 px-4 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                  >
+                    <UserPlus className="h-4 w-4" aria-hidden="true" />
+                    Criar conta
                   </button>
                 </>
               ) : (
                 <>
-                  {/* Se precisa logar, mostra CTAs de login/registro */}
-                  {requiresLogin ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={goToLogin}
-                        className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold transition"
-                      >
-                        <LogIn className="w-4 h-4" aria-hidden="true" />
-                        Entrar e confirmar
-                      </button>
+                  <button
+                    type="button"
+                    onClick={onRetry}
+                    className="inline-flex items-center gap-2 rounded-2xl bg-emerald-700 px-4 py-2 text-sm font-black text-white transition hover:bg-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                  >
+                    <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                    Tentar novamente
+                  </button>
 
-                      <button
-                        type="button"
-                        onClick={goToRegister}
-                        className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 text-sm font-bold hover:bg-zinc-50 dark:hover:bg-zinc-800"
-                      >
-                        <UserPlus className="w-4 h-4" aria-hidden="true" />
-                        Criar conta
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        onClick={onRetry}
-                        className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold transition"
-                      >
-                        <RefreshCw className="w-4 h-4" aria-hidden="true" />
-                        Tentar novamente
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={onGoHome}
-                        className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 text-sm font-bold hover:bg-zinc-50 dark:hover:bg-zinc-800"
-                      >
-                        <Home className="w-4 h-4" aria-hidden="true" />
-                        Ir para a Home
-                      </button>
-                    </>
-                  )}
+                  <button
+                    type="button"
+                    onClick={onGoHome}
+                    className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 px-4 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                  >
+                    <Home className="h-4 w-4" aria-hidden="true" />
+                    Ir para a Home
+                  </button>
                 </>
               )}
             </div>
 
-            {/* ajuda rápida */}
             {status !== "loading" && (
-              <div className="mt-6 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-200 p-3 text-xs">
-                <p className="font-extrabold mb-1">Dica rápida</p>
-                <ul className="list-disc pl-4 space-y-1">
+              <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-950 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-200">
+                <p className="mb-1 font-black">Dica rápida</p>
+
+                <ul className="list-disc space-y-1 pl-4">
                   <li>Garanta que você está logado com a conta correta.</li>
-                  <li>Se o QR foi impresso para outra turma, peça um novo à organização.</li>
+                  <li>
+                    Se o QR Code for de outra turma, peça um novo à organização.
+                  </li>
+                  <li>
+                    Se aparecer fora do período, confirme o dia e horário do
+                    encontro.
+                  </li>
                 </ul>
               </div>
             )}
 
-            {/* contador de tentativas (discreto) */}
-            <p className="mt-3 text-[11px] text-zinc-400 dark:text-zinc-500">Tentativas: {attempts}</p>
+            <p className="mt-4 text-[11px] font-medium text-slate-400 dark:text-zinc-500">
+              Tentativas manuais: {attempts}
+            </p>
           </motion.div>
         </section>
       </main>
-
-      <Footer />
     </div>
   );
 }

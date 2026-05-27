@@ -1,0 +1,655 @@
+/* ============================================================
+   Escola da Saúde — Base visual global
+   Fonte de verdade do tema: <html class="dark"> ou <html data-theme="dark">
+   ============================================================ */
+
+/* -----------------------------
+   Tokens globais
+------------------------------ */
+
+:root {
+  --brand-50: #f0fdf4;
+  --brand-100: #dcfce7;
+  --brand-200: #bbf7d0;
+  --brand-300: #86efac;
+  --brand-400: #4ade80;
+  --brand-500: #22c55e;
+  --brand-600: #16a34a;
+  --brand-700: #15803d;
+  --brand-800: #166534;
+  --brand-900: #14532d;
+  --brand-950: #052e16;
+
+  --status-success: #16a34a;
+  --status-warning: #f59e0b;
+  --status-danger: #dc2626;
+  --status-info: #2563eb;
+
+  --surface-success: #dcfce7;
+  --surface-warning: #fef3c7;
+  --surface-danger: #fee2e2;
+  --surface-info: #dbeafe;
+
+  --text-success: #14532d;
+  --text-warning: #78350f;
+  --text-danger: #7f1d1d;
+  --text-info: #1e3a8a;
+
+  --gradient-success: linear-gradient(135deg, #16a34a 0%, #22c55e 55%, #86efac 100%);
+  --gradient-warning: linear-gradient(135deg, #d97706 0%, #f59e0b 55%, #fde68a 100%);
+  --gradient-danger: linear-gradient(135deg, #b91c1c 0%, #ef4444 50%, #fecaca 100%);
+  --gradient-brand: linear-gradient(135deg, #14532d 0%, #16a34a 55%, #86efac 100%);
+
+  --app-bg: #f8fafc;
+  --app-fg: #0f172a;
+  --app-muted: #64748b;
+  --app-muted-2: #94a3b8;
+
+  --app-card: #ffffff;
+  --app-card-soft: #f8fafc;
+  --app-card-elevated: #ffffff;
+  --app-border: rgba(15, 23, 42, 0.10);
+  --app-border-strong: rgba(15, 23, 42, 0.18);
+
+  --app-input-bg: #ffffff;
+  --app-input-fg: #0f172a;
+  --app-input-border: rgba(15, 23, 42, 0.16);
+  --app-input-placeholder: #94a3b8;
+  --app-input-disabled-bg: #f1f5f9;
+  --app-input-disabled-fg: #94a3b8;
+
+  --app-overlay: rgba(2, 6, 23, 0.55);
+  --app-ring: rgba(20, 83, 45, 0.55);
+
+  --app-shadow-xs: 0 1px 1px rgba(2, 6, 23, 0.06);
+  --app-shadow-sm: 0 1px 2px rgba(2, 6, 23, 0.08);
+  --app-shadow-md: 0 10px 30px rgba(2, 6, 23, 0.10);
+  --app-shadow-lg: 0 22px 70px rgba(2, 6, 23, 0.16);
+  --app-shadow-xl: 0 30px 100px rgba(2, 6, 23, 0.22);
+
+  --app-radius-xs: 0.5rem;
+  --app-radius-sm: 0.75rem;
+  --app-radius-md: 1rem;
+  --app-radius-lg: 1.5rem;
+  --app-radius-xl: 2rem;
+
+  --app-ease-out: cubic-bezier(.16, 1, .3, 1);
+  --app-duration-fast: 120ms;
+  --app-duration-base: 220ms;
+
+  --app-focus-outline: 2px;
+  --app-focus-offset: 3px;
+
+  --app-kbd-bg: #111827;
+  --app-kbd-fg: #f9fafb;
+
+  --scrollbar-width: 0px;
+
+  color-scheme: light;
+  accent-color: var(--brand-600);
+}
+
+html.dark,
+html[data-theme="dark"] {
+  --app-bg: #0b1220;
+  --app-fg: #f8fafc;
+  --app-muted: #a1a1aa;
+  --app-muted-2: #71717a;
+
+  --app-card: #0f172a;
+  --app-card-soft: rgba(255, 255, 255, 0.03);
+  --app-card-elevated: #111827;
+  --app-border: rgba(255, 255, 255, 0.12);
+  --app-border-strong: rgba(255, 255, 255, 0.18);
+
+  --app-input-bg: rgba(255, 255, 255, 0.03);
+  --app-input-fg: #f8fafc;
+  --app-input-border: rgba(255, 255, 255, 0.14);
+  --app-input-placeholder: #71717a;
+  --app-input-disabled-bg: rgba(255, 255, 255, 0.02);
+  --app-input-disabled-fg: #71717a;
+
+  --app-overlay: rgba(0, 0, 0, 0.62);
+  --app-ring: rgba(52, 211, 153, 0.45);
+
+  --app-shadow-xs: 0 1px 1px rgba(0, 0, 0, 0.25);
+  --app-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --app-shadow-md: 0 14px 40px rgba(0, 0, 0, 0.35);
+  --app-shadow-lg: 0 30px 90px rgba(0, 0, 0, 0.55);
+  --app-shadow-xl: 0 45px 120px rgba(0, 0, 0, 0.68);
+
+  --surface-success: rgba(22, 163, 74, 0.18);
+  --surface-warning: rgba(245, 158, 11, 0.18);
+  --surface-danger: rgba(220, 38, 38, 0.18);
+  --surface-info: rgba(37, 99, 235, 0.18);
+
+  --text-success: #86efac;
+  --text-warning: #fde68a;
+  --text-danger: #fca5a5;
+  --text-info: #93c5fd;
+
+  --app-kbd-bg: #e5e7eb;
+  --app-kbd-fg: #111827;
+
+  color-scheme: dark;
+}
+
+@media (forced-colors: active) {
+  :root,
+  html.dark,
+  html[data-theme="dark"] {
+    --app-ring: Highlight;
+    --app-border: CanvasText;
+    --app-border-strong: CanvasText;
+    --app-input-border: CanvasText;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root,
+  html.dark,
+  html[data-theme="dark"] {
+    --app-border: currentColor;
+    --app-border-strong: currentColor;
+    --app-ring: currentColor;
+    --app-input-border: currentColor;
+  }
+}
+
+/* -----------------------------
+   Base estrutural
+------------------------------ */
+
+html,
+body {
+  min-height: 100%;
+}
+
+html {
+  background: var(--app-bg);
+  color: var(--app-fg);
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--app-bg);
+  color: var(--app-fg);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-overflow-scrolling: touch;
+}
+
+#root {
+  min-height: 100vh;
+  background: var(--app-bg);
+  color: inherit;
+}
+
+#modal-root {
+  position: relative;
+  z-index: 9999;
+}
+
+::selection {
+  background: rgba(22, 163, 74, 0.28);
+}
+
+@supports (background: color-mix(in oklab, black 10%, transparent)) {
+  ::selection {
+    background: color-mix(in oklab, var(--brand-600) 30%, transparent);
+  }
+}
+
+/* -----------------------------
+   Acessibilidade
+------------------------------ */
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: var(--app-focus-outline) solid var(--app-ring);
+  outline-offset: var(--app-focus-offset);
+}
+
+[role="button"],
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: .85em;
+  padding: .2em .45em;
+  border-radius: .5rem;
+  background: var(--app-kbd-bg);
+  color: var(--app-kbd-fg);
+  border: 1px solid var(--app-border);
+  box-shadow: var(--app-shadow-sm) inset;
+}
+
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+/* -----------------------------
+   Scrollbar / scroll lock
+------------------------------ */
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, .18);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+html.dark *::-webkit-scrollbar-thumb,
+html[data-theme="dark"] *::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, .18);
+}
+
+@supports (background: color-mix(in oklab, black 10%, transparent)) {
+  *::-webkit-scrollbar-thumb {
+    background: color-mix(in oklab, var(--app-fg) 20%, transparent);
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklab, var(--app-fg) 35%, transparent);
+  }
+}
+
+html.app-scroll-locked {
+  overflow: hidden;
+}
+
+body.app-scroll-locked-body {
+  overflow: hidden;
+}
+
+body.app-modal-open {
+  overscroll-behavior: contain;
+}
+
+/* -----------------------------
+   Movimento reduzido
+------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+/* -----------------------------
+   Componentes utilitários globais
+------------------------------ */
+
+.app-card {
+  padding: 1.5rem;
+  background: var(--app-card);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  box-shadow: var(--app-shadow-md);
+  text-align: left;
+}
+
+.app-card-soft {
+  background: var(--app-card-soft);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+}
+
+.app-divider {
+  height: 1px;
+  background: var(--app-border);
+  border: 0;
+  margin: 1rem 0;
+}
+
+.app-kpi {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .5rem;
+  font-weight: 700;
+}
+
+.app-kpi small {
+  color: var(--app-muted);
+  font-weight: 500;
+}
+
+.app-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .5rem;
+  min-height: 2.75rem;
+  padding: .75rem 1rem;
+  border-radius: 1rem;
+  font-weight: 800;
+  background: var(--brand-900);
+  color: #fff;
+  border: 1px solid rgba(2, 6, 23, 0.18);
+  box-shadow: var(--app-shadow-sm);
+  cursor: pointer;
+  transition:
+    transform var(--app-duration-fast) var(--app-ease-out),
+    filter var(--app-duration-base) var(--app-ease-out),
+    background var(--app-duration-base) var(--app-ease-out),
+    opacity var(--app-duration-base) var(--app-ease-out);
+}
+
+.app-btn:hover {
+  background: var(--brand-800);
+  filter: saturate(1.05);
+  text-decoration: none;
+}
+
+.app-btn:active {
+  transform: translateY(1px) scale(0.99);
+}
+
+.app-btn:disabled,
+.app-btn[aria-disabled="true"] {
+  opacity: .55;
+  cursor: not-allowed;
+  filter: none;
+  transform: none;
+}
+
+.app-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .5rem;
+  min-height: 2.75rem;
+  padding: .70rem .95rem;
+  border-radius: 1rem;
+  font-weight: 800;
+  background: transparent;
+  color: inherit;
+  border: 1px solid var(--app-border);
+  box-shadow: var(--app-shadow-xs);
+  cursor: pointer;
+  transition:
+    transform var(--app-duration-fast) var(--app-ease-out),
+    background var(--app-duration-base) var(--app-ease-out),
+    opacity var(--app-duration-base) var(--app-ease-out);
+}
+
+.app-btn-ghost:hover {
+  background: rgba(148, 163, 184, 0.14);
+  text-decoration: none;
+}
+
+html.dark .app-btn-ghost:hover,
+html[data-theme="dark"] .app-btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.app-btn-ghost:active {
+  transform: translateY(1px) scale(0.99);
+}
+
+.app-btn-ghost:disabled,
+.app-btn-ghost[aria-disabled="true"] {
+  opacity: .55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.app-input,
+select.app-input,
+textarea.app-input {
+  width: 100%;
+  background: var(--app-input-bg);
+  color: var(--app-input-fg);
+  border: 1px solid var(--app-input-border);
+  border-radius: 1rem;
+  padding: .65rem .85rem;
+  box-shadow: var(--app-shadow-xs);
+}
+
+.app-input::placeholder,
+select.app-input::placeholder,
+textarea.app-input::placeholder {
+  color: var(--app-input-placeholder);
+}
+
+.app-input:disabled,
+select.app-input:disabled,
+textarea.app-input:disabled {
+  background: var(--app-input-disabled-bg);
+  color: var(--app-input-disabled-fg);
+  cursor: not-allowed;
+  opacity: .8;
+}
+
+.app-input:focus-visible,
+select.app-input:focus-visible,
+textarea.app-input:focus-visible {
+  outline: var(--app-focus-outline) solid var(--app-ring);
+  outline-offset: var(--app-focus-offset);
+}
+
+.app-badge-success {
+  background: var(--gradient-success);
+  color: #fff;
+}
+
+.app-badge-warning {
+  background: var(--gradient-warning);
+  color: #111827;
+}
+
+.app-badge-danger {
+  background: var(--gradient-danger);
+  color: #111827;
+}
+
+.app-bar-success {
+  background: var(--gradient-success);
+}
+
+.app-bar-warning {
+  background: var(--gradient-warning);
+}
+
+.app-bar-danger {
+  background: var(--gradient-danger);
+}
+
+/* -----------------------------
+   react-calendar
+------------------------------ */
+
+.react-calendar {
+  width: 100%;
+  max-width: 100%;
+  background-color: var(--app-card);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  padding: 1rem;
+  color: var(--app-fg);
+  box-shadow: var(--app-shadow-md);
+}
+
+.react-calendar__navigation {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: .75rem;
+  gap: .5rem;
+}
+
+.react-calendar__navigation button {
+  font: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  padding: .5rem .75rem;
+  border-radius: .9rem;
+  color: var(--app-fg);
+  cursor: pointer;
+  transition:
+    background var(--app-duration-base) var(--app-ease-out),
+    border-color var(--app-duration-base) var(--app-ease-out);
+}
+
+.react-calendar__navigation button:hover,
+.react-calendar__navigation button:focus-visible {
+  background: rgba(20, 83, 45, 0.12);
+  border-color: rgba(20, 83, 45, 0.20);
+}
+
+.react-calendar__tile {
+  padding: .65rem .4rem;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: .75rem;
+  text-align: center;
+  transition:
+    background-color var(--app-duration-base) var(--app-ease-out),
+    border-color var(--app-duration-base) var(--app-ease-out),
+    color var(--app-duration-base) var(--app-ease-out);
+  color: inherit;
+}
+
+.react-calendar__tile:enabled:hover,
+.react-calendar__tile:enabled:focus-visible {
+  background-color: rgba(20, 83, 45, 0.10);
+  border-color: rgba(20, 83, 45, 0.18);
+}
+
+.react-calendar__tile--active {
+  background-color: var(--brand-900) !important;
+  color: #fff !important;
+  border-color: transparent !important;
+  box-shadow: 0 8px 22px rgba(20, 83, 45, 0.25);
+}
+
+.react-calendar__tile--now {
+  box-shadow: inset 0 0 0 2px rgba(20, 83, 45, 0.45);
+}
+
+.react-calendar__tile--range {
+  background-color: rgba(20, 83, 45, 0.18);
+  color: var(--app-fg);
+}
+
+.react-calendar__tile--rangeStart,
+.react-calendar__tile--rangeEnd {
+  background-color: var(--brand-900);
+  color: #fff;
+}
+
+.react-calendar__tile:disabled {
+  color: var(--app-muted);
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+html.dark .react-calendar__tile:enabled:hover,
+html[data-theme="dark"] .react-calendar__tile:enabled:focus-visible {
+  background-color: rgba(34, 197, 94, 0.14);
+}
+
+/* -----------------------------
+   Responsividade
+------------------------------ */
+
+@media (max-width: 480px) {
+  .app-btn,
+  .app-btn-ghost {
+    min-height: 3rem;
+    padding: .85rem 1rem;
+  }
+
+  .app-card {
+    padding: 1.15rem;
+  }
+
+  .react-calendar {
+    padding: .75rem;
+  }
+}
+
+/* -----------------------------
+   Impressão
+------------------------------ */
+
+@media print {
+  html,
+  body,
+  #root {
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  body {
+    min-height: auto !important;
+  }
+
+  #root {
+    padding: 0 !important;
+  }
+
+  .app-card,
+  .app-card-soft,
+  .react-calendar {
+    box-shadow: none !important;
+    border: 1px solid #000 !important;
+  }
+
+  .app-btn,
+  .app-btn-ghost {
+    display: none !important;
+  }
+}

@@ -1,169 +1,201 @@
-// 📁 src/components/ui/Loader.jsx
+// ✅ src/components/ui/Loader.jsx — v2.0
+// Plataforma Escola da Saúde
+//
+// Loader genérico oficial da plataforma.
+//
+// Revisão premium:
+// - componente genérico real de UI;
+// - spinner acessível;
+// - suporte a inline, centralizado, overlay, skeleton e progresso determinado;
+// - reduced motion via Tailwind;
+// - sem window.matchMedia/useEffect desnecessário;
+// - sem id SVG duplicável;
+// - visual premium consistente;
+// - mobile-first;
+// - dark mode;
+// - contrato limpo e previsível.
+
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useState } from "react";
 
-/**
- * Loader (spinner) moderno e acessível.
- * - Gradiente animado (3 cores) com acento configurável.
- * - Dark mode, tamanhos, inline/centralizado, skeleton.
- * - A11y: role="status", aria-live, label visível opcional.
- * - Respeita prefers-reduced-motion.
- * - Extras: determinate (progress 0–100), overlay, thickness.
- */
-export default function Loader({
-  size = "md",
-  accent = "emerald",    // emerald | violet | amber | rose | teal | indigo | petroleo | orange | sky | lousa
-  inline = false,         // se true, sem centralização (para dentro de botões/cards)
-  minimal = false,        // se true, círculo sólido (sem anel)
-  skeleton = false,       // modo pulsante em vez de girar
-  className = "",
-  ariaLabel = "Carregando…",
-  // Novos opcionais (backward-compatible):
-  label,                  // texto visível abaixo/ao lado
-  progress,               // 0..100 ativa modo determinate
-  overlay = false,        // cobre o container pai
-  thickness = "auto",     // "auto" | "thin" | "normal" | "thick"
-  direction = "column",   // "row" (label ao lado) | "column" (abaixo)
-}) {
-  const [reducedMotion, setReducedMotion] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-    const onChange = () => setReducedMotion(Boolean(mq?.matches));
-    onChange();
-    mq?.addEventListener?.("change", onChange);
-    return () => mq?.removeEventListener?.("change", onChange);
-  }, []);
+const ACCENT_CLASSES = {
+  emerald: "border-emerald-600 text-emerald-700 dark:border-emerald-400 dark:text-emerald-300",
+  violet: "border-violet-600 text-violet-700 dark:border-violet-400 dark:text-violet-300",
+  amber: "border-amber-600 text-amber-700 dark:border-amber-400 dark:text-amber-300",
+  rose: "border-rose-600 text-rose-700 dark:border-rose-400 dark:text-rose-300",
+  teal: "border-teal-600 text-teal-700 dark:border-teal-400 dark:text-teal-300",
+  indigo: "border-indigo-600 text-indigo-700 dark:border-indigo-400 dark:text-indigo-300",
+  petroleo: "border-cyan-800 text-cyan-900 dark:border-cyan-400 dark:text-cyan-200",
+  orange: "border-orange-600 text-orange-700 dark:border-orange-400 dark:text-orange-300",
+  sky: "border-sky-600 text-sky-700 dark:border-sky-400 dark:text-sky-300",
+  lousa: "border-emerald-900 text-emerald-950 dark:border-emerald-300 dark:text-emerald-200",
+};
 
-  const sizes = {
-    sm: { box: "h-4 w-4", ring: "border-2", font: "text-xs", gap: "gap-2", track: 16 },
-    md: { box: "h-8 w-8", ring: "border-4", font: "text-sm", gap: "gap-2.5", track: 32 },
-    lg: { box: "h-12 w-12", ring: "border-4", font: "text-base", gap: "gap-3", track: 48 },
-    xl: { box: "h-16 w-16", ring: "border-[5px]", font: "text-base", gap: "gap-3", track: 64 },
-  };
-  const S = sizes[size] ?? sizes.md;
+const SKELETON_ACCENT_CLASSES = {
+  emerald: "bg-emerald-200 dark:bg-emerald-900/50",
+  violet: "bg-violet-200 dark:bg-violet-900/50",
+  amber: "bg-amber-200 dark:bg-amber-900/50",
+  rose: "bg-rose-200 dark:bg-rose-900/50",
+  teal: "bg-teal-200 dark:bg-teal-900/50",
+  indigo: "bg-indigo-200 dark:bg-indigo-900/50",
+  petroleo: "bg-cyan-200 dark:bg-cyan-950/60",
+  orange: "bg-orange-200 dark:bg-orange-900/50",
+  sky: "bg-sky-200 dark:bg-sky-900/50",
+  lousa: "bg-emerald-950/15 dark:bg-emerald-300/15",
+};
 
-  const ringThickness =
-    thickness === "thin" ? "border-2" :
-    thickness === "normal" ? "border-4" :
-    thickness === "thick" ? "border-[6px]" :
-    S.ring;
+const SIZE_CLASSES = {
+  sm: {
+    spinner: "h-4 w-4",
+    text: "text-xs",
+    gap: "gap-2",
+    stroke: "border-2",
+    skeleton: "h-4 w-4",
+  },
+  md: {
+    spinner: "h-8 w-8",
+    text: "text-sm",
+    gap: "gap-2.5",
+    stroke: "border-4",
+    skeleton: "h-8 w-8",
+  },
+  lg: {
+    spinner: "h-12 w-12",
+    text: "text-base",
+    gap: "gap-3",
+    stroke: "border-4",
+    skeleton: "h-12 w-12",
+  },
+  xl: {
+    spinner: "h-16 w-16",
+    text: "text-base",
+    gap: "gap-3",
+    stroke: "border-[5px]",
+    skeleton: "h-16 w-16",
+  },
+};
 
-  const accents = {
-    emerald: "from-emerald-700 via-emerald-500 to-emerald-300",
-    violet: "from-violet-700 via-violet-500 to-violet-300",
-    amber: "from-amber-700 via-amber-500 to-amber-300",
-    rose: "from-rose-700 via-rose-500 to-rose-300",
-    teal: "from-teal-700 via-teal-500 to-teal-300",
-    indigo: "from-indigo-700 via-indigo-500 to-indigo-300",
-    petroleo: "from-slate-900 via-teal-800 to-slate-700",
-    orange: "from-orange-700 via-orange-500 to-orange-300",
-    sky: "from-sky-700 via-sky-500 to-sky-300",
-    lousa: "from-[#0f2c1f] via-[#114b2d] to-[#166534]",
-  };
-  const grad = accents[accent] ?? accents.emerald;
+const THICKNESS_CLASSES = {
+  auto: null,
+  thin: "border-2",
+  normal: "border-4",
+  thick: "border-[6px]",
+};
 
-  const layoutCls = inline
-    ? "inline-flex items-center"
-    : "flex justify-center items-center py-4";
+function classNames(...classes) {
+  return classes.filter(Boolean).join(" ");
+}
 
-  const dirCls = direction === "row" ? "flex-row" : "flex-col";
-  const labelMargin = direction === "row" ? "ml-2" : "mt-2";
+function clampProgress(value) {
+  const number = Number(value);
 
-  const isDeterminate = Number.isFinite(Number(progress));
-  const clamped = isDeterminate ? Math.max(0, Math.min(100, Number(progress))) : undefined;
-
-  // Estilo do overlay
-  const overlayWrap = overlay
-    ? "relative"
-    : "";
-  const overlayLayer = overlay
-    ? "absolute inset-0 z-50 flex items-center justify-center bg-black/5 dark:bg-white/5 backdrop-blur-[2px]"
-    : "";
-
-  if (skeleton) {
-    return (
-      <div className={[overlayWrap, className].join(" ")}>
-        {overlay ? (
-          <div className={overlayLayer}>
-            <div
-              role="status"
-              aria-label={ariaLabel}
-              aria-live="polite"
-              className={`flex ${dirCls} ${S.gap} items-center`}
-            >
-              <div className={`rounded-full bg-gradient-to-r ${grad} animate-pulse ${S.box}`} />
-              <span className="sr-only">{ariaLabel}</span>
-              {label && <span className={`${S.font} text-gray-700 dark:text-gray-200`}>{label}</span>}
-            </div>
-          </div>
-        ) : (
-          <div
-            role="status"
-            aria-label={ariaLabel}
-            aria-live="polite"
-            className={`${layoutCls} ${className}`}
-          >
-            <div className={`flex ${dirCls} ${S.gap} items-center`}>
-              <div className={`rounded-full bg-gradient-to-r ${grad} animate-pulse ${S.box}`} />
-              <span className="sr-only">{ariaLabel}</span>
-              {label && <span className={`${S.font} text-gray-700 dark:text-gray-200`}>{label}</span>}
-            </div>
-          </div>
-        )}
-      </div>
-    );
+  if (!Number.isFinite(number)) {
+    return null;
   }
 
-  // Determinate usa anel com trilha (border) + segmento rotacionado por percent
-  const spinner = isDeterminate ? (
-    <div className="relative">
-      {/* trilha */}
-      <div
-        className={[
-          "rounded-full border-current/20",
-          S.box,
-          ringThickness,
-          "text-gray-400 dark:text-gray-600",
-        ].join(" ")}
-        aria-hidden="true"
+  return Math.min(100, Math.max(0, number));
+}
+
+function ProgressRing({ progress, size, accent }) {
+  const safeProgress = clampProgress(progress) ?? 0;
+  const sizePx = {
+    sm: 18,
+    md: 34,
+    lg: 50,
+    xl: 66,
+  }[size] || 34;
+
+  const radius = 18;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (safeProgress / 100) * circumference;
+
+  return (
+    <svg
+      width={sizePx}
+      height={sizePx}
+      viewBox="0 0 44 44"
+      role="img"
+      aria-label={`Progresso: ${safeProgress}%`}
+      className={classNames(
+        "shrink-0",
+        ACCENT_CLASSES[accent] || ACCENT_CLASSES.emerald
+      )}
+    >
+      <circle
+        cx="22"
+        cy="22"
+        r={radius}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="4"
+        opacity="0.18"
       />
-      {/* segmento */}
-      <svg
-        viewBox="0 0 100 100"
-        className="absolute inset-0"
-        aria-hidden="true"
-      >
-        <defs>
-          <linearGradient id="loaderGrad" x1="0" y1="0" x2="1" y2="1">
-            {/* fallback sólido para HC */}
-            <stop offset="0%" stopColor="currentColor" />
-            <stop offset="100%" stopColor="currentColor" />
-          </linearGradient>
-        </defs>
-        <circle
-          cx="50"
-          cy="50"
-          r="45"
-          fill="none"
-          stroke="url(#loaderGrad)"
-          strokeWidth={ringThickness.includes("[") ? Number(ringThickness.match(/\[(\d+)px\]/)?.[1] ?? 4) : Number(ringThickness.replace("border-", "")) || 4}
-          strokeLinecap="round"
-          strokeDasharray={`${Math.round((clamped / 100) * 283)} 283`}
-          transform="rotate(-90 50 50)"
-          className="text-gray-800 dark:text-gray-100"
-        />
-      </svg>
-    </div>
+      <circle
+        cx="22"
+        cy="22"
+        r={radius}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="4"
+        strokeLinecap="round"
+        strokeDasharray={circumference}
+        strokeDashoffset={offset}
+        transform="rotate(-90 22 22)"
+      />
+    </svg>
+  );
+}
+
+export default function Loader({
+  size = "md",
+  accent = "emerald",
+  inline = false,
+  minimal = false,
+  skeleton = false,
+  className = "",
+  ariaLabel = "Carregando",
+  label,
+  progress,
+  overlay = false,
+  thickness = "auto",
+  direction = "column",
+}) {
+  const sizeClass = SIZE_CLASSES[size] || SIZE_CLASSES.md;
+  const accentClass = ACCENT_CLASSES[accent] || ACCENT_CLASSES.emerald;
+  const skeletonAccent = SKELETON_ACCENT_CLASSES[accent] || SKELETON_ACCENT_CLASSES.emerald;
+
+  const progressValue = clampProgress(progress);
+  const isDeterminate = progressValue !== null;
+
+  const strokeClass = THICKNESS_CLASSES[thickness] || sizeClass.stroke;
+
+  const layoutClass = inline
+    ? "inline-flex items-center"
+    : "flex items-center justify-center py-4";
+
+  const directionClass = direction === "row" ? "flex-row" : "flex-col";
+
+  const text = isDeterminate && label ? `${label} ${progressValue}%` : label;
+
+  const spinner = isDeterminate ? (
+    <ProgressRing progress={progressValue} size={size} accent={accent} />
+  ) : skeleton ? (
+    <span
+      className={classNames(
+        "inline-block rounded-full motion-safe:animate-pulse motion-reduce:animate-none",
+        sizeClass.skeleton,
+        skeletonAccent
+      )}
+      aria-hidden="true"
+    />
   ) : (
-    <div
-      className={[
-        "relative rounded-full",
-        S.box,
-        minimal
-          ? `animate-spin bg-gradient-to-tr ${grad}`
-          : `animate-spin ${ringThickness} border-solid border-t-transparent bg-gradient-to-tr ${grad}`,
-      ].join(" ")}
-      style={{ backgroundClip: minimal ? "padding-box" : undefined }}
+    <span
+      className={classNames(
+        "inline-block shrink-0 rounded-full border-current border-t-transparent motion-safe:animate-spin motion-reduce:animate-none",
+        sizeClass.spinner,
+        strokeClass,
+        accentClass,
+        minimal && "border-t-current opacity-80 motion-safe:animate-pulse"
+      )}
       aria-hidden="true"
     />
   );
@@ -173,16 +205,24 @@ export default function Loader({
       role="status"
       aria-label={ariaLabel}
       aria-live="polite"
-      className={`flex ${dirCls} ${S.gap} items-center`}
+      aria-busy="true"
+      className={classNames(
+        "flex items-center",
+        directionClass,
+        sizeClass.gap
+      )}
     >
-      {/* reduz movimento se necessário */}
-      <div className={reducedMotion && !isDeterminate ? "animate-none" : ""}>
-        {spinner}
-      </div>
+      {spinner}
       <span className="sr-only">{ariaLabel}</span>
-      {label && (
-        <span className={`${S.font} text-gray-700 dark:text-gray-200`}>
-          {isDeterminate ? `${label} ${clamped}%` : label}
+
+      {text && (
+        <span
+          className={classNames(
+            "font-semibold text-slate-700 dark:text-slate-200",
+            sizeClass.text
+          )}
+        >
+          {text}
         </span>
       )}
     </div>
@@ -190,18 +230,37 @@ export default function Loader({
 
   if (overlay) {
     return (
-      <div className={[overlayWrap, className].join(" ")}>
-        <div className={overlayLayer}>{content}</div>
+      <div className={classNames("absolute inset-0 z-50", className)}>
+        <div className="flex h-full w-full items-center justify-center bg-white/70 backdrop-blur-[2px] dark:bg-slate-950/60">
+          {content}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className={`${layoutCls} ${className}`}>
+    <div className={classNames(layoutClass, className)}>
       {content}
     </div>
   );
 }
+
+ProgressRing.propTypes = {
+  progress: PropTypes.number.isRequired,
+  size: PropTypes.oneOf(["sm", "md", "lg", "xl"]).isRequired,
+  accent: PropTypes.oneOf([
+    "emerald",
+    "violet",
+    "amber",
+    "rose",
+    "teal",
+    "indigo",
+    "petroleo",
+    "orange",
+    "sky",
+    "lousa",
+  ]).isRequired,
+};
 
 Loader.propTypes = {
   size: PropTypes.oneOf(["sm", "md", "lg", "xl"]),
@@ -222,7 +281,6 @@ Loader.propTypes = {
   skeleton: PropTypes.bool,
   className: PropTypes.string,
   ariaLabel: PropTypes.string,
-  // novos:
   label: PropTypes.string,
   progress: PropTypes.number,
   overlay: PropTypes.bool,

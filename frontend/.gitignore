@@ -1,10 +1,10 @@
 # ============================================================
-# 🧩 .gitignore — Escola da Saúde / Residência Santos
-# Padrão institucional premium para projetos React + Node + Vite
+# .gitignore — Escola da Saúde
+# Projeto React + Node + Vite
 # ============================================================
 
 # ===========================
-# ✅ Logs
+# Logs
 # ===========================
 logs/
 *.log
@@ -15,24 +15,20 @@ lerna-debug.log*
 firebase-debug.log*
 
 # ===========================
-# ✅ Dependências
+# Dependências
 # ===========================
 node_modules/
 
 # ===========================
-# ✅ Ambiente
+# Ambiente / segredos
 # ===========================
 .env
-.env.local
-.env.*.local
-.env.development.local
-.env.production.local
-.env.test.local
-.env.backup
-.env.*.backup
+.env.*
+!.env.example
+!.env.sample
 
 # ===========================
-# ✅ Build / Vite / SSR / Next
+# Build / Vite / SSR / Next
 # ===========================
 dist/
 dist-ssr/
@@ -45,7 +41,7 @@ out/
 .sass-cache/
 
 # ===========================
-# ✅ IDE / Editor
+# IDE / Editor
 # ===========================
 .vscode/*
 !.vscode/extensions.json
@@ -59,13 +55,16 @@ out/
 .history/
 
 # ===========================
-# ✅ Cobertura de testes
+# Cobertura de testes
 # ===========================
 coverage/
 .nyc_output/
+.vitest/
+jest-coverage/
+jest-cache/
 
 # ===========================
-# ✅ Caches e artefatos
+# Caches e artefatos
 # ===========================
 .eslintcache
 .stylelintcache
@@ -75,6 +74,7 @@ temp/
 tmp/
 .turbo/
 .pnp.*
+
 .yarn/*
 !.yarn/patches
 !.yarn/plugins
@@ -83,8 +83,7 @@ tmp/
 !.yarn/versions
 
 # ===========================
-# ✅ Lockfiles do projeto
-# (devem ser versionados)
+# Lockfiles — devem ser versionados
 # ===========================
 !package-lock.json
 !yarn.lock
@@ -92,43 +91,64 @@ tmp/
 !bun.lockb
 
 # ===========================
-# ✅ Outros sensíveis / específicos
+# Armazenamento local da aplicação
+# ===========================
+data/
+certificados/
+uploads/
+storage/
+backups/
+
+# ===========================
+# Banco local / dumps
+# ===========================
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+*.dump
+*.sql.gz
+*.backup
+
+# ===========================
+# Chaves / certificados / credenciais
 # ===========================
 *.pem
 *.key
 *.crt
 *.csr
+*.p12
+*.pfx
 
+# ===========================
+# Plataformas / deploy local
+# ===========================
+.vercel/
+.render/
+.neon/
+
+# ===========================
+# Sistema operacional
+# ===========================
 .DS_Store
 .DS_Store?
 Thumbs.db
 ehthumbs.db
 desktop.ini
 
-certificados/
-uploads/
-storage/
-backups/
-
-.vercel
-.render
-.neon
-
 # ===========================
-# ✅ Ferramentas de testes
+# Ferramentas de testes
 # ===========================
 cypress/videos/
 cypress/screenshots/
 playwright-report/
 test-results/
-.vitest/
 *.tap
 jest-html-reporters-attach/
-jest-coverage/
-jest-cache/
 
 # ===========================
-# ✅ Documentação / Relatórios
+# Documentação / relatórios temporários
 # ===========================
 *.log.html
 *.report.html
@@ -137,8 +157,17 @@ jest-cache/
 *.rej
 
 # ===========================
-# ✅ Temporários gerais
+# Temporários gerais
 # ===========================
 *.tmp
 *.temp
 *.swp
+
+# ===========================
+# Arquivos compactados locais
+# ===========================
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
