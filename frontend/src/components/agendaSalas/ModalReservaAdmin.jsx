@@ -749,7 +749,7 @@ export default function ModalReservaAdmin({
 
     try {
       const { blob, filename } = await apiGetFile(
-        `/salas/admin/reservas/${reserva.id}/termo-pdf`
+        `/sala/admin/reservas/${reserva.id}/termo-pdf`
       );
 
       if (!blob || typeof blob.size !== "number" || blob.size <= 0) {
@@ -814,7 +814,7 @@ export default function ModalReservaAdmin({
       };
 
       if (isEdicao) {
-        await api.put(`/salas/admin/reservas/${reserva.id}`, payloadBase);
+        await api.put(`/sala/admin/reservas/${reserva.id}`, payloadBase);
 
         showMessage({
           type: "success",
@@ -837,7 +837,7 @@ export default function ModalReservaAdmin({
           }
         }
 
-        const response = await api.post("/salas/admin/reservas", {
+        const response = await api.post("/sala/admin/reservas", {
           ...payloadBase,
           recorrencia,
         });
@@ -896,7 +896,7 @@ export default function ModalReservaAdmin({
     setMsgA11y("Cancelando reserva.");
 
     try {
-      await api.delete(`/salas/admin/reservas/${reserva.id}`);
+      await api.delete(`/sala/admin/reservas/${reserva.id}`);
 
       showMessage({
         type: "success",

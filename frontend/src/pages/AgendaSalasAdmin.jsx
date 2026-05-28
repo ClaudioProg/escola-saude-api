@@ -30,6 +30,7 @@
 // - anti-fuso: sem new Date("YYYY-MM-DD").
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   AlertCircle,
   CalendarDays,
@@ -1717,7 +1718,9 @@ function AgendaSalasAdmin() {
         loading={cancelandoReserva}
       />
 
-      {modalAberto && slotSelecionado ? (
+      {modalAberto && slotSelecionado
+  ? createPortal(
+      <div className="fixed inset-0 z-[9999] flex items-center justify-center overflow-y-auto bg-slate-950/60 p-3 backdrop-blur-sm sm:p-5">
         <ModalReservaAdmin
           onClose={fecharModalSlot}
           slot={slotSelecionado}
@@ -1727,7 +1730,10 @@ function AgendaSalasAdmin() {
           recarregar={carregarAgenda}
           origem="calendario_dia"
         />
-      ) : null}
+      </div>,
+      document.body
+    )
+  : null}
     </div>
   );
 }

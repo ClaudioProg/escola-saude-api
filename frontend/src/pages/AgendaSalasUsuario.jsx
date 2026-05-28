@@ -1919,7 +1919,9 @@ async function executarConfirmacaoUsoSala(reserva) {
   loadingConfirmacaoUso={confirmandoUsoId}
 />
 
-      {modalSolicitacaoAberto && slotSelecionado ? (
+      {modalSolicitacaoAberto && slotSelecionado
+  ? createPortal(
+      <div className="fixed inset-0 z-[9999] flex items-center justify-center overflow-y-auto bg-slate-950/60 p-3 backdrop-blur-sm sm:p-5">
         <ModalSolicitarReserva
           onClose={fecharModalSolicitacao}
           recarregar={carregarAgenda}
@@ -1934,7 +1936,10 @@ async function executarConfirmacaoUsoSala(reserva) {
           modo={modalModo}
           reservaAtual={modalModo === "editar" ? reservaEmEdicao : null}
         />
-      ) : null}
+      </div>,
+      document.body
+    )
+  : null}
 
       <ModalCancelamentoUsuario
         open={cancelamento.open}
