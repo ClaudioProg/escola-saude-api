@@ -1,42 +1,63 @@
 "use strict";
 
 /**
- * ✅ backend/src/utils/certificadoLayoutPdf.js — v2.1
- * Atualizado em: 18/05/2026
+ * ✅ backend/src/utils/certificadoLayoutPdf.js — v2.7
+ * Atualizado em: 28/05/2026
  * Plataforma Escola da Saúde
  *
  * Função:
- * - Template programático oficial para certificados PDF.
- * - Desenha layout institucional sem depender de wallpaper/fundo externo.
+ * - Template programático premium para certificados PDF.
+ * - Certificado institucional oficial em 1 página A4 horizontal.
  *
- * Diretrizes:
- * - Layout vetorial via PDFKit.
- * - Sem dependência obrigatória de imagem de fundo.
- * - Identidade institucional EMSP-SMS.
- * - Número oficial do certificado sempre destacado.
- * - QR Code e código de validação sempre destacados.
- * - Compatível com certificados regulares e avulsos.
+ * Diretrizes v2.7:
+ * - Layout premium refinado a partir da v2.6.
+ * - Brasão de Santos no topo esquerdo.
+ * - Logo da Escola da Saúde no topo direito.
+ * - Cabeçalho centralizado, leve e institucional.
+ * - Título menor, mais equilibrado e com respiro melhor.
+ * - Nome com destaque nobre.
+ * - Texto central com mais altura, leitura e presença.
+ * - Assinaturas com área elegante, sem divisor vertical central.
+ * - Rodapé verde premium com QR, número, código, URL e imagem institucional externa.
+ * - Textos do rodapé compactados verticalmente para não encostar na borda.
+ * - Sem desenho vetorial infantil no rodapé.
+ * - Sem page-break automático.
+ * - Compatível com certificados regulares, organizador, palestrante e avulso.
  * - Suporta de 1 a 3 assinaturas oficiais.
- * - Preparado para validação pública e rastreabilidade documental.
  *
- * Contrato de assinaturas:
- * - Recebe assinaturas já ordenadas pelo controller/service.
- * - A ordem final vem de turma_certificado_assinante.ordem.
- * - Rafaella Pitol é obrigatória no fluxo regular.
- * - Fábio Lopez, quando selecionado, deve vir como última assinatura.
- * - Este utilitário apenas desenha; não decide regra documental.
+ * Contrato preservado:
+ * - desenharCertificadoCompletoV2(doc, options)
+ * - desenharAssinaturas(doc, assinaturas, options)
+ * - normalizarAssinaturasLayout(assinaturas)
+ * - dataUrlToBuffer(value)
  */
 
+const fs = require("fs");
+const path = require("path");
+
 const CORES = {
-  verdeProfundo: "#0f3d2e",
-  verde: "#1b5e47",
-  verdeClaro: "#dcefe7",
-  verdeMuitoClaro: "#f3faf6",
-  dourado: "#b7791f",
-  douradoClaro: "#f8e6bd",
-  cinzaTexto: "#1f2933",
-  cinzaMedio: "#64748b",
-  cinzaClaro: "#e5e7eb",
+  verdeNoite: "#052e24",
+  verdeProfundo: "#0b3b2e",
+  verdeInstitucional: "#104936",
+  verdeMedio: "#1e6f54",
+  verdeSuave: "#e8f3ee",
+
+  ouro: "#b8872b",
+  ouroEscuro: "#80601f",
+  ouroClaro: "#ead8a8",
+  ouroPale: "#f4ead0",
+
+  papel: "#fffaf0",
+  papelClaro: "#fffdf7",
+  papelSombra: "#f6edd9",
+
+  texto: "#17231f",
+  textoSuave: "#53645d",
+  textoMuted: "#6f7e77",
+
+  linha: "#c9b27d",
+  linhaVerde: "#9fb9ad",
+
   branco: "#ffffff",
   preto: "#111827",
 };
@@ -85,6 +106,18 @@ function fontSet(fonts = {}) {
   };
 }
 
+function drawNoBreakText(doc, text, x, y, options = {}) {
+  const clean = safeText(text, options.max || 500);
+
+  if (!clean) return;
+
+  doc.text(clean, x, y, {
+    ...options,
+    lineBreak: false,
+    ellipsis: true,
+  });
+}
+
 function drawFitText(doc, text, options = {}) {
   const {
     x,
@@ -94,11 +127,12 @@ function drawFitText(doc, text, options = {}) {
     font,
     fallbackFont = "Helvetica",
     maxSize = 30,
-    minSize = 10,
+    minSize = 8,
     align = "center",
     color = CORES.preto,
-    lineGap = 2,
-    continued = false,
+    lineGap = 1.8,
+    characterSpacing,
+    ellipsis = false,
   } = options;
 
   const clean = safeText(text);
@@ -108,7 +142,6 @@ function drawFitText(doc, text, options = {}) {
   let size = maxSize;
 
   setFont(doc, font, fallbackFont);
-  doc.fontSize(size);
 
   while (size > minSize) {
     doc.fontSize(size);
@@ -117,18 +150,20 @@ function drawFitText(doc, text, options = {}) {
       width,
       align,
       lineGap,
+      characterSpacing,
     });
 
-    const measuredWidth = doc.widthOfString(clean);
+    const measuredWidth = doc.widthOfString(clean, {
+      characterSpacing,
+    });
 
-    if (
-      (!height || measuredHeight <= height) &&
-      (align !== "center" || measuredWidth <= width || measuredHeight <= height)
-    ) {
-      break;
-    }
+    const fitsHeight = !height || measuredHeight <= height;
+    const fitsWidth =
+      align !== "center" || measuredWidth <= width || measuredHeight <= height;
 
-    size -= 1;
+    if (fitsHeight && fitsWidth) break;
+
+    size -= 0.8;
   }
 
   doc.fillColor(color).fontSize(size).text(clean, x, y, {
@@ -136,7 +171,8 @@ function drawFitText(doc, text, options = {}) {
     height,
     align,
     lineGap,
-    continued,
+    characterSpacing,
+    ellipsis,
   });
 
   return {
@@ -145,73 +181,230 @@ function drawFitText(doc, text, options = {}) {
       width,
       align,
       lineGap,
+      characterSpacing,
     }),
   };
+}
+
+function maybeLoadImageBuffer(value) {
+  if (!value) return null;
+
+  if (Buffer.isBuffer(value)) return value;
+
+  const fromDataUrl = dataUrlToBuffer(value);
+  if (fromDataUrl) return fromDataUrl;
+
+  const filePath = String(value || "").trim();
+  if (!filePath) return null;
+
+  try {
+    if (fs.existsSync(filePath)) {
+      return fs.readFileSync(filePath);
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function resolveAssetPath(...segments) {
+  return path.resolve(__dirname, ...segments);
+}
+
+function localizarImagem(options = {}, tipo = "brasao") {
+  const envMap = {
+    brasao: "CERT_BRASAO_PATH",
+    escola: "CERT_ESCOLA_LOGO_PATH",
+    rodape: "CERT_RODAPE_PATH",
+  };
+
+  const optionKeys = {
+    brasao: ["brasaoBuffer", "brasaoPath", "logoBuffer", "logoPath"],
+    escola: [
+      "escolaLogoBuffer",
+      "escolaLogoPath",
+      "logoEscolaBuffer",
+      "logoEscolaPath",
+    ],
+    rodape: ["rodapeBuffer", "rodapePath", "footerBuffer", "footerPath"],
+  };
+
+  for (const key of optionKeys[tipo] || []) {
+    const buffer = maybeLoadImageBuffer(options[key]);
+    if (buffer) return buffer;
+  }
+
+  const envPath = process.env[envMap[tipo]] || "";
+
+  const candidatos = {
+    brasao: [
+      envPath,
+      resolveAssetPath("../assets/brasao-santos.png"),
+      resolveAssetPath("../../assets/brasao-santos.png"),
+      path.resolve(process.cwd(), "backend/src/assets/brasao-santos.png"),
+      path.resolve(process.cwd(), "src/assets/brasao-santos.png"),
+    ],
+    escola: [
+      envPath,
+      resolveAssetPath("../assets/escola-saude.png"),
+      resolveAssetPath("../../assets/escola-saude.png"),
+      resolveAssetPath("../assets/logo-escola-saude.png"),
+      resolveAssetPath("../../assets/logo-escola-saude.png"),
+      path.resolve(process.cwd(), "backend/src/assets/escola-saude.png"),
+      path.resolve(process.cwd(), "backend/src/assets/logo-escola-saude.png"),
+      path.resolve(process.cwd(), "src/assets/escola-saude.png"),
+      path.resolve(process.cwd(), "src/assets/logo-escola-saude.png"),
+    ],
+    rodape: [
+      envPath,
+      resolveAssetPath("../assets/estacao.png"),
+      resolveAssetPath("../../assets/estacao.png"),
+      resolveAssetPath("../assets/rodape-santos.png"),
+      resolveAssetPath("../../assets/rodape-santos.png"),
+      path.resolve(process.cwd(), "backend/src/assets/estacao.png"),
+      path.resolve(process.cwd(), "backend/src/assets/rodape-santos.png"),
+      path.resolve(process.cwd(), "src/assets/estacao.png"),
+      path.resolve(process.cwd(), "src/assets/rodape-santos.png"),
+    ],
+  }[tipo];
+
+  for (const candidato of candidatos.filter(Boolean)) {
+    const buffer = maybeLoadImageBuffer(candidato);
+    if (buffer) return buffer;
+  }
+
+  return null;
+}
+
+function desenharPapel(doc) {
+  const pageW = doc.page.width;
+  const pageH = doc.page.height;
+
+  doc.save();
+
+  doc.rect(0, 0, pageW, pageH).fill(CORES.verdeNoite);
+
+  doc
+    .roundedRect(18, 18, pageW - 36, pageH - 36, 22)
+    .fillColor(CORES.papelSombra)
+    .fill();
+
+  doc
+    .roundedRect(26, 26, pageW - 52, pageH - 52, 18)
+    .fillColor(CORES.papel)
+    .fill();
+
+  doc.save();
+  doc.opacity(0.075);
+  doc.strokeColor("#d9cda9").lineWidth(0.28);
+
+  for (let y = 34; y < pageH - 34; y += 7) {
+    doc
+      .moveTo(34, y + Math.sin(y) * 0.45)
+      .lineTo(pageW - 34, y + Math.cos(y) * 0.35)
+      .stroke();
+  }
+
+  doc.restore();
+  doc.restore();
+}
+
+function desenharCantosOrnamentais(doc) {
+  const pageW = doc.page.width;
+  const pageH = doc.page.height;
+
+  doc.save();
+
+  const x1 = 40;
+  const y1 = 38;
+  const x2 = pageW - 40;
+  const y2 = pageH - 38;
+
+  doc.strokeColor(CORES.ouro).lineWidth(1.3);
+
+  function canto(x, y, sx, sy) {
+    doc.save();
+    doc.translate(x, y);
+    doc.scale(sx, sy);
+
+    doc
+      .moveTo(0, 32)
+      .bezierCurveTo(4, 17, 17, 4, 32, 0)
+      .stroke();
+
+    doc
+      .moveTo(9, 35)
+      .bezierCurveTo(12, 23, 23, 12, 35, 9)
+      .stroke();
+
+    doc.moveTo(6, 47).lineTo(0, 60).lineTo(14, 54).stroke();
+
+    doc.circle(37, 5, 1.5).fillColor(CORES.ouro).fill();
+    doc.circle(20, 19, 1.1).fillColor(CORES.ouro).fill();
+
+    doc.restore();
+  }
+
+  canto(x1, y1, 1, 1);
+  canto(x2, y1, -1, 1);
+  canto(x1, y2, 1, -1);
+  canto(x2, y2, -1, -1);
+
+  doc.restore();
 }
 
 function desenharMoldura(doc, options = {}) {
   const pageW = doc.page.width;
   const pageH = doc.page.height;
+  const fonts = fontSet(options.fonts);
 
-  const modelo = options.modelo || "padrao";
-
-  doc.save();
-
-  doc.rect(0, 0, pageW, pageH).fill(CORES.branco);
-
-  doc.fillColor(CORES.verdeMuitoClaro);
-  doc.roundedRect(22, 22, pageW - 44, pageH - 44, 22).fill();
-
-  doc.fillColor(CORES.verdeProfundo);
-  doc.roundedRect(34, 34, pageW - 68, 70, 18).fill();
-
-  doc.fillColor(CORES.dourado);
-  doc.roundedRect(54, 96, pageW - 108, 5, 3).fill();
-
-  doc.lineWidth(2.2).strokeColor(CORES.verdeProfundo);
-  doc.roundedRect(30, 30, pageW - 60, pageH - 60, 20).stroke();
-
-  doc.lineWidth(0.8).strokeColor("#9fb8ad");
-  doc.roundedRect(48, 48, pageW - 96, pageH - 96, 14).stroke();
-
-  doc.lineWidth(2).strokeColor(CORES.dourado);
-
-  const corner = 48;
-  const len = 55;
-
-  doc
-    .moveTo(corner, corner + len)
-    .lineTo(corner, corner)
-    .lineTo(corner + len, corner)
-    .stroke();
-
-  doc
-    .moveTo(pageW - corner - len, corner)
-    .lineTo(pageW - corner, corner)
-    .lineTo(pageW - corner, corner + len)
-    .stroke();
-
-  doc
-    .moveTo(corner, pageH - corner - len)
-    .lineTo(corner, pageH - corner)
-    .lineTo(corner + len, pageH - corner)
-    .stroke();
-
-  doc
-    .moveTo(pageW - corner - len, pageH - corner)
-    .lineTo(pageW - corner, pageH - corner)
-    .lineTo(pageW - corner, pageH - corner - len)
-    .stroke();
+  desenharPapel(doc);
 
   doc.save();
-  doc.opacity(0.035);
-  setFont(doc, options.fonts?.serif || "BreeSerif", "Helvetica-Bold");
-  doc.fillColor(CORES.verdeProfundo).fontSize(148).text("EMSP", 0, 220, {
+
+  doc
+    .roundedRect(28, 24, pageW - 56, pageH - 48, 22)
+    .strokeColor(CORES.ouro)
+    .lineWidth(2.2)
+    .stroke();
+
+  doc
+    .roundedRect(34, 30, pageW - 68, pageH - 60, 18)
+    .strokeColor(CORES.verdeProfundo)
+    .lineWidth(2.4)
+    .stroke();
+
+  doc
+    .roundedRect(46, 42, pageW - 92, pageH - 84, 12)
+    .strokeColor("#dbc487")
+    .lineWidth(0.9)
+    .stroke();
+
+  doc.strokeColor("#efe1b8").lineWidth(0.6);
+  doc.roundedRect(54, 50, pageW - 108, pageH - 100, 9).stroke();
+
+  desenharCantosOrnamentais(doc);
+
+  doc.save();
+  doc.opacity(0.022);
+  setFont(doc, fonts.serif, "Helvetica-Bold");
+  doc.fillColor(CORES.verdeProfundo).fontSize(100).text("EMSP", 0, 296, {
     width: pageW,
     align: "center",
+    lineBreak: false,
+    characterSpacing: 4,
   });
   doc.restore();
 
+  doc.save();
+  doc.opacity(0.028);
+  doc.strokeColor(CORES.verdeProfundo).lineWidth(1);
+  doc.circle(pageW / 2, 336, 80).stroke();
+  doc.circle(pageW / 2, 336, 60).stroke();
+  doc.restore();
+
+  const modelo = options.modelo || "padrao";
   const seloTexto =
     modelo === "organizador"
       ? "ORGANIZADOR"
@@ -222,17 +415,72 @@ function desenharMoldura(doc, options = {}) {
           : "EMSP-SMS";
 
   doc.save();
-  doc.rotate(-90, { origin: [pageW - 22, pageH / 2] });
-  setFont(doc, options.fonts?.bold || "AlegreyaSans-Bold", "Helvetica-Bold");
+  doc.rotate(-90, { origin: [pageW - 20, pageH / 2] });
+  setFont(doc, fonts.bold, "Helvetica-Bold");
   doc
-    .fillColor("#6b7c73")
-    .fontSize(8)
-    .text(seloTexto, pageW - 260, pageH / 2 - 9, {
-      width: 220,
+    .fillColor("#718078")
+    .fontSize(7.2)
+    .text(seloTexto, pageW - 252, pageH / 2 - 8, {
+      width: 210,
       align: "center",
-      characterSpacing: 1.3,
+      characterSpacing: 1.6,
+      lineBreak: false,
     });
   doc.restore();
+
+  doc.restore();
+}
+
+function desenharLogoImagem(doc, buffer, x, y, w, h, options = {}) {
+  const { rounded = false, border = false, padding = 0 } = options;
+
+  if (!buffer) return false;
+
+  doc.save();
+
+  if (border) {
+    doc
+      .roundedRect(x, y, w, h, rounded ? 12 : 6)
+      .strokeColor("#e3d4a7")
+      .lineWidth(0.6)
+      .stroke();
+  }
+
+  try {
+    doc.image(buffer, x + padding, y + padding, {
+      width: w - padding * 2,
+      height: h - padding * 2,
+      fit: [w - padding * 2, h - padding * 2],
+      align: "center",
+      valign: "center",
+    });
+
+    doc.restore();
+    return true;
+  } catch {
+    doc.restore();
+    return false;
+  }
+}
+
+function desenharLogoFallback(doc, x, y, w, h, label, fonts = {}) {
+  doc.save();
+
+  doc
+    .roundedRect(x, y, w, h, 12)
+    .strokeColor("#e3d4a7")
+    .lineWidth(0.6)
+    .stroke();
+
+  setFont(doc, fonts.bold || "Helvetica-Bold", "Helvetica-Bold");
+  doc
+    .fillColor(CORES.verdeProfundo)
+    .fontSize(10)
+    .text(label, x + 6, y + h / 2 - 7, {
+      width: w - 12,
+      align: "center",
+      lineBreak: false,
+    });
 
   doc.restore();
 }
@@ -241,36 +489,91 @@ function desenharTopoInstitucional(doc, options = {}) {
   const pageW = doc.page.width;
   const fonts = fontSet(options.fonts);
 
+  const brasao = localizarImagem(options, "brasao");
+  const logoEscola = localizarImagem(options, "escola");
+
+  const logoSize = 74;
+  const logoY = 42;
+  const logoLeftX = 82;
+  const logoRightX = pageW - 82 - logoSize;
+
+  desenharLogoImagem(doc, brasao, logoLeftX, logoY, logoSize, logoSize, {
+    border: false,
+    padding: 0,
+  }) ||
+    desenharLogoFallback(
+      doc,
+      logoLeftX,
+      logoY,
+      logoSize,
+      logoSize,
+      "SANTOS",
+      fonts
+    );
+
+  desenharLogoImagem(doc, logoEscola, logoRightX, logoY, logoSize, logoSize, {
+    border: false,
+    padding: 0,
+  }) ||
+    desenharLogoFallback(
+      doc,
+      logoRightX,
+      logoY,
+      logoSize,
+      logoSize,
+      "EMSP",
+      fonts
+    );
+
   doc.save();
 
   setFont(doc, fonts.bold, "Helvetica-Bold");
-  doc
-    .fillColor(CORES.branco)
-    .fontSize(12)
-    .text("PREFEITURA MUNICIPAL DE SANTOS", 60, 46, {
-      width: pageW - 120,
+  doc.fillColor(CORES.verdeProfundo).fontSize(13.2).text(
+    "PREFEITURA MUNICIPAL DE SANTOS",
+    170,
+    54,
+    {
+      width: pageW - 340,
       align: "center",
-      characterSpacing: 1,
-    });
+      characterSpacing: 0.65,
+      lineBreak: false,
+    }
+  );
 
   setFont(doc, fonts.bold, "Helvetica-Bold");
-  doc
-    .fillColor(CORES.branco)
-    .fontSize(16)
-    .text("SECRETARIA MUNICIPAL DE SAÚDE", 60, 63, {
-      width: pageW - 120,
+  doc.fillColor(CORES.texto).fontSize(11).text(
+    "SECRETARIA MUNICIPAL DE SAÚDE",
+    170,
+    74,
+    {
+      width: pageW - 340,
       align: "center",
-    });
+      characterSpacing: 0.25,
+      lineBreak: false,
+    }
+  );
 
   setFont(doc, fonts.regular, "Helvetica");
-  doc
-    .fillColor("#d7ede3")
-    .fontSize(10)
-    .text("Escola Municipal de Saúde Pública — EMSP-SMS", 60, 84, {
-      width: pageW - 120,
+  doc.fillColor(CORES.textoSuave).fontSize(8.8).text(
+    "Escola Municipal de Saúde Pública — EMSP-SMS",
+    170,
+    91,
+    {
+      width: pageW - 340,
       align: "center",
-      characterSpacing: 0.8,
-    });
+      lineBreak: false,
+    }
+  );
+
+  const cy = 116;
+
+  doc.strokeColor(CORES.ouro).lineWidth(0.75);
+  doc.moveTo(pageW / 2 - 120, cy).lineTo(pageW / 2 - 24, cy).stroke();
+  doc.moveTo(pageW / 2 + 24, cy).lineTo(pageW / 2 + 120, cy).stroke();
+
+  doc.circle(pageW / 2, cy, 2.2).fillColor(CORES.ouro).fill();
+  doc.circle(pageW / 2 - 12, cy, 1.2).fillColor(CORES.ouro).fill();
+  doc.circle(pageW / 2 + 12, cy, 1.2).fillColor(CORES.ouro).fill();
 
   doc.restore();
 }
@@ -281,27 +584,41 @@ function desenharTitulo(doc, options = {}) {
 
   doc.save();
 
+  const titulo = "CERTIFICADO";
+
   setFont(doc, fonts.serif, "Helvetica-Bold");
-  doc
-    .fillColor(CORES.verdeProfundo)
-    .fontSize(58)
-    .text("CERTIFICADO", 65, 116, {
-      width: pageW - 130,
-      align: "center",
-      characterSpacing: 1.4,
-    });
+
+  doc.fillColor("#d2bd87").fontSize(44).text(titulo, 66, 134, {
+    width: pageW - 132,
+    align: "center",
+    characterSpacing: 2.4,
+    lineBreak: false,
+  });
+
+  doc.fillColor(CORES.verdeProfundo).fontSize(42).text(titulo, 66, 131, {
+    width: pageW - 132,
+    align: "center",
+    characterSpacing: 2.4,
+    lineBreak: false,
+  });
 
   setFont(doc, fonts.regular, "Helvetica");
-  doc.fillColor(CORES.cinzaMedio).fontSize(11).text(
+  doc.fillColor(CORES.ouroEscuro).fontSize(9.6).text(
     options.subtitulo ||
       "Documento eletrônico emitido pela Plataforma Escola da Saúde",
-    80,
-    177,
+    90,
+    179,
     {
-      width: pageW - 160,
+      width: pageW - 180,
       align: "center",
+      lineBreak: false,
     }
   );
+
+  doc.strokeColor(CORES.ouro).lineWidth(0.7);
+  doc.moveTo(pageW / 2 - 76, 200).lineTo(pageW / 2 - 16, 200).stroke();
+  doc.moveTo(pageW / 2 + 16, 200).lineTo(pageW / 2 + 76, 200).stroke();
+  doc.circle(pageW / 2, 200, 1.8).fillColor(CORES.ouro).fill();
 
   doc.restore();
 }
@@ -312,33 +629,35 @@ function desenharNome(doc, nome, options = {}) {
 
   doc.save();
 
-  const cleanName = safeText(nome, 180);
-
-  drawFitText(doc, cleanName, {
+  drawFitText(doc, safeText(nome, 180), {
     x: 86,
-    y: 215,
+    y: 218,
     width: pageW - 172,
-    height: 62,
+    height: 52,
     font: fonts.script,
     fallbackFont: "Times-Italic",
-    maxSize: 52,
-    minSize: 24,
+    maxSize: 44,
+    minSize: 21,
     align: "center",
-    color: CORES.preto,
+    color: CORES.verdeNoite,
+    lineGap: 0,
   });
 
-  doc.strokeColor("#b7c8bf").lineWidth(0.9);
-  doc.moveTo(180, 278).lineTo(pageW - 180, 278).stroke();
+  doc.strokeColor(CORES.linha).lineWidth(0.75);
+  doc.moveTo(236, 273).lineTo(pageW - 236, 273).stroke();
 
   if (options.identificadorTexto) {
-    setFont(doc, fonts.serif, "Helvetica-Bold");
-    doc
-      .fillColor(CORES.cinzaMedio)
-      .fontSize(10)
-      .text(options.identificadorTexto, 80, 284, {
-        width: pageW - 160,
+    setFont(doc, fonts.regular, "Helvetica");
+    doc.fillColor(CORES.textoSuave).fontSize(8.8).text(
+      options.identificadorTexto,
+      90,
+      283,
+      {
+        width: pageW - 180,
         align: "center",
-      });
+        lineBreak: false,
+      }
+    );
   }
 
   doc.restore();
@@ -350,18 +669,34 @@ function desenharTextoPrincipal(doc, textoPrincipal, options = {}) {
 
   doc.save();
 
+  const boxX = 104;
+  const boxY = 310;
+  const boxW = pageW - 208;
+  const boxH = 76;
+
+  doc
+    .roundedRect(boxX - 10, boxY - 8, boxW + 20, boxH + 14, 10)
+    .fillColor("#fffaf0")
+    .fill();
+
+  doc
+    .roundedRect(boxX - 10, boxY - 8, boxW + 20, boxH + 14, 10)
+    .strokeColor("#ead9a6")
+    .lineWidth(0.55)
+    .stroke();
+
   drawFitText(doc, textoPrincipal, {
-    x: 92,
-    y: 312,
-    width: pageW - 184,
-    height: 78,
+    x: boxX,
+    y: boxY + 3,
+    width: boxW,
+    height: boxH - 4,
     font: fonts.regular,
     fallbackFont: "Helvetica",
-    maxSize: 15,
-    minSize: 10,
-    align: "justify",
-    color: CORES.cinzaTexto,
-    lineGap: 4,
+    maxSize: 13.3,
+    minSize: 9.2,
+    align: "center",
+    color: CORES.texto,
+    lineGap: 2.4,
   });
 
   doc.restore();
@@ -374,9 +709,13 @@ function desenharData(doc, dataTexto, options = {}) {
   doc.save();
 
   setFont(doc, fonts.regular, "Helvetica");
-  doc.fillColor(CORES.cinzaTexto).fontSize(13).text(dataTexto || "", 140, 402, {
-    width: pageW - 220,
+  doc.fillColor(CORES.texto).fontSize(10.4);
+
+  drawNoBreakText(doc, dataTexto || "", pageW - 342, 401, {
+    width: 255,
+    height: 13,
     align: "right",
+    max: 140,
   });
 
   doc.restore();
@@ -416,9 +755,10 @@ function slotsAssinaturas(pageW, total) {
       {
         x: (pageW - 330) / 2,
         w: 330,
-        imageW: 145,
-        nomeSize: 15,
-        cargoSize: 10,
+        imageW: 138,
+        imageH: 40,
+        nomeSize: 12.8,
+        cargoSize: 9,
       },
     ];
   }
@@ -426,47 +766,52 @@ function slotsAssinaturas(pageW, total) {
   if (total === 2) {
     return [
       {
-        x: 112,
-        w: 300,
-        imageW: 138,
-        nomeSize: 14,
-        cargoSize: 9.5,
+        x: 124,
+        w: 292,
+        imageW: 136,
+        imageH: 42,
+        nomeSize: 12.7,
+        cargoSize: 8.8,
       },
       {
-        x: pageW - 412,
-        w: 300,
-        imageW: 138,
-        nomeSize: 14,
-        cargoSize: 9.5,
+        x: pageW - 416,
+        w: 292,
+        imageW: 136,
+        imageH: 42,
+        nomeSize: 12.7,
+        cargoSize: 8.8,
       },
     ];
   }
 
-  const margin = 74;
-  const gap = 16;
+  const margin = 70;
+  const gap = 18;
   const w = (pageW - margin * 2 - gap * 2) / 3;
 
   return [
     {
       x: margin,
       w,
-      imageW: 118,
-      nomeSize: 12.2,
-      cargoSize: 8.3,
+      imageW: 108,
+      imageH: 38,
+      nomeSize: 10.6,
+      cargoSize: 7.5,
     },
     {
       x: margin + w + gap,
       w,
-      imageW: 118,
-      nomeSize: 12.2,
-      cargoSize: 8.3,
+      imageW: 108,
+      imageH: 38,
+      nomeSize: 10.6,
+      cargoSize: 7.5,
     },
     {
       x: margin + (w + gap) * 2,
       w,
-      imageW: 118,
-      nomeSize: 12.2,
-      cargoSize: 8.3,
+      imageW: 108,
+      imageH: 38,
+      nomeSize: 10.6,
+      cargoSize: 7.5,
     },
   ];
 }
@@ -474,71 +819,128 @@ function slotsAssinaturas(pageW, total) {
 function desenharAssinaturas(doc, assinaturas = [], options = {}) {
   const pageW = doc.page.width;
   const fonts = fontSet(options.fonts);
-
   const lista = normalizarAssinaturasLayout(assinaturas);
 
   if (!lista.length) return;
 
-  const baseY = lista.length === 3 ? 480 : 478;
+  const baseY = lista.length === 3 ? 430 : 436;
   const slots = slotsAssinaturas(pageW, lista.length);
 
-  lista.forEach((assinatura, index) => {
-    const slot = slots[index];
-    const imgBuffer = assinatura.imgBuffer || assinatura.imagemBuffer || null;
+lista.forEach((assinatura, index) => {
+  const slot = slots[index];
+  const imgBuffer = assinatura.imgBuffer || assinatura.imagemBuffer || null;
 
-    doc.save();
+  const cargoFinal = safeText(assinatura.cargo, 140);
+  const cargoEhGenerico = ["assinante", "assina", "assinatura"].includes(
+    cargoFinal
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .trim()
+  );
 
-    if (imgBuffer) {
-      try {
-        const imageW = clamp(slot.imageW, 90, 150);
-        const imageX = slot.x + (slot.w - imageW) / 2;
+  doc.save();
 
-        doc.image(imgBuffer, imageX, baseY - 66, {
-          width: imageW,
-          height: 56,
-          fit: [imageW, 56],
-        });
-      } catch {
-        // imagem inválida não bloqueia emissão
-      }
+  const linhaY = baseY + 2;
+
+  if (imgBuffer) {
+    try {
+      const nomeAssinante = String(assinatura?.nome || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase();
+
+      const isRafaellaPitol =
+        nomeAssinante.includes("rafaella") &&
+        nomeAssinante.includes("pitol");
+
+      const imageW = clamp(
+        isRafaellaPitol ? slot.imageW + 22 : slot.imageW,
+        80,
+        168
+      );
+
+      const imageH = clamp(
+        isRafaellaPitol ? slot.imageH + 8 : slot.imageH,
+        32,
+        54
+      );
+
+      const imageX = slot.x + (slot.w - imageW) / 2;
+
+      // Aproxima a assinatura manuscrita da linha.
+      doc.image(imgBuffer, imageX, linhaY - imageH + 4, {
+        width: imageW,
+        height: imageH,
+        fit: [imageW, imageH],
+      });
+    } catch {
+      // imagem inválida não bloqueia emissão
     }
+  }
 
-    doc.strokeColor("#8ca49a").lineWidth(0.8);
-    doc
-      .moveTo(slot.x + 16, baseY - 4)
-      .lineTo(slot.x + slot.w - 16, baseY - 4)
-      .stroke();
+  doc.strokeColor(CORES.ouro).lineWidth(0.8);
+  doc.moveTo(slot.x + 8, linhaY).lineTo(slot.x + slot.w - 8, linhaY).stroke();
 
-    drawFitText(doc, assinatura.nome, {
+  const midX = slot.x + slot.w / 2;
+  doc.circle(midX, linhaY, 1.5).fillColor(CORES.ouro).fill();
+
+  drawFitText(doc, assinatura.nome, {
+    x: slot.x,
+    y: linhaY + 8,
+    width: slot.w,
+    height: 17,
+    font: fonts.bold,
+    fallbackFont: "Helvetica-Bold",
+    maxSize: slot.nomeSize,
+    minSize: 7.6,
+    align: "center",
+    color: CORES.texto,
+    lineGap: 0,
+  });
+
+  if (!cargoEhGenerico && cargoFinal) {
+    drawFitText(doc, cargoFinal, {
       x: slot.x,
-      y: baseY + 3,
+      y: linhaY + 25,
       width: slot.w,
-      height: 23,
-      font: fonts.bold,
-      fallbackFont: "Helvetica-Bold",
-      maxSize: slot.nomeSize,
-      minSize: 8.5,
-      align: "center",
-      color: CORES.preto,
-      lineGap: 0,
-    });
-
-    drawFitText(doc, assinatura.cargo, {
-      x: slot.x,
-      y: baseY + 26,
-      width: slot.w,
-      height: 25,
+      height: 17,
       font: fonts.regular,
       fallbackFont: "Helvetica",
       maxSize: slot.cargoSize,
-      minSize: 6.8,
+      minSize: 6.2,
       align: "center",
-      color: CORES.cinzaMedio,
-      lineGap: 1,
+      color: CORES.ouroEscuro,
+      lineGap: 0,
+    });
+  }
+
+  doc.restore();
+});
+}
+
+function desenharRodapeImagem(doc, options = {}, x, y, w, h) {
+  const rodape = localizarImagem(options, "rodape");
+
+  if (!rodape) return false;
+
+  doc.save();
+
+  try {
+    doc.image(rodape, x, y, {
+      width: w,
+      height: h,
+      fit: [w, h],
+      align: "right",
+      valign: "center",
     });
 
     doc.restore();
-  });
+    return true;
+  } catch {
+    doc.restore();
+    return false;
+  }
 }
 
 function desenharValidacao(doc, options = {}) {
@@ -546,80 +948,148 @@ function desenharValidacao(doc, options = {}) {
   const pageH = doc.page.height;
   const fonts = fontSet(options.fonts);
 
-  const numero = safeText(options.numeroCertificado, 140);
-  const codigo = safeText(options.codigoValidacao, 140);
+  const numero = safeText(options.numeroCertificado, 150);
+  const codigo = safeText(options.codigoValidacao, 150);
   const url = safeText(options.validacaoUrl, 500);
+
+  const footerX = 66;
+  const footerY = pageH - 112;
+  const footerW = pageW - 132;
+  const footerH = 76;
+
+  const qrSize = 56;
+  const qrX = footerX + 18;
+  const qrY = footerY + 10;
+
+  const infoX = qrX + qrSize + 32;
+  const infoY = footerY + 10;
+  const artW = 285;
+  const infoW = footerW - qrSize - artW - 72;
 
   doc.save();
 
   doc
-    .roundedRect(46, pageH - 68, pageW - 92, 34, 8)
-    .fillColor("#eef7f2")
+    .roundedRect(footerX, footerY, footerW, footerH, 12)
+    .fillColor(CORES.verdeProfundo)
     .fill();
+
   doc
-    .strokeColor("#c7ddd2")
-    .lineWidth(0.7)
-    .roundedRect(46, pageH - 68, pageW - 92, 34, 8)
+    .roundedRect(footerX + 4, footerY + 4, footerW - 8, footerH - 8, 9)
+    .strokeColor(CORES.ouro)
+    .lineWidth(0.9)
     .stroke();
 
-  setFont(doc, fonts.bold, "Helvetica-Bold");
-  doc.fillColor(CORES.verdeProfundo).fontSize(8).text(
-    "Documento eletrônico validável — Escola Municipal de Saúde Pública / SMS",
-    154,
-    pageH - 62,
-    {
-      width: pageW - 230,
-      align: "left",
-    }
-  );
-
-  setFont(doc, fonts.bold, "Helvetica-Bold");
   doc
-    .fillColor(CORES.cinzaTexto)
-    .fontSize(7.5)
-    .text(
-      numero ? `Certificado nº: ${numero}` : "Certificado nº: —",
-      154,
-      pageH - 50,
-      {
-        width: pageW - 230,
-        align: "left",
-      }
-    );
+    .roundedRect(qrX - 5, qrY - 5, qrSize + 10, qrSize + 10, 6)
+    .fillColor(CORES.branco)
+    .fill();
 
-  setFont(doc, fonts.regular, "Helvetica");
   doc
-    .fillColor(CORES.cinzaTexto)
-    .fontSize(7.2)
-    .text(`Código de validação: ${codigo}`, 154, pageH - 40, {
-      width: pageW - 230,
-      align: "left",
-    });
-
-  if (url) {
-    doc.fillColor(CORES.cinzaMedio).fontSize(6.5).text(url, 154, pageH - 31, {
-      width: pageW - 230,
-      align: "left",
-    });
-  }
+    .roundedRect(qrX - 5, qrY - 5, qrSize + 10, qrSize + 10, 6)
+    .strokeColor("#d9cda9")
+    .lineWidth(0.5)
+    .stroke();
 
   if (options.qrDataUrl) {
     try {
-      doc.image(options.qrDataUrl, 60, pageH - 139, {
-        width: 82,
+      doc.image(options.qrDataUrl, qrX, qrY, {
+        width: qrSize,
+        height: qrSize,
+        fit: [qrSize, qrSize],
       });
-
-      setFont(doc, fonts.regular, "Helvetica");
-      doc
-        .fillColor(CORES.cinzaMedio)
-        .fontSize(6.5)
-        .text("Valide pelo QR Code", 54, pageH - 55, {
-          width: 94,
-          align: "center",
-        });
     } catch {
       // QR inválido não deve derrubar layout
     }
+  }
+
+  setFont(doc, fonts.regular, "Helvetica");
+  doc.fillColor(CORES.ouroClaro).fontSize(5.9);
+  drawNoBreakText(doc, "Valide pelo QR Code", qrX - 8, qrY + qrSize + 4, {
+    width: qrSize + 16,
+    height: 7,
+    align: "center",
+    max: 60,
+  });
+
+  doc.strokeColor(CORES.ouro).lineWidth(0.8);
+  for (let yy = footerY + 13; yy <= footerY + footerH - 13; yy += 8) {
+    doc.circle(qrX + qrSize + 18, yy, 0.9).fillColor(CORES.ouro).fill();
+  }
+
+  setFont(doc, fonts.bold, "Helvetica-Bold");
+  doc.fillColor(CORES.branco).fontSize(7.8);
+  drawNoBreakText(
+    doc,
+    "Documento eletrônico validável — Escola Municipal de Saúde Pública / SMS",
+    infoX,
+    infoY,
+    {
+      width: infoW,
+      height: 9,
+      max: 190,
+    }
+  );
+
+  setFont(doc, fonts.regular, "Helvetica");
+  doc.fillColor("#f6edd0").fontSize(7.2);
+  drawNoBreakText(
+    doc,
+    numero ? `Certificado nº: ${numero}` : "Certificado nº: —",
+    infoX,
+    infoY + 15,
+    {
+      width: infoW,
+      height: 8,
+      max: 190,
+    }
+  );
+
+  drawNoBreakText(
+    doc,
+    codigo ? `Código de validação: ${codigo}` : "Código de validação: —",
+    infoX,
+    infoY + 30,
+    {
+      width: infoW,
+      height: 8,
+      max: 210,
+    }
+  );
+
+  if (url) {
+    doc.fillColor("#e6d6a6").fontSize(5.9);
+    drawNoBreakText(doc, url, infoX, infoY + 45, {
+      width: infoW + 80,
+      height: 7,
+      max: 270,
+    });
+  }
+
+  const artX = footerX + footerW - artW - 14;
+  const artY = footerY + 4;
+  const artH = footerH - 8;
+
+  const desenhouImagem = desenharRodapeImagem(
+    doc,
+    options,
+    artX,
+    artY,
+    artW,
+    artH
+  );
+
+  if (!desenhouImagem) {
+    doc.save();
+    setFont(doc, fonts.bold, "Helvetica-Bold");
+    doc.opacity(0.22);
+    doc.fillColor(CORES.ouroClaro).fontSize(24);
+    doc.text("EMSP-SMS", artX, footerY + 24, {
+      width: artW,
+      align: "right",
+      lineBreak: false,
+      characterSpacing: 2,
+    });
+    doc.restore();
   }
 
   doc.restore();
@@ -634,6 +1104,7 @@ function desenharCertificadoCompletoV2(doc, options = {}) {
   });
 
   desenharTopoInstitucional(doc, {
+    ...options,
     fonts,
   });
 
@@ -660,6 +1131,7 @@ function desenharCertificadoCompletoV2(doc, options = {}) {
   });
 
   desenharValidacao(doc, {
+    ...options,
     numeroCertificado: options.numeroCertificado,
     codigoValidacao: options.codigoValidacao,
     validacaoUrl: options.validacaoUrl,
