@@ -5,6 +5,7 @@
 // Meu Perfil premium, mobile-first, acessível, anti-fuso, sem aliases e alinhado ao contrato oficial.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import {
   AlertTriangle,
@@ -214,6 +215,50 @@ function montarSnapshot(values) {
     orientacao_sexual_id: normText(values.orientacaoSexualId),
     cor_raca_id: normText(values.corRacaId),
   };
+}
+
+function perfilObrigatorioCompleto(usuario = {}) {
+  return Boolean(
+    validarCelularObrigatorio(usuario.celular) &&
+      usuario.unidade_id &&
+      usuario.cargo_id &&
+      usuario.escolaridade_id &&
+      usuario.deficiencia_id &&
+      toYmd(usuario.data_nascimento)
+  );
+}
+
+function sincronizarSessaoPerfil(usuarioAtualizado) {
+  if (!usuarioAtualizado || typeof usuarioAtualizado !== "object") {
+    return;
+  }
+
+  try {
+    const antigo = JSON.parse(localStorage.getItem("usuario") || "{}");
+    const novo = { ...antigo, ...usuarioAtualizado };
+
+    localStorage.setItem("usuario", JSON.stringify(novo));
+    localStorage.setItem("nome", novo.nome || "");
+
+    window.dispatchEvent(
+      new CustomEvent("escola:perfil-atualizado", {
+        detail: {
+          usuario: novo,
+          perfil_incompleto: Boolean(novo.perfil_incompleto),
+        },
+      })
+    );
+
+    window.dispatchEvent(
+      new CustomEvent("escola:sessao-atualizada", {
+        detail: {
+          usuario: novo,
+        },
+      })
+    );
+  } catch {
+    // noop
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -459,12 +504,83 @@ function ProfileStatusPanel({
   );
 }
 
+function SaveBottomPanel({ dirty, salvando, stats, onSave, isDark }) {
+  return (
+    <section
+      className={cx(
+        "rounded-3xl border p-5 shadow-sm md:p-6",
+        stats.completo
+          ? isDark
+            ? "border-emerald-900/40 bg-emerald-950/20"
+            : "border-emerald-200 bg-emerald-50"
+          : isDark
+            ? "border-amber-900/40 bg-amber-950/20"
+            : "border-amber-200 bg-amber-50"
+      )}
+      aria-label="Finalizar atualização cadastral"
+    >
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p
+            className={cx(
+              "text-sm font-extrabold",
+              stats.completo
+                ? isDark
+                  ? "text-emerald-100"
+                  : "text-emerald-900"
+                : isDark
+                  ? "text-amber-100"
+                  : "text-amber-950"
+            )}
+          >
+            Finalizar atualização cadastral
+          </p>
+
+          <p
+            className={cx(
+              "mt-1 text-xs leading-relaxed",
+              stats.completo
+                ? isDark
+                  ? "text-emerald-200/80"
+                  : "text-emerald-800"
+                : isDark
+                  ? "text-amber-200/80"
+                  : "text-amber-900/80"
+            )}
+          >
+            Revise os dados obrigatórios e salve para liberar a navegação na
+            plataforma sem precisar sair, atualizar ou fazer novo login.
+          </p>
+        </div>
+
+        <BotaoLocal
+          onClick={onSave}
+          disabled={salvando || !dirty}
+          loading={salvando}
+          className={cx(
+            "w-full sm:w-auto",
+            dirty
+              ? "bg-emerald-700 text-white hover:bg-emerald-800"
+              : ""
+          )}
+          aria-label="Salvar alterações do cadastro"
+          leftIcon={<Save className="h-4 w-4" aria-hidden="true" />}
+        >
+          {salvando ? "Salvando..." : dirty ? "Salvar alterações" : "Sem alterações"}
+        </BotaoLocal>
+      </div>
+    </section>
+  );
+}
+
 /* ─────────────────────────────────────────────────────────────
    Página
 ────────────────────────────────────────────────────────────── */
 
 export default function Perfil() {
   const { isDark } = useEscolaTheme();
+  const navigate = useNavigate();
+  const location = useLocation();
 
   const [usuario, setUsuario] = useState(null);
 
@@ -519,6 +635,21 @@ export default function Perfil() {
   const setLive = useCallback((message) => {
     if (liveRef.current) liveRef.current.textContent = message || "";
   }, []);
+
+  const destinoAposPerfil = useMemo(() => {
+  try {
+    const params = new URLSearchParams(location.search);
+    const next = String(params.get("next") || "").trim();
+
+    if (next && next.startsWith("/") && !next.startsWith("//")) {
+      return next;
+    }
+  } catch {
+    // noop
+  }
+
+  return "/painel";
+}, [location.search]);
 
   const inputCls = useCallback(
     (hasError) =>
@@ -713,20 +844,16 @@ export default function Perfil() {
         throw new Error("Perfil não encontrado.");
       }
 
-      preencherFormulario(me);
+            preencherFormulario(me);
+      sincronizarSessaoPerfil(me);
 
-      try {
-        const antigo = JSON.parse(localStorage.getItem("usuario") || "{}");
-        const novo = { ...antigo, ...me };
+      const incompleto = Boolean(
+        me.perfil_incompleto || !perfilObrigatorioCompleto(me)
+      );
 
-        localStorage.setItem("usuario", JSON.stringify(novo));
-        localStorage.setItem("nome", novo.nome || "");
-      } catch {
-        // noop
-      }
-
-      setPerfilIncompletoFlag?.(!!me.perfil_incompleto || !onlyDigits(me.celular));
+      setPerfilIncompletoFlag?.(incompleto);
       setLive("Perfil atualizado.");
+    
     } catch (error) {
       console.error("[Perfil] falha ao atualizar perfil", {
         message: error?.message,
@@ -909,25 +1036,24 @@ export default function Perfil() {
 
       const atualizado = unwrap(atualizadoResponse);
 
-      preencherFormulario(atualizado);
+            preencherFormulario(atualizado);
       setSenha("");
+      sincronizarSessaoPerfil(atualizado);
 
-      try {
-        const antigo = JSON.parse(localStorage.getItem("usuario") || "{}");
-        const novo = { ...antigo, ...atualizado };
-
-        localStorage.setItem("usuario", JSON.stringify(novo));
-        localStorage.setItem("nome", novo.nome || "");
-      } catch {
-        // noop
-      }
-
-      setPerfilIncompletoFlag?.(
-        !!atualizado?.perfil_incompleto || !onlyDigits(atualizado?.celular)
+      const incompleto = Boolean(
+        atualizado?.perfil_incompleto || !perfilObrigatorioCompleto(atualizado)
       );
+
+      setPerfilIncompletoFlag?.(incompleto);
 
       toast.success("Dados atualizados com sucesso.");
       setLive("Alterações salvas.");
+
+      if (!incompleto) {
+        window.setTimeout(() => {
+          navigate(destinoAposPerfil, { replace: true });
+        }, 250);
+      }
     } catch (error) {
       console.error("[Perfil] falha ao salvar alterações", error);
 
@@ -963,6 +1089,8 @@ export default function Perfil() {
     registro,
     senha,
     unidadeId,
+    navigate,
+    destinoAposPerfil,
     usuario?.id,
   ]);
 
@@ -1610,6 +1738,14 @@ export default function Perfil() {
               </div>
             </div>
           </SectionCard>
+
+          <SaveBottomPanel
+            dirty={dirty}
+            salvando={salvando}
+            stats={stats}
+            onSave={salvarAlteracao}
+            isDark={isDark}
+          />
 
           <ModalAssinatura
             isOpen={modalAberto}
