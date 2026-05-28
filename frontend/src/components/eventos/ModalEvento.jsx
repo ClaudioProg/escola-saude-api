@@ -75,7 +75,7 @@ import EventoService, {
   ymd,
 } from "../../services/eventoService";
 
-import { apiGet } from "../../services/api";
+import { apiGet, apiLookupCargo, apiLookupUnidade } from "../../services/api";
 
 /* ─────────────────────────────────────────────────────────────
    Config
@@ -761,11 +761,11 @@ export default function ModalEvento({
 
         if (!cacheUnidades) {
           promises.push(
-            apiGet("/unidades", {
-              query: { limit: 300, offset: 0 },
-              on401: "redirect",
-              on403: "silent",
-            })
+         apiLookupUnidade({
+  query: { limit: 300, offset: 0 },
+  on401: "silent",
+  on403: "silent",
+})
               .then((res) => ({ key: "unidades", value: asArray(res) }))
               .catch((error) => {
                 warnDev("Falha ao carregar unidades", error);
@@ -790,11 +790,11 @@ export default function ModalEvento({
 
         if (!cacheCargos) {
           promises.push(
-            apiGet("/cargos", {
-              query: { limit: 500, offset: 0 },
-              on401: "redirect",
-              on403: "silent",
-            })
+           apiLookupCargo({
+  query: { limit: 500, offset: 0 },
+  on401: "silent",
+  on403: "silent",
+})
               .then((res) => ({ key: "cargos", value: asArray(res) }))
               .catch((error) => {
                 warnDev("Falha ao carregar cargos", error);
@@ -1006,7 +1006,7 @@ export default function ModalEvento({
 
     async function carregarQuestionario() {
       try {
-        const qz = await apiGet(`/questionarios/evento/${Number(evento.id)}`, {
+        const qz = await apiGet(`/questionario/evento/${Number(evento.id)}`, {
           on404: "silent",
           on401: "redirect",
           on403: "silent",
@@ -1363,15 +1363,17 @@ if (assinantes.length < 1 || assinantes.length > MAX_ASSINANTES_TURMA) {
 
       let restritoModo = null;
 
-      if (restrito) {
-        if (restricaoUi === RESTRICAO_UI.TODOS_SERVIDORES) {
-          restritoModo = EVENTO_RESTRITO_MODO.TODOS_SERVIDORES;
-        } else if (restricaoUi === RESTRICAO_UI.LISTA_REGISTROS) {
-          restritoModo = EVENTO_RESTRITO_MODO.LISTA_REGISTROS;
-        } else {
-          restritoModo = null;
-        }
-      }
+if (restrito) {
+  if (restricaoUi === RESTRICAO_UI.TODOS_SERVIDORES) {
+    restritoModo = "todos_servidores";
+  } else if (restricaoUi === RESTRICAO_UI.LISTA_REGISTROS) {
+    restritoModo = "lista_registros";
+  } else if (restricaoUi === RESTRICAO_UI.CARGOS) {
+    restritoModo = "cargos";
+  } else if (restricaoUi === RESTRICAO_UI.UNIDADES) {
+    restritoModo = "unidades";
+  }
+}
 
       const payload = {
         ...(evento?.id ? { id: Number(evento.id) } : {}),

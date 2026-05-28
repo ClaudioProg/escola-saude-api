@@ -1291,23 +1291,28 @@ async function atualizarPerfilInstitucional(req, res) {
 
   try {
     await db.query(
-      `
-      UPDATE usuarios
-         SET ${campos.join(", ")}
-       WHERE id = $${index}
-      `,
-      valores
-    );
+  `
+  UPDATE usuarios
+     SET ${campos.join(", ")}
+   WHERE id = $${index}
+  `,
+  valores
+);
 
-    const { rows } = await db.query(
-      `
-      SELECT ${SELECT_USUARIO_COMPLETO}
-      FROM usuarios u
-      ${JOIN_USUARIO_COMPLETO}
-      WHERE u.id = $1
-      `,
-      [id]
-    );
+// ✅ v2.1 — limpa imediatamente o cache do diagnóstico de cadastro incompleto.
+// Sem isso, o middleware pode continuar devolvendo X-Perfil-Incompleto: 1
+// depois do perfil institucional ser salvo.
+forcarAtualizacaoCadastro.clearCache(id);
+
+const { rows } = await db.query(
+  `
+  SELECT ${SELECT_USUARIO_COMPLETO}
+  FROM usuarios u
+  ${JOIN_USUARIO_COMPLETO}
+  WHERE u.id = $1
+  `,
+  [id]
+);
 
     const usuario = sanitizeUsuario(rows[0] || {});
 

@@ -68,6 +68,8 @@ const PERFIL_ADMINISTRADOR = "administrador";
 
 const MODO_TODOS = "todos_servidores";
 const MODO_LISTA = "lista_registros";
+const MODO_CARGOS = "cargos";
+const MODO_UNIDADES = "unidades";
 
 const PAPEL_ORGANIZADOR = "organizador";
 
@@ -1412,8 +1414,63 @@ async function criarEvento(req, res) {
   try {
     await client.query("BEGIN");
 
-    const cargoIds = toPostgresIntArray(cargos_permitidos);
-    const unidadeIds = toPostgresIntArray(unidades_permitidas);
+const restritoFinal = Boolean(restrito);
+const restritoModoFinal = restritoFinal ? String(restrito_modo || "").trim() : null;
+
+const cargoIds =
+  restritoFinal && restritoModoFinal === MODO_CARGOS
+    ? toPostgresIntArray(cargos_permitidos)
+    : null;
+
+const unidadeIds =
+  restritoFinal && restritoModoFinal === MODO_UNIDADES
+    ? toPostgresIntArray(unidades_permitidas)
+    : null;
+
+const registrosNormalizados =
+  restritoFinal && restritoModoFinal === MODO_LISTA
+    ? normalizeListaRegistros(registros_permitidos)
+    : [];
+
+    if (restritoFinal) {
+  const modosValidos = new Set([
+    MODO_TODOS,
+    MODO_LISTA,
+    MODO_CARGOS,
+    MODO_UNIDADES,
+  ]);
+
+  if (!modosValidos.has(restritoModoFinal)) {
+    return badRequest(res, "Modo de restrição inválido.", {
+      rid,
+      code: "EVENTO_RESTRICAO_MODO_INVALIDO",
+    });
+  }
+
+  if (restritoModoFinal === MODO_LISTA && !registrosNormalizados.length) {
+    return badRequest(
+      res,
+      "Evento restrito por lista precisa ter ao menos um registro autorizado.",
+      { rid }
+    );
+  }
+
+  if (restritoModoFinal === MODO_CARGOS && !cargoIds?.length) {
+    return badRequest(
+      res,
+      "Evento restrito por cargos precisa ter ao menos um cargo autorizado.",
+      { rid }
+    );
+  }
+
+  if (restritoModoFinal === MODO_UNIDADES && !unidadeIds?.length) {
+    return badRequest(
+      res,
+      "Evento restrito por unidades precisa ter ao menos uma unidade autorizada.",
+      { rid }
+    );
+  }
+}
 
     const result = await client.query(
       `
@@ -1440,10 +1497,10 @@ async function criarEvento(req, res) {
         String(tipo).trim(),
         Number(unidade_id),
         String(publico_alvo || "").trim(),
-        Boolean(restrito),
-        restrito ? restrito_modo || null : null,
-        cargoIds,
-        unidadeIds,
+restritoFinal,
+restritoFinal ? restritoModoFinal : null,
+cargoIds,
+unidadeIds,
       ]
     );
 

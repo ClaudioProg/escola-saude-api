@@ -250,12 +250,22 @@ function sincronizarSessaoPerfil(usuarioAtualizado) {
     );
 
     window.dispatchEvent(
-      new CustomEvent("escola:sessao-atualizada", {
-        detail: {
-          usuario: novo,
-        },
-      })
-    );
+  new CustomEvent("escola:sessao-atualizada", {
+    detail: {
+      usuario: novo,
+    },
+  })
+);
+
+window.dispatchEvent(
+  new CustomEvent("auth:changed", {
+    detail: {
+      authenticated: true,
+      usuario: novo,
+      origem: "perfil_atualizado",
+    },
+  })
+);
   } catch {
     // noop
   }
@@ -1046,14 +1056,25 @@ export default function Perfil() {
 
       setPerfilIncompletoFlag?.(incompleto);
 
-      toast.success("Dados atualizados com sucesso.");
-      setLive("Alterações salvas.");
+window.dispatchEvent(
+  new CustomEvent("auth:changed", {
+    detail: {
+      authenticated: true,
+      usuario: atualizado,
+      perfil_incompleto: incompleto,
+      origem: "perfil_salvo",
+    },
+  })
+);
 
-      if (!incompleto) {
-        window.setTimeout(() => {
-          navigate(destinoAposPerfil, { replace: true });
-        }, 250);
-      }
+toast.success("Dados atualizados com sucesso.");
+setLive("Alterações salvas.");
+
+if (!incompleto) {
+  window.setTimeout(() => {
+    navigate(destinoAposPerfil, { replace: true });
+  }, 300);
+}
     } catch (error) {
       console.error("[Perfil] falha ao salvar alterações", error);
 

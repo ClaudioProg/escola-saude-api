@@ -216,7 +216,7 @@ router.head("/health", (_req, res) => res.sendStatus(204));
    Público
 ────────────────────────────────────────────────────────────── */
 
-mount("/public", lookupPublicRoute, "lookupPublicRoute");
+mount("/lookup", lookupPublicRoute, "lookupPublicRoute");
 
 /* ─────────────────────────────────────────────────────────────
    Autenticação / perfil
