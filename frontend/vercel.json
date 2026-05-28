@@ -152,21 +152,21 @@
     }
   ],
   "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "https://escola-saude-api.onrender.com/api/$1"
-    },
-    {
-      "source": "/atualizar.html",
-      "destination": "/atualizar.html"
-    },
-    {
-      "source": "/version.json",
-      "destination": "/version.json"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/"
-    }
-  ]
+  {
+    "source": "/api/(.*)",
+    "destination": "https://escola-saude-api.onrender.com/api/$1"
+  },
+  {
+    "source": "/atualizar.html",
+    "destination": "/atualizar.html"
+  },
+  {
+    "source": "/version.json",
+    "destination": "/version.json"
+  },
+  {
+    "source": "/(.*)",
+    "destination": "/index.html"
+  }
+]
 }
