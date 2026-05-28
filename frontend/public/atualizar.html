@@ -205,9 +205,9 @@
             Atualizar plataforma agora
           </button>
 
-          <a id="linkVoltar" href="/login">
-            Voltar para o login
-          </a>
+         <a id="linkVoltar" href="/login?atualizado=1">
+  Voltar para o login
+</a>
         </div>
 
         <div id="status" class="status" role="status" aria-live="polite">
@@ -332,6 +332,19 @@
         }
 
         btn.addEventListener("click", atualizarPlataforma);
+
+const params = new URLSearchParams(window.location.search);
+const deveAtualizarAutomatico =
+  params.has("origem") ||
+  params.has("forcar") ||
+  params.get("motivo") === "chunk" ||
+  params.get("motivo") === "module";
+
+if (deveAtualizarAutomatico) {
+  window.setTimeout(() => {
+    atualizarPlataforma();
+  }, 300);
+}
       })();
     </script>
   </body>

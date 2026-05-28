@@ -44,6 +44,64 @@ const IS_DEV = Boolean(import.meta.env.DEV);
 const GOOGLE_CLIENT_ID = String(import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim();
 
 /* ─────────────────────────────────────────
+   Recuperação automática de chunk antigo
+───────────────────────────────────────── */
+
+const UPDATE_PAGE_URL = "/atualizar.html";
+
+function redirectToUpdatePage(reason) {
+  try {
+    const url = new URL(UPDATE_PAGE_URL, window.location.origin);
+    url.searchParams.set("motivo", reason || "chunk");
+    url.searchParams.set("ts", String(Date.now()));
+
+    window.location.replace(url.toString());
+  } catch {
+    window.location.replace(
+      `${UPDATE_PAGE_URL}?motivo=${reason || "chunk"}&ts=${Date.now()}`
+    );
+  }
+}
+
+window.addEventListener("vite:preloadError", (event) => {
+  event.preventDefault();
+  redirectToUpdatePage("chunk");
+});
+
+window.addEventListener(
+  "error",
+  (event) => {
+    const message = String(event?.message || "");
+    const filename = String(event?.filename || "");
+
+    const isModuleLoadError =
+      message.includes("Failed to load module script") ||
+      message.includes("Importing a module script failed") ||
+      message.includes("error loading dynamically imported module") ||
+      filename.includes("/assets/");
+
+    if (isModuleLoadError) {
+      redirectToUpdatePage("module");
+    }
+  },
+  true
+);
+
+window.addEventListener("unhandledrejection", (event) => {
+  const message = String(event?.reason?.message || event?.reason || "");
+
+  const isDynamicImportError =
+    message.includes("Failed to fetch dynamically imported module") ||
+    message.includes("Importing a module script failed") ||
+    message.includes("error loading dynamically imported module");
+
+  if (isDynamicImportError) {
+    event.preventDefault();
+    redirectToUpdatePage("dynamic-import");
+  }
+});
+
+/* ─────────────────────────────────────────
    Logs DEV
 ───────────────────────────────────────── */
 
