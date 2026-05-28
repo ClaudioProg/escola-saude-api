@@ -65,6 +65,10 @@
       "source": "/atualizar.html",
       "headers": [
         {
+          "key": "Content-Type",
+          "value": "text/html; charset=utf-8"
+        },
+        {
           "key": "Cache-Control",
           "value": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
         },
@@ -121,7 +125,15 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-cache, no-store, must-revalidate"
+          "value": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+        },
+        {
+          "key": "Pragma",
+          "value": "no-cache"
+        },
+        {
+          "key": "Expires",
+          "value": "0"
         }
       ]
     },
@@ -152,21 +164,13 @@
     }
   ],
   "rewrites": [
-  {
-    "source": "/api/(.*)",
-    "destination": "https://escola-saude-api.onrender.com/api/$1"
-  },
-  {
-    "source": "/atualizar.html",
-    "destination": "/atualizar.html"
-  },
-  {
-    "source": "/version.json",
-    "destination": "/version.json"
-  },
-  {
-    "source": "/(.*)",
-    "destination": "/index.html"
-  }
-]
+    {
+      "source": "/api/(.*)",
+      "destination": "https://escola-saude-api.onrender.com/api/$1"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
 }
