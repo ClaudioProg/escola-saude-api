@@ -1204,7 +1204,7 @@ export default function ModalSolicitarReserva({
           assinatura_base64: assinaturaPreview || null,
         };
 
-        await api.post("/salas/solicitar", payload);
+        await api.post("/sala/solicitar", payload);
 
         showMessage({
           type: "success",
