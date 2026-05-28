@@ -29,6 +29,7 @@ import {
   LogIn,
   MonitorSmartphone,
   QrCode,
+  RefreshCw,
   ShieldCheck,
   Share2,
   Smartphone,
@@ -1295,35 +1296,62 @@ async function handleLoginGoogle(credentialResponse) {
                       </div>
 
                       <div className="mt-2 flex flex-col gap-2 text-xs sm:flex-row sm:items-center sm:justify-between">
-                        <button
-                          type="button"
-                          onClick={() => navigate("/esqueci-senha")}
-                          className={cx(
-                            "inline-flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2 font-semibold hover:underline sm:w-auto",
-                            "focus:outline-none focus:ring-2 focus:ring-emerald-500/70",
-                            isDark
-                              ? "text-sky-300 hover:bg-white/5"
-                              : "text-sky-700"
-                          )}
-                        >
-                          <KeyRound className="h-4 w-4" aria-hidden="true" />
-                          Esqueci minha senha
-                        </button>
+  <button
+    type="button"
+    onClick={() => navigate("/esqueci-senha")}
+    className={cx(
+      "inline-flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2 font-semibold hover:underline sm:w-auto",
+      "focus:outline-none focus:ring-2 focus:ring-emerald-500/70",
+      isDark
+        ? "text-sky-300 hover:bg-white/5"
+        : "text-sky-700"
+    )}
+  >
+    <KeyRound className="h-4 w-4" aria-hidden="true" />
+    Esqueci minha senha
+  </button>
 
-                        <button
-                          type="button"
-                          onClick={() => navigate("/cadastro")}
-                          className={cx(
-                            "w-full rounded-xl px-3 py-2 font-extrabold hover:underline sm:w-auto",
-                            "focus:outline-none focus:ring-2 focus:ring-emerald-500/70",
-                            isDark
-                              ? "text-emerald-300 hover:bg-white/5"
-                              : "text-emerald-700"
-                          )}
-                        >
-                          Criar cadastro
-                        </button>
-                      </div>
+  <button
+    type="button"
+    onClick={() => navigate("/cadastro")}
+    className={cx(
+      "w-full rounded-xl px-3 py-2 font-extrabold hover:underline sm:w-auto",
+      "focus:outline-none focus:ring-2 focus:ring-emerald-500/70",
+      isDark
+        ? "text-emerald-300 hover:bg-white/5"
+        : "text-emerald-700"
+    )}
+  >
+    Criar cadastro
+  </button>
+</div>
+
+<div
+  className={cx(
+    "mt-3 rounded-2xl border px-3 py-3 text-center text-xs",
+    isDark
+      ? "border-amber-400/20 bg-amber-400/10 text-amber-100"
+      : "border-amber-200 bg-amber-50 text-amber-900"
+  )}
+>
+  <p className="font-semibold">
+    Está vendo uma versão antiga da plataforma?
+  </p>
+
+  <a
+    href="/atualizar.html"
+    className={cx(
+      "mt-2 inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 font-extrabold transition",
+      "focus:outline-none focus:ring-2 focus:ring-amber-500/70",
+      isDark
+        ? "bg-amber-300 text-zinc-950 hover:bg-amber-200"
+        : "bg-amber-500 text-zinc-950 hover:bg-amber-400"
+    )}
+  >
+    <RefreshCw className="h-4 w-4" aria-hidden="true" />
+    Atualizar plataforma
+  </a>
+</div>
                     </div>
 
                     <BotaoLocal
