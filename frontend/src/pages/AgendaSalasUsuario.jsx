@@ -1906,20 +1906,25 @@ async function executarConfirmacaoUsoSala(reserva) {
   onClose={() => setRegrasAberto(false)}
 />
 
-<ModalDiaUsuario
-  open={modalDiaAberto}
-  detalheDia={detalheDiaSelecionado}
-  hojeISO={hojeISO}
-  onClose={fecharModalDia}
-  onSolicitar={abrirSolicitacao}
-  onEditarMinhaReserva={iniciarEdicao}
-  onCancelarMinhaReserva={solicitarCancelamentoReserva}
-  onConfirmarUsoSala={executarConfirmacaoUsoSala}
-  loadingCancelamento={Boolean(cancelandoId)}
-  loadingConfirmacaoUso={confirmandoUsoId}
-/>
+{modalDiaAberto
+  ? createPortal(
+      <ModalDiaUsuario
+        open={modalDiaAberto}
+        detalheDia={detalheDiaSelecionado}
+        hojeISO={hojeISO}
+        onClose={fecharModalDia}
+        onSolicitar={abrirSolicitacao}
+        onEditarMinhaReserva={iniciarEdicao}
+        onCancelarMinhaReserva={solicitarCancelamentoReserva}
+        onConfirmarUsoSala={executarConfirmacaoUsoSala}
+        loadingCancelamento={Boolean(cancelandoId)}
+        loadingConfirmacaoUso={confirmandoUsoId}
+      />,
+      document.body
+    )
+  : null}
 
-      {modalSolicitacaoAberto && slotSelecionado
+{modalSolicitacaoAberto && slotSelecionado
   ? createPortal(
       <ModalSolicitarReserva
         onClose={fecharModalSolicitacao}
@@ -1939,13 +1944,18 @@ async function executarConfirmacaoUsoSala(reserva) {
     )
   : null}
 
+      {cancelamento.open
+  ? createPortal(
       <ModalCancelamentoUsuario
         open={cancelamento.open}
         reserva={cancelamento.reserva}
         loading={Boolean(cancelandoId)}
         onClose={fecharCancelamento}
         onConfirm={executarCancelamentoReserva}
-      />
+      />,
+      document.body
+    )
+  : null}
     </div>
   );
 }

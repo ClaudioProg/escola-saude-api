@@ -1701,6 +1701,8 @@ function AgendaSalasAdmin() {
 
       <Footer />
 
+      {diaModalAberto
+  ? createPortal(
       <ModalDiaAgenda
         open={diaModalAberto}
         diaDetalhe={diaDetalheSelecionado}
@@ -1708,15 +1710,23 @@ function AgendaSalasAdmin() {
         onEditarSlot={abrirEditarSlot}
         onCancelarReserva={abrirCancelarReserva}
         onMessage={showMessage}
-      />
+      />,
+      document.body
+    )
+  : null}
 
+      {confirmCancelOpen
+  ? createPortal(
       <ConfirmCancelModal
         open={confirmCancelOpen}
         reserva={reservaParaCancelar}
         onClose={fecharCancelarReserva}
         onConfirm={confirmarCancelarReserva}
         loading={cancelandoReserva}
-      />
+      />,
+      document.body
+    )
+  : null}
 
       {modalAberto && slotSelecionado
   ? createPortal(
