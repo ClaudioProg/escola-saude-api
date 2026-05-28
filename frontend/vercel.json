@@ -70,6 +70,115 @@
         }
       ]
     },
+{
+  "source": "/",
+  "headers": [
+    {
+      "key": "Cache-Control",
+      "value": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+    },
+    {
+      "key": "Pragma",
+      "value": "no-cache"
+    },
+    {
+      "key": "Expires",
+      "value": "0"
+    }
+  ]
+},
+{
+  "source": "/login",
+  "headers": [
+    {
+      "key": "Cache-Control",
+      "value": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+    },
+    {
+      "key": "Pragma",
+      "value": "no-cache"
+    },
+    {
+      "key": "Expires",
+      "value": "0"
+    }
+  ]
+},
+{
+  "source": "/cadastro",
+  "headers": [
+    {
+      "key": "Cache-Control",
+      "value": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+    }
+  ]
+},
+{
+  "source": "/esqueci-senha",
+  "headers": [
+    {
+      "key": "Cache-Control",
+      "value": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+    }
+  ]
+},
+{
+  "source": "/redefinir-senha",
+  "headers": [
+    {
+      "key": "Cache-Control",
+      "value": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+    }
+  ]
+},
+{
+  "source": "/painel",
+  "headers": [
+    {
+      "key": "Cache-Control",
+      "value": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+    }
+  ]
+},
+{
+  "source": "/administrador",
+  "headers": [
+    {
+      "key": "Cache-Control",
+      "value": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+    }
+  ]
+},
+{
+  "source": "/organizador",
+  "headers": [
+    {
+      "key": "Cache-Control",
+      "value": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+    }
+  ]
+},
+{
+  "source": "/atualizar.html",
+  "headers": [
+    {
+      "key": "Cache-Control",
+      "value": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+    },
+    {
+      "key": "Pragma",
+      "value": "no-cache"
+    },
+    {
+      "key": "Expires",
+      "value": "0"
+    },
+    {
+      "key": "Clear-Site-Data",
+      "value": "\"cache\""
+    }
+  ]
+},
     {
       "source": "/(.*)",
       "headers": [
