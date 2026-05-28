@@ -1,4 +1,17 @@
 {
+  "redirects": [
+    {
+      "source": "/login",
+      "destination": "/atualizar.html?origem=login-forcado",
+      "permanent": false,
+      "missing": [
+        {
+          "type": "query",
+          "key": "atualizado"
+        }
+      ]
+    }
+  ],
   "headers": [
     {
       "source": "/manifest.webmanifest",
