@@ -58,6 +58,8 @@ const SITE_URL = "https://escoladasaude.vercel.app";
 const INSTAGRAM_URL =
   "https://www.instagram.com/escoladasaudesms?igsh=Zzd5M3MyazZ0aXRm&utm_source=qr";
 
+const FORCE_UPDATE_STORAGE_KEY = "escola_forced_update_2_0_3";
+
 const IS_DEV =
   typeof import.meta !== "undefined" && Boolean(import.meta.env?.DEV);
 
@@ -555,6 +557,38 @@ export default function Login() {
 
   const hasGoogleClient = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID);
   const { isDark } = useEscolaTheme();
+
+    useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const params = new URLSearchParams(window.location.search);
+    const veioDaAtualizacao = params.has("atualizado");
+
+    if (veioDaAtualizacao) {
+      try {
+        localStorage.setItem(FORCE_UPDATE_STORAGE_KEY, "ok");
+      } catch {
+        // noop
+      }
+
+      return;
+    }
+
+    let jaForcouAtualizacao = false;
+
+    try {
+      jaForcouAtualizacao =
+        localStorage.getItem(FORCE_UPDATE_STORAGE_KEY) === "ok";
+    } catch {
+      jaForcouAtualizacao = false;
+    }
+
+    if (!jaForcouAtualizacao && window.location.pathname === "/login") {
+      window.location.replace(
+        `/atualizar.html?origem=login-react-forcado&t=${Date.now()}`
+      );
+    }
+  }, []);
 
 const redirectPath = useMemo(() => {
   try {
