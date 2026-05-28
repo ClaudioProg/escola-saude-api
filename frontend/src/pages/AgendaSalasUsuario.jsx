@@ -1921,22 +1921,20 @@ async function executarConfirmacaoUsoSala(reserva) {
 
       {modalSolicitacaoAberto && slotSelecionado
   ? createPortal(
-      <div className="fixed inset-0 z-[9999] flex items-center justify-center overflow-y-auto bg-slate-950/60 p-3 backdrop-blur-sm sm:p-5">
-        <ModalSolicitarReserva
-          onClose={fecharModalSolicitacao}
-          recarregar={carregarAgenda}
-          slot={modalModo === "criar" ? slotSelecionado : null}
-          sala={slotSelecionado.sala}
-          capacidadeSala={
-            SALAS.find((sala) => sala.value === slotSelecionado.sala) || {
-              conforto: 0,
-              max: 0,
-            }
+      <ModalSolicitarReserva
+        onClose={fecharModalSolicitacao}
+        recarregar={carregarAgenda}
+        slot={modalModo === "criar" ? slotSelecionado : null}
+        sala={slotSelecionado.sala}
+        capacidadeSala={
+          SALAS.find((sala) => sala.value === slotSelecionado.sala) || {
+            conforto: 0,
+            max: 0,
           }
-          modo={modalModo}
-          reservaAtual={modalModo === "editar" ? reservaEmEdicao : null}
-        />
-      </div>,
+        }
+        modo={modalModo}
+        reservaAtual={modalModo === "editar" ? reservaEmEdicao : null}
+      />,
       document.body
     )
   : null}

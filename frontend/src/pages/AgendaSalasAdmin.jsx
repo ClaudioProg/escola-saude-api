@@ -1720,17 +1720,16 @@ function AgendaSalasAdmin() {
 
       {modalAberto && slotSelecionado
   ? createPortal(
-      <div className="fixed inset-0 z-[9999] flex items-center justify-center overflow-y-auto bg-slate-950/60 p-3 backdrop-blur-sm sm:p-5">
-        <ModalReservaAdmin
-          onClose={fecharModalSlot}
-          slot={slotSelecionado}
-          reserva={reservaSelecionada}
-          sala={slotSelecionado.sala}
-          capacidadeSala={CAPACIDADES_SALA[slotSelecionado.sala]}
-          recarregar={carregarAgenda}
-          origem="calendario_dia"
-        />
-      </div>,
+      <ModalReservaAdmin
+        isOpen={modalAberto}
+        onClose={fecharModalSlot}
+        slot={slotSelecionado}
+        reserva={reservaSelecionada}
+        sala={slotSelecionado.sala}
+        capacidadeSala={CAPACIDADES_SALA[slotSelecionado.sala]}
+        recarregar={carregarAgenda}
+        origem="calendario_dia"
+      />,
       document.body
     )
   : null}
