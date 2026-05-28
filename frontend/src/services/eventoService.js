@@ -407,7 +407,7 @@ export function normalizePalestrantesTurma(value = []) {
 
       return {
         nome: String(item?.nome || "").trim(),
-        usuario_id: toPositiveIntOrNull(item?.usuario_id || item?.id),
+        usuario_id: toPositiveIntOrNull(item?.usuario_id),
       };
     })
     .filter((item) => item.nome || item.usuario_id);
@@ -814,9 +814,25 @@ export async function buscarEventoCompleto(eventoId, opts = {}) {
 
   if (!evento?.id) return null;
 
-  const turmas = Array.isArray(evento?.turmas)
-    ? evento.turmas
-    : await listarTurmasDoEvento(evento.id, opts);
+  let turmas = [];
+
+  try {
+    turmas = await listarTurmasDoEvento(evento.id, {
+      on401: "redirect",
+      on403: "silent",
+      ...opts,
+    });
+  } catch (error) {
+    if (!isAbortLike(error)) {
+      console.warn("[eventoService.buscarEventoCompleto] falha ao carregar turmas completas", {
+        evento_id: evento.id,
+        message: error?.message,
+        status: error?.status,
+      });
+    }
+
+    turmas = Array.isArray(evento?.turmas) ? evento.turmas : [];
+  }
 
   return {
     ...evento,
@@ -824,16 +840,25 @@ export async function buscarEventoCompleto(eventoId, opts = {}) {
   };
 }
 
+function normalizeEventoArquivos(dados = {}, arquivos = {}) {
+  return {
+    folder: arquivos?.folder || dados?.folderFile || null,
+    programacao: arquivos?.programacao || dados?.programacaoFile || null,
+  };
+}
+
 export async function criarEvento(dados, arquivos = {}, opts = {}) {
   const payload = buildEventoPayload(dados);
+  const arquivosNormalizados = normalizeEventoArquivos(dados, arquivos);
+
   const erro = validateEventoPayload(payload);
 
   if (erro) throw new Error(erro);
 
-  if (shouldUseMultipart(payload, arquivos)) {
-    const formData = buildEventoFormData(payload, arquivos);
+  if (shouldUseMultipart(payload, arquivosNormalizados)) {
+    const formData = buildEventoFormData(payload, arquivosNormalizados);
 
-    return apiPost(EVENTO_BASE, formData, {
+    return apiUpload(EVENTO_BASE, formData, {
       auth: true,
       on401: "redirect",
       on403: "silent",
@@ -855,14 +880,17 @@ export async function atualizarEvento(eventoId, dados, arquivos = {}, opts = {})
   if (!id) throw new Error("evento_id é obrigatório.");
 
   const payload = buildEventoPayload(dados, dados?.baseServidor || null);
+  const arquivosNormalizados = normalizeEventoArquivos(dados, arquivos);
+
   const erro = validateEventoPayload(payload);
 
   if (erro) throw new Error(erro);
 
-  if (shouldUseMultipart(payload, arquivos)) {
-    const formData = buildEventoFormData(payload, arquivos);
+  if (shouldUseMultipart(payload, arquivosNormalizados)) {
+    const formData = buildEventoFormData(payload, arquivosNormalizados);
 
-    return apiPut(`${EVENTO_BASE}/${id}`, formData, {
+    return apiUpload(`${EVENTO_BASE}/${id}`, formData, {
+      method: "PUT",
       auth: true,
       on401: "redirect",
       on403: "silent",

@@ -261,7 +261,7 @@ function normalizarPalestrantesTurma(value = []) {
 
       return {
         nome: String(item?.nome || "").trim(),
-        usuario_id: toPositiveIntOrNull(item?.usuario_id || item?.id),
+        usuario_id: toPositiveIntOrNull(item?.usuario_id),
       };
     })
     .filter((item) => item.nome || item.usuario_id);
@@ -999,51 +999,79 @@ export default function ModalEvento({
     };
   }, [effectiveOpen, evento?.id]);
 
-  useEffect(() => {
-    if (!effectiveOpen || !evento?.id) return;
+useEffect(() => {
+  if (!effectiveOpen || !evento?.id) return;
 
-    let alive = true;
+  const questionarioIdExistente =
+    evento?.pos_curso?.questionario_id ||
+    evento?.questionario_id ||
+    null;
 
-    async function carregarQuestionario() {
-      try {
-        const qz = await apiGet(`/questionario/evento/${Number(evento.id)}`, {
-          on404: "silent",
-          on401: "redirect",
-          on403: "silent",
-        });
+  if (!questionarioIdExistente) {
+    setTesteObrigatorio(false);
+    setTesteConfig(TESTE_DEFAULT);
+    return;
+  }
 
-        if (!alive || !qz?.id) return;
+  let alive = true;
 
-        setTesteObrigatorio(true);
-        setTesteConfig((prev) => ({
-          ...prev,
-          titulo: qz?.titulo || prev.titulo,
-          nota_minima:
-            Number.isFinite(Number(qz?.min_nota)) && Number(qz.min_nota) > 10
-              ? Number(qz.min_nota) / 10
-              : Number(qz?.min_nota || prev.nota_minima),
-          tentativas: Number(qz?.tentativas_max || prev.tentativas),
-          tempo_minutos: Number(qz?.tempo_minutos || prev.tempo_minutos),
-          questionario_id: qz?.id || prev.questionario_id,
-          questoes_count: Array.isArray(qz?.questoes)
-            ? qz.questoes.length
-            : Number(qz?.questoes_count || prev.questoes_count || 0),
-          peso_total: Number(qz?.peso_total || prev.peso_total || 0),
-          publicado: Boolean(qz?.publicado),
-        }));
-      } catch (error) {
-        if (error?.status !== 404) {
-          warnDev("Falha ao carregar questionário", error);
-        }
+  async function carregarQuestionario() {
+    try {
+      const response = await apiGet(`/questionario/evento/${Number(evento.id)}`, {
+        on404: "silent",
+        on401: "redirect",
+        on403: "silent",
+        suppressGlobalError: true,
+      });
+
+      if (!alive) return;
+
+      const qz = response?.data ?? response;
+
+      if (!qz?.id) {
+        setTesteObrigatorio(false);
+        setTesteConfig(TESTE_DEFAULT);
+        return;
       }
+
+      setTesteObrigatorio(true);
+      setTesteConfig((prev) => ({
+        ...prev,
+        titulo: qz.titulo || prev.titulo,
+        nota_minima:
+          Number.isFinite(Number(qz.min_nota)) && Number(qz.min_nota) > 10
+            ? Number(qz.min_nota) / 10
+            : Number(qz.min_nota || prev.nota_minima),
+        tentativas: Number(qz.tentativas_max || prev.tentativas),
+        tempo_minutos: Number(qz.tempo_minutos || prev.tempo_minutos),
+        questionario_id: qz.id || prev.questionario_id,
+        questoes_count: Array.isArray(qz.questoes)
+          ? qz.questoes.length
+          : Number(qz.questoes_count || prev.questoes_count || 0),
+        peso_total: Number(qz.peso_total || prev.peso_total || 0),
+        publicado: Boolean(qz.publicado),
+      }));
+    } catch (error) {
+      if (!alive) return;
+
+      warnDev("Falha ao carregar questionário", error);
+
+      setTesteObrigatorio(false);
+      setTesteConfig(TESTE_DEFAULT);
     }
+  }
 
-    carregarQuestionario();
+  carregarQuestionario();
 
-    return () => {
-      alive = false;
-    };
-  }, [effectiveOpen, evento?.id]);
+  return () => {
+    alive = false;
+  };
+}, [
+  effectiveOpen,
+  evento?.id,
+  evento?.pos_curso?.questionario_id,
+  evento?.questionario_id,
+]);
 
   const addRegistros = useCallback(() => {
     const novos = parseRegistrosBulk(registroInput);
