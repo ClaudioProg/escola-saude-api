@@ -1,6 +1,6 @@
 {
   "name": "plataforma-escola-saude",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "private": true,
   "type": "module",
   "description": "Frontend da Plataforma Escola da Saúde de Santos",
