@@ -73,6 +73,7 @@ import {
 
 import PrivateRoute from "./components/layout/PrivateRoute";
 import EscolaAppShell from "./components/layout/EscolaAppShell";
+import AtualizacaoPlataformaBanner from "./components/ui/AtualizacaoPlataformaBanner";
 import { forceUnlockScroll } from "./utils/scroll";
 
 /* ─────────────────────────────────────────────────────────────
@@ -1014,7 +1015,7 @@ export default function App() {
     []
   );
 
-  return (
+    return (
     <BrowserRouter basename={basename}>
       <div className="min-h-screen bg-[var(--app-bg)] text-[var(--app-fg)]">
         <RouteChangeAnnouncer />
@@ -1036,6 +1037,8 @@ export default function App() {
             <Route path="*" element={<NotFoundPage />} />
           </Routes>
         </Suspense>
+
+        <AtualizacaoPlataformaBanner />
       </div>
     </BrowserRouter>
   );
