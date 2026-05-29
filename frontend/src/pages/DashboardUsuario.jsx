@@ -1116,7 +1116,7 @@ useEffect(() => {
               value={loadingResumo ? "…" : stats.presencaTotal}
               hint="Registros confirmados em cursos concluídos"
               tone="amber"
-              onClick={() => go("/minhas-presencas")}
+              onClick={() => go("/minha-presenca")}
             />
 
             <MiniStat
@@ -1125,7 +1125,7 @@ useEffect(() => {
               value={loadingResumo ? "…" : stats.faltaTotal}
               hint="Ocorrências registradas em cursos concluídos"
               tone="rose"
-              onClick={() => go("/minhas-presencas")}
+              onClick={() => go("/minha-presenca")}
             />
 
             <MiniStat

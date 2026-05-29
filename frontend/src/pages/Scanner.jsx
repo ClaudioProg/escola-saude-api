@@ -438,7 +438,7 @@ export default function Scanner() {
 
         if (!mountedRef.current) return;
 
-        navigate("/minhas-presencas", {
+        navigate("/minha-presenca", {
           replace: true,
         });
       } catch (error) {

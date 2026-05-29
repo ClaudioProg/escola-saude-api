@@ -556,7 +556,7 @@ export default function RegistrarPresenca() {
         notifySuccess("Presença registrada com sucesso.");
         setLive("Presença registrada com sucesso.");
 
-        navigate("/minhas-presencas");
+        navigate("/minha-presenca");
       } catch (error) {
         const message = getErrorMessage(
           error,

@@ -518,7 +518,7 @@ export default function ConfirmarPresenca() {
   }, [navigate]);
 
   const onGoMyPresences = useCallback(() => {
-    navigate("/minhas-presencas");
+    navigate("/minha-presenca");
   }, [navigate]);
 
   const goHomeSmart = useCallback(() => {
