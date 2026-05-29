@@ -552,7 +552,7 @@ function PublicRoutes() {
       <Route path="/cadastro" element={<Cadastro />} />
 
       <Route path="/esqueci-senha" element={<EsqueciSenha />} />
-      <Route path="/redefinir-senha" element={<RedefinirSenha />} />
+<Route path="/redefinir-senha/:token" element={<RedefinirSenha />} />
 
 <Route path="/privacidade" element={<Privacidade />} />
 
