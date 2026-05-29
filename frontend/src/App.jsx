@@ -554,11 +554,16 @@ function PublicRoutes() {
       <Route path="/esqueci-senha" element={<EsqueciSenha />} />
       <Route path="/redefinir-senha" element={<RedefinirSenha />} />
 
-      <Route path="/privacidade" element={<Privacidade />} />
-      <Route path="/validar-certificado" element={<ValidarCertificado />} />
+<Route path="/privacidade" element={<Privacidade />} />
 
-      <Route path="/presenca" element={<ConfirmarPresenca />} />
-      <Route path="/presenca/:turmaId" element={<ConfirmarPresenca />} />
+<Route path="/validar-certificado" element={<ValidarCertificado />} />
+<Route
+  path="/validar-certificado/:codigo_validacao"
+  element={<ValidarCertificado />}
+/>
+
+<Route path="/presenca" element={<ConfirmarPresenca />} />
+<Route path="/presenca/:turmaId" element={<ConfirmarPresenca />} />
 
       <Route path="/historico" element={<HistoricoEventos />} />
     </>
