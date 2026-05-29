@@ -3690,9 +3690,13 @@ inscricao: {
 },
 
 avaliacao: {
+  enviar: (payload) => apiPost("/avaliacao", payload),
+
   listarPorTurma: (turmaId, opts) =>
     apiAvaliacaoListarPorTurma(turmaId, opts),
+
   porTurma: (turmaId, opts) => apiAvaliacaoListarPorTurma(turmaId, opts),
+
   disponiveis: apiAvaliacaoDisponiveis,
 },
 
