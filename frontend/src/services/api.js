@@ -2348,13 +2348,26 @@ export async function apiCertificadoDownload(certificadoId, opts = {}) {
   });
 }
 
-export async function apiCertificadoElegivel(opts = {}) {
+export async function apiCertificadoMeus(opts = {}) {
   return apiGet("/certificado/meus", {
     auth: true,
     on401: "redirect",
     on403: "silent",
     ...opts,
   });
+}
+
+export async function apiCertificadoDisponiveis(opts = {}) {
+  return apiGet("/certificado/disponiveis", {
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiCertificadoElegivel(opts = {}) {
+  return apiCertificadoMeus(opts);
 }
 
 export async function apiCertificadoGerar(payload = {}, opts = {}) {
@@ -3744,7 +3757,11 @@ certificado: {
     apiCertificadoProcessarPendentesPorTurma(turmaId, opts),
   download: (certificadoId, opts) =>
     apiCertificadoDownload(certificadoId, opts),
+
+  meus: apiCertificadoMeus,
+  disponiveis: apiCertificadoDisponiveis,
   elegivel: apiCertificadoElegivel,
+
   gerar: apiCertificadoGerar,
   validarPublico: (codigoValidacao, opts) =>
     apiCertificadoValidarPublico(codigoValidacao, opts),

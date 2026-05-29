@@ -103,6 +103,7 @@ const certificadoFns = [
   "downloadCertificado",
 
   "listarCertificadoUsuario",
+  "listarCertificadosDisponiveisUsuario",
   "listarCertificadosPorTurma",
   "listarElegiveisPorTurma",
   "listarAdminArvore",
@@ -558,6 +559,25 @@ router.get(
   "/meus",
   authorize("usuario", "organizador", "administrador"),
   asyncHandler(certificadoController.listarCertificadoUsuario)
+);
+
+/**
+ * GET /api/certificado/disponiveis
+ *
+ * Função:
+ * - Lista certificados do usuário autenticado disponíveis para geração.
+ * - Retorna turmas encerradas, com frequência mínima, avaliação enviada
+ *   e sem certificado emitido/enviado.
+ *
+ * Permissão:
+ * - usuario
+ * - organizador
+ * - administrador
+ */
+router.get(
+  "/disponiveis",
+  authorize("usuario", "organizador", "administrador"),
+  asyncHandler(certificadoController.listarCertificadosDisponiveisUsuario)
 );
 
 /**

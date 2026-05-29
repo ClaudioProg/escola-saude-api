@@ -204,12 +204,25 @@ function getCertificadoId(cert) {
 
 function getCertificadoState(cert) {
   const certificadoId = getCertificadoId(cert);
-  const status = cert?.status || "";
+  const status = String(cert?.status || "").trim();
+  const statusCertificado = String(cert?.status_certificado || "").trim();
 
   if (certificadoId && isStatusCertificadoValido(status || "emitido")) {
     return {
       estado: "pronto",
       label: "Emitido",
+      motivo: "",
+    };
+  }
+
+  if (
+    statusCertificado === "disponivel_para_gerar" ||
+    cert?.pode_gerar_certificado === true ||
+    cert?.pode_gerar === true
+  ) {
+    return {
+      estado: "geravel",
+      label: "Disponível para emissão",
       motivo: "",
     };
   }
@@ -222,7 +235,7 @@ function getCertificadoState(cert) {
     };
   }
 
-  if (cert?.pode_gerar === false) {
+  if (cert?.pode_gerar === false || cert?.pode_gerar_certificado === false) {
     return {
       estado: "pendente",
       label: "Pendente",
@@ -231,9 +244,9 @@ function getCertificadoState(cert) {
   }
 
   return {
-    estado: "geravel",
-    label: "Disponível para emissão",
-    motivo: "",
+    estado: "pendente",
+    label: "Pendente",
+    motivo: "Ainda não liberado.",
   };
 }
 
@@ -260,6 +273,53 @@ function filtrarPorBusca(lista, buscaNormalizada, extraText = () => "") {
 
     return texto.includes(buscaNormalizada);
   });
+}
+
+function normalizarCertificadoEmitido(item) {
+  return {
+    ...item,
+    origem_lista: "emitido",
+    status_certificado: item?.status || "emitido",
+    pode_gerar_certificado: false,
+  };
+}
+
+function normalizarCertificadoDisponivel(item) {
+  return {
+    ...item,
+    origem_lista: "disponivel",
+    status: "",
+    status_certificado: "disponivel_para_gerar",
+    pode_gerar: true,
+    pode_gerar_certificado: true,
+    certificado_id: null,
+    id_certificado: null,
+    numero_certificado: "",
+    codigo_validacao: "",
+  };
+}
+
+function deduplicarCertificados(lista = []) {
+  const mapa = new Map();
+
+  for (const item of lista) {
+    const key = `${Number(item?.evento_id || 0)}:${Number(item?.turma_id || 0)}:${item?.tipo || "usuario"}`;
+    const atual = mapa.get(key);
+
+    if (!atual) {
+      mapa.set(key, item);
+      continue;
+    }
+
+    const atualState = getCertificadoState(atual);
+    const novoState = getCertificadoState(item);
+
+    if (novoState.estado === "pronto" && atualState.estado !== "pronto") {
+      mapa.set(key, item);
+    }
+  }
+
+  return Array.from(mapa.values());
 }
 
 /* ─────────────────────────────────────────────
@@ -1133,16 +1193,32 @@ export default function CertificadoUsuario() {
   }, []);
 
   const carregarCertificados = useCallback(async () => {
-    if (typeof api?.certificado?.elegivel !== "function") {
-      setEndpointCertificadoAusente(true);
-      return [];
-    }
+  if (
+    typeof api?.certificado?.meus !== "function" ||
+    typeof api?.certificado?.disponiveis !== "function"
+  ) {
+    setEndpointCertificadoAusente(true);
+    return [];
+  }
 
-    const response = await api.certificado.elegivel();
-    const data = extrairData(response);
+  const [responseEmitidos, responseDisponiveis] = await Promise.all([
+    api.certificado.meus(),
+    api.certificado.disponiveis(),
+  ]);
 
-    return Array.isArray(data) ? data : [];
-  }, []);
+  const emitidos = extrairData(responseEmitidos);
+  const disponiveis = extrairData(responseDisponiveis);
+
+  const listaEmitidos = Array.isArray(emitidos)
+    ? emitidos.map(normalizarCertificadoEmitido)
+    : [];
+
+  const listaDisponiveis = Array.isArray(disponiveis)
+    ? disponiveis.map(normalizarCertificadoDisponivel)
+    : [];
+
+  return deduplicarCertificados([...listaEmitidos, ...listaDisponiveis]);
+}, []);
 
   const carregarModulo = useCallback(
     async ({

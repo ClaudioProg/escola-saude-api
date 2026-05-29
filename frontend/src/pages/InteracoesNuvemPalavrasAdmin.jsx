@@ -285,42 +285,15 @@ function normalizeFormFromInteracao(interacao) {
   };
 }
 
-const WORD_CLOUD_POSITIONS = [
-  { top: 49, left: 50, rotate: 0 },
-  { top: 60, left: 35, rotate: 0 },
-  { top: 41, left: 64, rotate: 0 },
-  { top: 32, left: 43, rotate: -8 },
-  { top: 70, left: 55, rotate: 0 },
-  { top: 27, left: 72, rotate: 12 },
-  { top: 74, left: 24, rotate: -10 },
-  { top: 22, left: 28, rotate: 8 },
-  { top: 81, left: 72, rotate: -7 },
-  { top: 37, left: 20, rotate: -14 },
-  { top: 56, left: 78, rotate: 8 },
-  { top: 68, left: 81, rotate: 13 },
-  { top: 18, left: 56, rotate: -11 },
-  { top: 84, left: 43, rotate: 7 },
-  { top: 31, left: 83, rotate: -8 },
-  { top: 78, left: 12, rotate: 10 },
-  { top: 16, left: 15, rotate: -6 },
-  { top: 89, left: 58, rotate: -12 },
-  { top: 12, left: 40, rotate: 10 },
-  { top: 88, left: 86, rotate: 6 },
-  { top: 45, left: 10, rotate: -9 },
-  { top: 47, left: 89, rotate: 9 },
-];
-
 const WORD_CLOUD_COLORS = [
-  "#7c2d12",
-  "#9a3412",
-  "#b45309",
-  "#92400e",
-  "#78350f",
-  "#991b1b",
-  "#854d0e",
-  "#a16207",
-  "#7f1d1d",
-  "#9f1239",
+  "#0f766e", // verde petróleo
+  "#0369a1", // azul institucional
+  "#7c2d12", // cobre
+  "#9a3412", // laranja queimado
+  "#166534", // verde
+  "#4338ca", // índigo
+  "#9d174d", // vinho
+  "#a16207", // dourado discreto
 ];
 
 function normalizarPalavrasNuvem(palavras) {
@@ -333,40 +306,36 @@ function normalizarPalavrasNuvem(palavras) {
     }))
     .filter((item) => item.palavra && item.total > 0)
     .sort((a, b) => b.total - a.total || a.palavra.localeCompare(b.palavra))
-    .slice(0, WORD_CLOUD_POSITIONS.length);
+    .slice(0, 28);
 }
 
-function calcularTamanhoPalavra(total, maiorTotal, index) {
-  const min = 14;
-  const max = 78;
+function calcularTamanhoPalavra(total, maiorTotal) {
+  const min = 18;
+  const max = 64;
 
   if (!maiorTotal || maiorTotal <= 0) return min;
 
   const ratio = Math.sqrt(Number(total || 0) / maiorTotal);
-  const destaque = index === 0 ? 1.18 : index === 1 ? 1.04 : 1;
-
-  return Math.round(Math.min(max, Math.max(min, min + (max - min) * ratio * destaque)));
+  return Math.round(min + (max - min) * Math.max(0.14, ratio));
 }
 
-function obterEstiloPalavraNuvem(item, index, maiorTotal) {
-  const posicao = WORD_CLOUD_POSITIONS[index % WORD_CLOUD_POSITIONS.length];
-  const tamanho = calcularTamanhoPalavra(item.total, maiorTotal, index);
+function obterCorPalavra(index, total, maiorTotal) {
+  const peso = maiorTotal > 0 ? Number(total || 0) / maiorTotal : 0;
 
-  const peso =
-    index === 0 ? 950 : index <= 2 ? 900 : index <= 7 ? 800 : 700;
+  if (peso >= 0.9) return "#7c2d12";
+  if (peso >= 0.7) return "#9a3412";
+  if (peso >= 0.5) return "#0369a1";
 
-  return {
-    top: `${posicao.top}%`,
-    left: `${posicao.left}%`,
-    transform: `translate(-50%, -50%) rotate(${posicao.rotate}deg)`,
-    fontSize: `${tamanho}px`,
-    fontWeight: peso,
-    color: WORD_CLOUD_COLORS[index % WORD_CLOUD_COLORS.length],
-    lineHeight: 0.92,
-    letterSpacing: index <= 2 ? "-0.055em" : "-0.035em",
-    opacity: index <= 2 ? 1 : 0.86,
-    zIndex: WORD_CLOUD_POSITIONS.length - index,
-  };
+  return WORD_CLOUD_COLORS[index % WORD_CLOUD_COLORS.length];
+}
+
+function obterRotacaoPalavra(index, total, maiorTotal) {
+  const peso = maiorTotal > 0 ? Number(total || 0) / maiorTotal : 0;
+
+  if (peso >= 0.7) return 0;
+
+  const rotacoes = [-8, 6, -5, 4, -6, 7, -4, 5];
+  return rotacoes[index % rotacoes.length];
 }
 
 /* =========================================================================
@@ -1922,27 +1891,39 @@ const maiorTotal = Math.max(...palavras.map((item) => Number(item.total || 0)), 
                     </div>
                   </div>
                 ) : (
-                  <div className="relative min-h-[340px] overflow-hidden rounded-3xl border border-amber-100 bg-[radial-gradient(circle_at_center,#fff7ed_0%,#fffaf0_42%,#ffffff_78%)] p-6 shadow-inner dark:border-amber-900/40 dark:bg-[radial-gradient(circle_at_center,rgba(120,53,15,.22)_0%,rgba(15,23,42,.92)_70%)] sm:min-h-[420px]">
-  <div
-    className="pointer-events-none absolute inset-6 rounded-[2rem] border border-dashed border-amber-200/70 dark:border-amber-900/40"
-    aria-hidden="true"
-  />
+                  <div className="rounded-3xl border border-amber-100 bg-[radial-gradient(circle_at_center,#fffdf8_0%,#fff9ef_46%,#ffffff_100%)] p-4 shadow-inner dark:border-slate-800 dark:bg-[radial-gradient(circle_at_center,rgba(30,41,59,.92)_0%,rgba(15,23,42,1)_100%)] sm:p-6">
+  <div className="flex min-h-[320px] flex-wrap content-center items-center justify-center gap-x-6 gap-y-5 overflow-hidden rounded-[2rem] border border-dashed border-amber-200/70 p-6 dark:border-slate-700 sm:min-h-[380px]">
+    {palavras.map((item, index) => {
+      const totalItem = Number(item.total || 0);
+      const fontSize = calcularTamanhoPalavra(totalItem, maiorTotal);
+      const cor = obterCorPalavra(index, totalItem, maiorTotal);
+      const rotacao = obterRotacaoPalavra(index, totalItem, maiorTotal);
 
-  <div className="absolute inset-4 sm:inset-8" aria-label="Nuvem de palavras">
-    {palavras.map((item, index) => (
-      <span
-        key={`${item.palavra}-${index}`}
-        className="absolute select-none whitespace-nowrap font-black transition-transform duration-300 hover:scale-110"
-        style={obterEstiloPalavraNuvem(item, index, maiorTotal)}
-        title={`${item.palavra}: ${item.total} ocorrência(s)`}
-      >
-        {item.palavra}
-      </span>
-    ))}
+      return (
+        <span
+          key={`${item.palavra}-${index}`}
+          className="inline-block max-w-full select-none whitespace-nowrap font-black leading-none tracking-tight transition-transform duration-200 hover:scale-105"
+          style={{
+            fontSize: `${fontSize}px`,
+            color: cor,
+            transform: `rotate(${rotacao}deg)`,
+            opacity: index <= 2 ? 1 : 0.9,
+          }}
+          title={`${item.palavra}: ${totalItem} ocorrência(s)`}
+        >
+          {item.palavra}
+          <span className="ml-1 align-top text-[10px] font-bold opacity-70">
+            {totalItem}
+          </span>
+        </span>
+      );
+    })}
   </div>
 
-  <div className="pointer-events-none absolute bottom-3 right-4 rounded-full bg-white/70 px-3 py-1 text-[11px] font-bold text-amber-900 shadow-sm ring-1 ring-amber-100 dark:bg-slate-950/70 dark:text-amber-100 dark:ring-amber-900/40">
-    {total} palavra(s) • {palavras.length} termo(s)
+  <div className="mt-3 flex justify-end">
+    <span className="rounded-full border border-amber-200 bg-white px-3 py-1 text-[11px] font-bold text-amber-900 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+      {total} palavra(s) • {palavras.length} termo(s)
+    </span>
   </div>
 </div>
                 )}

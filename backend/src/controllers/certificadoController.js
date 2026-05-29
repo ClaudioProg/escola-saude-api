@@ -2017,6 +2017,248 @@ async function listarCertificadoUsuario(req, res) {
 }
 
 /* ─────────────────────────────────────────────
+ * Listagem do usuário autenticado — disponíveis para gerar
+ * ───────────────────────────────────────────── */
+
+async function listarCertificadosDisponiveisUsuario(req, res) {
+  const rid = reqRid(req);
+  const db = getDb(req);
+  const usuarioId = getUsuarioId(req);
+
+  if (!usuarioId) {
+    return responderErro(
+      res,
+      401,
+      "Usuário não autenticado.",
+      "CERTIFICADO_USUARIO_NAO_AUTENTICADO",
+      "req.user.id não foi encontrado."
+    );
+  }
+
+  try {
+    const result = await db.query(
+      `
+      WITH fim_real AS (
+        SELECT
+          t.id AS turma_id,
+          COALESCE(
+            (
+              SELECT MAX(
+                dt.data::date +
+                COALESCE(
+                  dt.horario_fim::time,
+                  t.horario_fim::time,
+                  '23:59'::time
+                )
+              )
+              FROM datas_turma dt
+              WHERE dt.turma_id = t.id
+            ),
+            (
+              t.data_fim::date +
+              COALESCE(t.horario_fim::time, '23:59'::time)
+            )
+          ) AS fim_local
+        FROM turmas t
+      ),
+      total_encontros AS (
+        SELECT
+          t.id AS turma_id,
+          CASE
+            WHEN EXISTS (
+              SELECT 1
+              FROM datas_turma dt
+              WHERE dt.turma_id = t.id
+            )
+              THEN (
+                SELECT COUNT(*)::int
+                FROM datas_turma dt
+                WHERE dt.turma_id = t.id
+              )
+            WHEN t.data_inicio IS NOT NULL
+             AND t.data_fim IS NOT NULL
+              THEN 1
+            ELSE 0
+          END AS total
+        FROM turmas t
+      ),
+      presencas_ok AS (
+        SELECT
+          p.usuario_id,
+          p.turma_id,
+          COUNT(DISTINCT p.data_presenca::date)::int AS dias_presentes
+        FROM presencas p
+        WHERE p.usuario_id = $1
+          AND p.presente = TRUE
+        GROUP BY p.usuario_id, p.turma_id
+      ),
+      certificados_validos AS (
+        SELECT
+          c.usuario_id,
+          c.turma_id,
+          c.evento_id,
+          c.tipo,
+          c.id,
+          c.status
+        FROM certificados c
+        WHERE c.usuario_id = $1
+          AND c.tipo = 'usuario'
+          AND c.status IN ('emitido', 'enviado')
+      ),
+      questionario_obrigatorio AS (
+        SELECT DISTINCT ON (qe.evento_id)
+          qe.id AS questionario_id,
+          qe.evento_id,
+          qe.min_nota
+        FROM questionarios_evento qe
+        WHERE qe.obrigatorio = TRUE
+          AND LOWER(COALESCE(qe.status, '')) = 'publicado'
+        ORDER BY qe.evento_id, qe.id DESC
+      ),
+      questionario_aprovado AS (
+        SELECT
+          tq.usuario_id,
+          tq.turma_id,
+          tq.questionario_id,
+          TRUE AS aprovado
+        FROM tentativas_questionario tq
+        JOIN questionario_obrigatorio qo
+          ON qo.questionario_id = tq.questionario_id
+        WHERE tq.usuario_id = $1
+          AND LOWER(COALESCE(tq.status, '')) = 'enviada'
+          AND tq.nota IS NOT NULL
+          AND tq.nota >= COALESCE(qo.min_nota, 0)
+        GROUP BY tq.usuario_id, tq.turma_id, tq.questionario_id
+      )
+      SELECT
+        e.id AS evento_id,
+        e.titulo AS evento_titulo,
+
+        t.id AS turma_id,
+        t.nome AS turma_nome,
+        to_char(t.data_inicio::date, 'YYYY-MM-DD') AS data_inicio,
+        to_char(t.data_fim::date, 'YYYY-MM-DD') AS data_fim,
+        t.horario_inicio,
+        t.horario_fim,
+        t.carga_horaria,
+
+        i.id AS inscricao_id,
+        i.data_inscricao,
+
+        te.total AS total_encontros,
+        COALESCE(po.dias_presentes, 0) AS dias_presentes,
+
+        CASE
+          WHEN te.total > 0
+            THEN ROUND(
+              (
+                COALESCE(po.dias_presentes, 0)::numeric /
+                te.total::numeric
+              ) * 100,
+              2
+            )
+          ELSE 0
+        END AS percentual_frequencia,
+
+        a.id AS avaliacao_id,
+        a.data_avaliacao,
+
+        qo.questionario_id,
+        CASE
+          WHEN qo.questionario_id IS NULL THEN FALSE
+          ELSE TRUE
+        END AS questionario_obrigatorio,
+
+        CASE
+          WHEN qo.questionario_id IS NULL THEN TRUE
+          ELSE COALESCE(qa.aprovado, FALSE)
+        END AS questionario_ok,
+
+        'usuario' AS tipo,
+        'disponivel_para_gerar' AS status_certificado,
+        TRUE AS pode_gerar_certificado
+
+      FROM inscricoes i
+
+      JOIN turmas t
+        ON t.id = i.turma_id
+
+      JOIN eventos e
+        ON e.id = t.evento_id
+
+      JOIN fim_real fr
+        ON fr.turma_id = t.id
+
+      JOIN total_encontros te
+        ON te.turma_id = t.id
+
+      JOIN avaliacoes a
+        ON a.usuario_id = i.usuario_id
+       AND a.turma_id = i.turma_id
+
+      LEFT JOIN presencas_ok po
+        ON po.usuario_id = i.usuario_id
+       AND po.turma_id = i.turma_id
+
+      LEFT JOIN certificados_validos cv
+        ON cv.usuario_id = i.usuario_id
+       AND cv.turma_id = i.turma_id
+       AND cv.evento_id = e.id
+       AND cv.tipo = 'usuario'
+
+      LEFT JOIN questionario_obrigatorio qo
+        ON qo.evento_id = e.id
+
+      LEFT JOIN questionario_aprovado qa
+        ON qa.usuario_id = i.usuario_id
+       AND qa.turma_id = i.turma_id
+       AND qa.questionario_id = qo.questionario_id
+
+      WHERE i.usuario_id = $1
+        AND cv.id IS NULL
+        AND te.total > 0
+        AND (NOW() AT TIME ZONE $2) >= fr.fim_local
+        AND COALESCE(po.dias_presentes, 0) >= CEIL(0.75 * te.total)
+        AND (
+          qo.questionario_id IS NULL
+          OR COALESCE(qa.aprovado, FALSE) = TRUE
+        )
+
+      ORDER BY
+        a.data_avaliacao DESC NULLS LAST,
+        t.data_fim DESC NULLS LAST,
+        t.id DESC
+      `,
+      [usuarioId, TZ]
+    );
+
+    return responderSucesso(
+      res,
+      200,
+      result.rows || [],
+      "Certificados disponíveis para geração carregados.",
+      "CERTIFICADO_DISPONIVEIS_USUARIO_OK",
+      {
+        meta: {
+          total: result.rows?.length || 0,
+        },
+      }
+    );
+  } catch (error) {
+    logError(rid, "Erro ao listar certificados disponíveis do usuário", error);
+
+    return responderErro(
+      res,
+      500,
+      "Erro ao listar certificados disponíveis.",
+      "CERTIFICADO_DISPONIVEIS_USUARIO_ERRO",
+      "Falha inesperada em listarCertificadosDisponiveisUsuario.",
+      IS_DEV ? error.message : null
+    );
+  }
+}
+
+/* ─────────────────────────────────────────────
  * Listagem administrativa por turma
  * ───────────────────────────────────────────── */
 
@@ -2663,6 +2905,7 @@ module.exports = {
   downloadCertificado,
 
   listarCertificadoUsuario,
+  listarCertificadosDisponiveisUsuario,
   listarCertificadosPorTurma,
   listarElegiveisPorTurma,
   listarAdminArvore,
