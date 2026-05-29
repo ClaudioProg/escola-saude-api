@@ -1,5 +1,5 @@
-// ✅ frontend/src/pages/CertificadosAvulsos.jsx — v2.0
-// Atualizado em: 15/05/2026
+// ✅ frontend/src/pages/CertificadoAvulso.jsx — v2.1
+// Atualizado em: 29/05/2026
 // Plataforma Escola da Saúde
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 
 import Footer from "../components/layout/Footer";
+import HeaderHero from "../components/layout/HeaderHero";
 import Botao from "../components/ui/Botao";
 import CarregandoSkeleton from "../components/ui/CarregandoSkeleton";
 import ErroCarregamento from "../components/ui/ErroCarregamento";
@@ -93,8 +94,16 @@ const MODALIDADES_SEM_CARGA = ["banca_avaliadora", "comissao_organizadora"];
 
 const STATUS_VALIDOS_DOWNLOAD = ["emitido", "enviado"];
 
-const KEY_ASSIN2_ENABLED = "certificado_avulso_assinatura2_enabled";
-const KEY_ASSIN2_ID = "certificado_avulso_assinatura2_id";
+const RAFAELLA_PITOL_ID = 17;
+const FABIO_LOPEZ_ID = 2474;
+
+const KEY_ASSINATURA_ADICIONAL_ENABLED =
+  "certificado_avulso_assinatura_adicional_enabled";
+const KEY_ASSINATURA_ADICIONAL_ID =
+  "certificado_avulso_assinatura_adicional_id";
+const KEY_ASSINATURA_SECRETARIO_ENABLED =
+  "certificado_avulso_assinatura_secretario_enabled";
+
 const KEY_FILTRO_ENVIO = "certificado_avulso_filtro_envio";
 const KEY_FILTRO_STATUS = "certificado_avulso_filtro_status";
 const KEY_BUSCA = "certificado_avulso_busca";
@@ -272,22 +281,39 @@ function Badge({ tone = "slate", children }) {
 
 function MiniStat({ icon: Icon, label, value, tone = "slate" }) {
   const tones = {
-    slate: "bg-white/10 text-white ring-white/15",
-    emerald: "bg-emerald-400/15 text-emerald-50 ring-emerald-300/20",
-    amber: "bg-amber-400/15 text-amber-50 ring-amber-300/20",
-    rose: "bg-rose-400/15 text-rose-50 ring-rose-300/20",
-    cyan: "bg-cyan-400/15 text-cyan-50 ring-cyan-300/20",
+    slate: {
+      card: "bg-white text-slate-900 ring-slate-200 dark:bg-zinc-900 dark:text-white dark:ring-zinc-800",
+      icon: "bg-slate-100 text-slate-700 dark:bg-zinc-800 dark:text-zinc-200",
+    },
+    emerald: {
+      card: "bg-white text-slate-900 ring-slate-200 dark:bg-zinc-900 dark:text-white dark:ring-zinc-800",
+      icon: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200",
+    },
+    amber: {
+      card: "bg-white text-slate-900 ring-slate-200 dark:bg-zinc-900 dark:text-white dark:ring-zinc-800",
+      icon: "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-200",
+    },
+    rose: {
+      card: "bg-white text-slate-900 ring-slate-200 dark:bg-zinc-900 dark:text-white dark:ring-zinc-800",
+      icon: "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-200",
+    },
+    cyan: {
+      card: "bg-white text-slate-900 ring-slate-200 dark:bg-zinc-900 dark:text-white dark:ring-zinc-800",
+      icon: "bg-cyan-50 text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200",
+    },
   };
 
+  const t = tones[tone] || tones.slate;
+
   return (
-    <div className={cx("rounded-3xl p-4 ring-1 backdrop-blur", tones[tone])}>
+    <div className={cx("rounded-3xl p-4 shadow-sm ring-1", t.card)}>
       <div className="flex items-center gap-3">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/15">
+        <div className={cx("flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl", t.icon)}>
           <Icon className="h-5 w-5" aria-hidden="true" />
         </div>
 
         <div className="min-w-0">
-          <p className="text-[11px] font-black uppercase tracking-wide opacity-80">
+          <p className="text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-zinc-400">
             {label}
           </p>
           <p className="text-2xl font-black leading-none">{value}</p>
@@ -297,7 +323,7 @@ function MiniStat({ icon: Icon, label, value, tone = "slate" }) {
   );
 }
 
-function Hero({ kpis, carregando, onRefresh, onCadastrar, onFocusBusca }) {
+function BarraAcoesPagina({ carregando, onRefresh, onCadastrar, onFocusBusca }) {
   useEffect(() => {
     const onKey = (event) => {
       const key = typeof event?.key === "string" ? event.key.toLowerCase() : "";
@@ -317,89 +343,61 @@ function Hero({ kpis, carregando, onRefresh, onCadastrar, onFocusBusca }) {
   }, [onFocusBusca]);
 
   return (
-    <header className="relative overflow-hidden bg-gradient-to-br from-slate-950 via-amber-950 to-rose-800 text-white">
-      <div className="absolute inset-0 opacity-30">
-        <div className="absolute -left-24 -top-24 h-72 w-72 rounded-full bg-amber-400 blur-3xl" />
-        <div className="absolute right-0 top-8 h-72 w-72 rounded-full bg-rose-500 blur-3xl" />
-        <div className="absolute bottom-0 left-1/2 h-64 w-64 -translate-x-1/2 rounded-full bg-emerald-500 blur-3xl" />
-      </div>
+    <section
+      aria-label="Ações de certificados avulsos"
+      className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
+    >
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <p className="text-sm font-black text-slate-950 dark:text-white">
+            Cadastro e emissão manual
+          </p>
 
-      <a
-        href="#conteudo"
-        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-xl focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:font-bold focus:text-slate-950"
-      >
-        Ir para o conteúdo
-      </a>
-
-      <div className="relative mx-auto max-w-7xl px-4 py-7 sm:px-6 sm:py-9">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-black ring-1 ring-white/20 backdrop-blur">
-              <Award className="h-4 w-4" aria-hidden="true" />
-              Certificados avulsos
-            </div>
-
-            <h1 className="mt-4 text-2xl font-black tracking-tight sm:text-4xl">
-              Certificados avulsos
-            </h1>
-
-            <p className="mt-3 max-w-2xl text-sm text-white/85 sm:text-base">
-  Cadastre certificados fora do fluxo automático, consolide o PDF eletrônico
-  na primeira emissão, baixe o documento oficial e envie por e-mail quando
-  necessário.
-</p>
-          </div>
-
-          <div className="flex flex-col gap-2 sm:flex-row lg:shrink-0">
-            <Botao
-              type="button"
-              variant="secondary"
-              onClick={onRefresh}
-              disabled={carregando}
-              className="bg-white/10 text-white ring-1 ring-white/20 hover:bg-white/15"
-            >
-              <span className="inline-flex items-center gap-2">
-                <RefreshCcw
-                  className={cx("h-4 w-4", carregando && "animate-spin")}
-                  aria-hidden="true"
-                />
-                {carregando ? "Atualizando..." : "Atualizar"}
-              </span>
-            </Botao>
-
-            <Botao
-              type="button"
-              variant="primary"
-              onClick={onCadastrar}
-              className="bg-white text-slate-950 hover:bg-white/90"
-            >
-              <span className="inline-flex items-center gap-2">
-                <Plus className="h-4 w-4" aria-hidden="true" />
-                Cadastrar
-              </span>
-            </Botao>
-          </div>
+          <p className="mt-1 text-xs font-medium text-slate-500 dark:text-zinc-400">
+            Cadastre certificados fora do fluxo automático, consolide o PDF oficial e envie por e-mail quando necessário.
+          </p>
         </div>
 
-        <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-4">
-          <MiniStat icon={Award} label="Total" value={kpis.total} tone="cyan" />
-          <MiniStat icon={Mail} label="Enviados" value={kpis.enviados} tone="emerald" />
-          <MiniStat icon={Send} label="Pendentes" value={kpis.pendentes} tone="amber" />
-          <MiniStat icon={ShieldCheck} label="Válidos" value={kpis.validos} tone="rose" />
-        </div>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Botao
+            type="button"
+            variant="contorno"
+            onClick={onRefresh}
+            disabled={carregando}
+          >
+            <span className="inline-flex items-center gap-2">
+              <RefreshCcw
+                className={cx("h-4 w-4", carregando && "animate-spin")}
+                aria-hidden="true"
+              />
+              {carregando ? "Atualizando..." : "Atualizar"}
+            </span>
+          </Botao>
 
-        <div className="mt-5 rounded-3xl bg-white/10 p-4 text-sm text-white/85 ring-1 ring-white/15 backdrop-blur">
-          <div className="flex items-start gap-3">
-            <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
-            <p>
-              O identificador pode ser CPF ou registro funcional. Na visualização
-              pública, a plataforma usa apenas identificador mascarado, código
-              de validação e metadados seguros do certificado.
-            </p>
-          </div>
+          <Botao type="button" variant="mensal" onClick={onCadastrar}>
+            <span className="inline-flex items-center gap-2">
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Cadastrar
+            </span>
+          </Botao>
         </div>
       </div>
-    </header>
+    </section>
+  );
+}
+
+function AvisoIdentificadorSeguro() {
+  return (
+    <section className="rounded-3xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950 shadow-sm dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:text-emerald-100">
+      <div className="flex items-start gap-3">
+        <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+        <p>
+          O identificador pode ser CPF ou registro funcional. Na visualização
+          pública, a plataforma usa apenas identificador mascarado, código de
+          validação e metadados seguros do certificado.
+        </p>
+      </div>
+    </section>
   );
 }
 
@@ -479,7 +477,7 @@ function Toolbar({
             <option value="erro_emissao">Erro de emissão</option>
           </select>
 
-          <Botao type="button" variant="secondary" onClick={onLimpar}>
+          <Botao type="button" variant="contorno" onClick={onLimpar}>
             Limpar filtros
           </Botao>
         </div>
@@ -515,13 +513,15 @@ function FormularioCertificado({
   salvando,
   onSubmit,
   formRef,
-  usarAssinatura2,
-  setUsarAssinatura2,
-  assinatura2Id,
-  setAssinatura2Id,
+  usarAssinaturaAdicional,
+  setUsarAssinaturaAdicional,
+  assinaturaAdicionalId,
+  setAssinaturaAdicionalId,
+  usarAssinaturaSecretario,
+  setUsarAssinaturaSecretario,
   assinaturas,
   assinaturasCarregando,
-  assinatura2Nome,
+  assinaturaAdicionalNome,
 }) {
   const modalidade = form.modalidade || "participante";
   const exigeTitulo = modalidadeExigeTitulo(modalidade);
@@ -600,9 +600,9 @@ function FormularioCertificado({
             </h2>
 
             <p className="mt-1 text-sm text-slate-600 dark:text-zinc-300">
-              Cadastro manual com modalidade oficial, identificador seguro e
-              suporte a assinatura adicional.
-            </p>
+  Cadastro manual com modalidade oficial, identificador seguro e
+  assinatura institucional obrigatória.
+</p>
           </div>
         </div>
       </header>
@@ -775,81 +775,126 @@ function FormularioCertificado({
         </Campo>
 
         <section className="rounded-3xl bg-slate-50 p-4 ring-1 ring-slate-200 dark:bg-zinc-950 dark:ring-zinc-800">
-          <div className="flex items-start gap-3">
-            <div className="rounded-2xl bg-emerald-50 p-2 ring-1 ring-emerald-100 dark:bg-emerald-950/30 dark:ring-emerald-800/60">
-              <ShieldCheck className="h-5 w-5 text-emerald-700 dark:text-emerald-200" aria-hidden="true" />
-            </div>
+  <div className="flex items-start gap-3">
+    <div className="rounded-2xl bg-emerald-50 p-2 ring-1 ring-emerald-100 dark:bg-emerald-950/30 dark:ring-emerald-800/60">
+      <ShieldCheck
+        className="h-5 w-5 text-emerald-700 dark:text-emerald-200"
+        aria-hidden="true"
+      />
+    </div>
 
-            <div className="min-w-0 flex-1">
-              <h3 className="text-sm font-black text-slate-950 dark:text-white">
-                Assinatura adicional
-              </h3>
+    <div className="min-w-0 flex-1">
+      <h3 className="text-sm font-black text-slate-950 dark:text-white">
+        Assinaturas do certificado
+      </h3>
 
-              <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-zinc-400">
-                Use quando o certificado precisar de coassinatura.
-              </p>
-            </div>
-          </div>
+      <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-zinc-400">
+        A assinatura institucional da Rafaella Pitol Corrêa é obrigatória e será
+        incluída automaticamente no PDF.
+      </p>
+    </div>
+  </div>
 
-          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className="inline-flex cursor-pointer select-none items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={usarAssinatura2}
-                onChange={(event) => {
-                  setUsarAssinatura2(event.target.checked);
-                  if (!event.target.checked) setAssinatura2Id("");
-                }}
-              />
-              Adicionar 2ª assinatura
-            </label>
+  <div className="mt-4 space-y-3">
+    <div className="rounded-2xl border border-emerald-200 bg-white p-3 dark:border-emerald-900/50 dark:bg-zinc-900">
+      <p className="text-sm font-black text-emerald-800 dark:text-emerald-100">
+        Rafaella Pitol Corrêa — assinatura obrigatória
+      </p>
 
-            <div className={usarAssinatura2 ? "" : "pointer-events-none opacity-50"}>
-              <label
-                htmlFor="assinatura2"
-                className="block text-sm font-black text-slate-700 dark:text-zinc-200"
-              >
-                Selecionar assinatura
-              </label>
+      <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-zinc-400">
+        ID {RAFAELLA_PITOL_ID}. Será posicionada automaticamente como última
+        assinatura à direita, exceto quando houver assinatura do Secretário.
+      </p>
+    </div>
 
-              <select
-                id="assinatura2"
-                value={assinatura2Id}
-                onChange={(event) => setAssinatura2Id(event.target.value)}
-                disabled={!usarAssinatura2 || assinaturasCarregando || assinaturas.length === 0}
-                className="mt-1 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 outline-none transition focus:border-amber-700 focus:ring-4 focus:ring-amber-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white dark:focus:ring-amber-950"
-              >
-                <option value="">
-                  {assinaturasCarregando ? "Carregando..." : "— Selecione —"}
-                </option>
+    <div className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
+      <label className="inline-flex cursor-pointer select-none items-center gap-2 text-sm font-bold text-slate-700 dark:text-zinc-200">
+        <input
+          type="checkbox"
+          className="h-4 w-4"
+          checked={usarAssinaturaAdicional}
+          onChange={(event) => {
+            setUsarAssinaturaAdicional(event.target.checked);
+            if (!event.target.checked) setAssinaturaAdicionalId("");
+          }}
+        />
+        Adicionar assinatura complementar
+      </label>
 
-                {assinaturas.map((assinatura) => (
-                  <option key={assinatura.id} value={assinatura.id}>
-                    {assinatura.nome}
-                  </option>
-                ))}
-              </select>
+      <div
+        className={cx(
+          "mt-3",
+          usarAssinaturaAdicional ? "" : "pointer-events-none opacity-50"
+        )}
+      >
+        <label
+          htmlFor="assinatura_adicional"
+          className="block text-sm font-black text-slate-700 dark:text-zinc-200"
+        >
+          Selecionar assinatura complementar
+        </label>
 
-              <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-zinc-400">
-                {assinaturasCarregando
-                  ? "Buscando assinaturas disponíveis..."
-                  : assinaturas.length
-                    ? "Mostrando pessoas com assinatura cadastrada."
-                    : "Nenhuma assinatura cadastrada encontrada."}
-              </p>
+        <select
+          id="assinatura_adicional"
+          value={assinaturaAdicionalId}
+          onChange={(event) => setAssinaturaAdicionalId(event.target.value)}
+          disabled={
+            !usarAssinaturaAdicional ||
+            assinaturasCarregando ||
+            assinaturas.length === 0
+          }
+          className="mt-1 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 outline-none transition focus:border-amber-700 focus:ring-4 focus:ring-amber-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white dark:focus:ring-amber-950"
+        >
+          <option value="">
+            {assinaturasCarregando ? "Carregando..." : "— Selecione —"}
+          </option>
 
-              {usarAssinatura2 && assinatura2Nome ? (
-                <p className="mt-2 text-xs font-black text-emerald-700 dark:text-emerald-200">
-                  Selecionada: {assinatura2Nome}
-                </p>
-              ) : null}
-            </div>
-          </div>
-        </section>
+          {assinaturas
+            .filter((assinatura) => {
+              const id = Number(assinatura.id);
+              return id !== RAFAELLA_PITOL_ID && id !== FABIO_LOPEZ_ID;
+            })
+            .map((assinatura) => (
+              <option key={assinatura.id} value={assinatura.id}>
+                {assinatura.nome}
+              </option>
+            ))}
+        </select>
+
+        <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-zinc-400">
+          Esta assinatura, quando usada, aparece antes da assinatura
+          institucional obrigatória.
+        </p>
+
+        {usarAssinaturaAdicional && assinaturaAdicionalNome ? (
+          <p className="mt-2 text-xs font-black text-emerald-700 dark:text-emerald-200">
+            Selecionada: {assinaturaAdicionalNome}
+          </p>
+        ) : null}
+      </div>
+    </div>
+
+    <div className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
+      <label className="inline-flex cursor-pointer select-none items-center gap-2 text-sm font-bold text-slate-700 dark:text-zinc-200">
+        <input
+          type="checkbox"
+          className="h-4 w-4"
+          checked={usarAssinaturaSecretario}
+          onChange={(event) => setUsarAssinaturaSecretario(event.target.checked)}
+        />
+        Incluir assinatura do Secretário de Saúde
+      </label>
+
+      <p className="mt-2 text-xs font-semibold text-slate-500 dark:text-zinc-400">
+        Fábio Lopez — ID {FABIO_LOPEZ_ID}. Quando selecionado, será a última
+        assinatura à direita, com Rafaella Pitol Corrêa imediatamente antes.
+      </p>
+    </div>
+  </div>
+</section>
 
         <div className="flex justify-end">
-          <Botao type="submit" variant="primary" disabled={salvando}>
+          <Botao type="submit" variant="mensal" disabled={salvando}>
             <span className="inline-flex items-center gap-2">
               {salvando ? (
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -870,8 +915,9 @@ function CertificadoAvulsoCard({
   onGerarPdf,
   onEnviarEmail,
   acaoLoading,
-  usarAssinatura2,
-  assinatura2Id,
+  usarAssinaturaAdicional,
+  assinaturaAdicionalId,
+  usarAssinaturaSecretario,
 }) {
   const isEmailLoading = acaoLoading.id === item.id && acaoLoading.tipo === "email";
   const isPdfLoading = acaoLoading.id === item.id && acaoLoading.tipo === "pdf";
@@ -1011,28 +1057,31 @@ function CertificadoAvulsoCard({
             </div>
           ) : null}
 
-          {pdfConsolidado && usarAssinatura2 && assinatura2Id ? (
-            <div className="rounded-2xl bg-amber-50 p-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-100 dark:bg-amber-950/30 dark:text-amber-100 dark:ring-amber-800/60">
-              Este PDF já foi consolidado. A segunda assinatura só altera a
-              primeira consolidação; depois disso, correções exigem substituição
-              formal do certificado.
-            </div>
-          ) : null}
+          {pdfConsolidado &&
+(usarAssinaturaSecretario ||
+  (usarAssinaturaAdicional && assinaturaAdicionalId)) ? (
+  <div className="rounded-2xl bg-amber-50 p-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-100 dark:bg-amber-950/30 dark:text-amber-100 dark:ring-amber-800/60">
+    Este PDF já foi consolidado. Alterações nas assinaturas só valem antes da
+    primeira consolidação; depois disso, correções exigem substituição formal do
+    certificado.
+  </div>
+) : null}
         </div>
 
         <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Botao
             type="button"
-            variant="secondary"
+            variant="contorno"
             onClick={() => onGerarPdf(item)}
             disabled={isPdfLoading || !podeGerar}
             title={
-              pdfConsolidado
-                ? "Baixar PDF oficial"
-                : usarAssinatura2 && assinatura2Id
-                  ? "Consolidar PDF com 2 assinaturas"
-                  : "Consolidar PDF oficial"
-            }
+  pdfConsolidado
+    ? "Baixar PDF oficial"
+    : usarAssinaturaSecretario ||
+        (usarAssinaturaAdicional && assinaturaAdicionalId)
+      ? "Consolidar PDF com assinaturas selecionadas"
+      : "Consolidar PDF oficial com assinatura institucional"
+}
           >
             <span className="inline-flex items-center justify-center gap-2">
               {isPdfLoading ? (
@@ -1052,7 +1101,7 @@ function CertificadoAvulsoCard({
 
           <Botao
             type="button"
-            variant="primary"
+            variant="mensal"
             onClick={() => onEnviarEmail(item.id)}
             disabled={isEmailLoading || !podeGerar}
             title={item?.enviado ? "Reenviar e-mail" : "Enviar e-mail"}
@@ -1082,7 +1131,7 @@ function CertificadoAvulsoCard({
  * Página principal
  * ───────────────────────────────────────────── */
 
-export default function CertificadosAvulsos() {
+export default function CertificadoAvulso() {
   const reduceMotion = useReducedMotion();
 
   const [form, setForm] = useState({
@@ -1098,16 +1147,30 @@ export default function CertificadosAvulsos() {
     texto_personalizado: "",
   });
 
-  const [usarAssinatura2, setUsarAssinatura2] = useState(
-    () => localStorage.getItem(KEY_ASSIN2_ENABLED) === "1"
-  );
-  const [assinatura2Id, setAssinatura2Id] = useState(
-    () => localStorage.getItem(KEY_ASSIN2_ID) || ""
-  );
+  const [usarAssinaturaAdicional, setUsarAssinaturaAdicional] = useState(
+  () => localStorage.getItem(KEY_ASSINATURA_ADICIONAL_ENABLED) === "1"
+);
+
+const [assinaturaAdicionalId, setAssinaturaAdicionalId] = useState(
+  () => localStorage.getItem(KEY_ASSINATURA_ADICIONAL_ID) || ""
+);
+
+const [usarAssinaturaSecretario, setUsarAssinaturaSecretario] = useState(
+  () => localStorage.getItem(KEY_ASSINATURA_SECRETARIO_ENABLED) === "1"
+);
   const [assinaturas, setAssinaturas] = useState([]);
   const [assinaturasCarregando, setAssinaturasCarregando] = useState(true);
 
   const [lista, setLista] = useState([]);
+  const [pagina, setPagina] = useState(1);
+const [paginacao, setPaginacao] = useState({
+  pagina: 1,
+  limite: 25,
+  total: 0,
+  total_paginas: 1,
+  tem_anterior: false,
+  tem_proxima: false,
+});
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
   const [salvando, setSalvando] = useState(false);
@@ -1132,28 +1195,52 @@ export default function CertificadosAvulsos() {
     if (liveRef.current) liveRef.current.textContent = message;
   }, []);
 
-  const carregarCertificados = useCallback(async () => {
+const carregarCertificados = useCallback(
+  async (paginaAlvo = pagina) => {
     try {
-      validarFacade("api.certificadoAvulso.listar", api?.certificadoAvulso?.listar);
+      validarFacade(
+        "api.certificadoAvulso.listar",
+        api?.certificadoAvulso?.listar
+      );
 
       setCarregando(true);
       setErro("");
       setLive("Carregando certificados avulsos.");
 
-      const response = await api.certificadoAvulso.listar();
+      const response = await api.certificadoAvulso.listar({
+        pagina: paginaAlvo,
+        limite: 25,
+      });
+
       const payload = extrairData(response);
-      const arr = Array.isArray(payload) ? payload : [];
+
+      const arr = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.lista)
+          ? payload.lista
+          : [];
+
+      const meta = payload?.paginacao || {
+        pagina: paginaAlvo,
+        limite: 25,
+        total: arr.length,
+        total_paginas: 1,
+        tem_anterior: false,
+        tem_proxima: false,
+      };
 
       if (!mountedRef.current) return;
 
       setLista(arr);
+      setPaginacao(meta);
+
       setLive(
         arr.length
-          ? `${arr.length} certificado(s) avulso(s) carregado(s).`
+          ? `${arr.length} certificado(s) avulso(s) carregado(s) na página ${meta.pagina}.`
           : "Nenhum certificado avulso encontrado."
       );
     } catch (error) {
-      console.error("[CertificadosAvulsos] erro ao carregar:", error);
+      console.error("[CertificadoAvulso] erro ao carregar:", error);
 
       if (!mountedRef.current) return;
 
@@ -1169,7 +1256,9 @@ export default function CertificadosAvulsos() {
     } finally {
       if (mountedRef.current) setCarregando(false);
     }
-  }, [setLive]);
+  },
+  [pagina, setLive]
+);
 
   const carregarAssinaturas = useCallback(async () => {
     try {
@@ -1206,7 +1295,7 @@ export default function CertificadosAvulsos() {
 
       setAssinaturas(filtradas);
     } catch (error) {
-      console.error("[CertificadosAvulsos] erro ao carregar assinaturas:", error);
+      console.error("[CertificadoAvulso] erro ao carregar assinaturas:", error);
 
       if (!mountedRef.current) return;
 
@@ -1246,17 +1335,27 @@ export default function CertificadosAvulsos() {
     return () => window.clearTimeout(timer);
   }, [busca]);
 
-  useEffect(() => {
-    localStorage.setItem(KEY_ASSIN2_ENABLED, usarAssinatura2 ? "1" : "0");
-  }, [usarAssinatura2]);
+ useEffect(() => {
+  localStorage.setItem(
+    KEY_ASSINATURA_ADICIONAL_ENABLED,
+    usarAssinaturaAdicional ? "1" : "0"
+  );
+}, [usarAssinaturaAdicional]);
 
-  useEffect(() => {
-    if (assinatura2Id) {
-      localStorage.setItem(KEY_ASSIN2_ID, assinatura2Id);
-    } else {
-      localStorage.removeItem(KEY_ASSIN2_ID);
-    }
-  }, [assinatura2Id]);
+useEffect(() => {
+  if (assinaturaAdicionalId) {
+    localStorage.setItem(KEY_ASSINATURA_ADICIONAL_ID, assinaturaAdicionalId);
+  } else {
+    localStorage.removeItem(KEY_ASSINATURA_ADICIONAL_ID);
+  }
+}, [assinaturaAdicionalId]);
+
+useEffect(() => {
+  localStorage.setItem(
+    KEY_ASSINATURA_SECRETARIO_ENABLED,
+    usarAssinaturaSecretario ? "1" : "0"
+  );
+}, [usarAssinaturaSecretario]);
 
   useEffect(() => {
     const onKey = (event) => {
@@ -1283,13 +1382,13 @@ export default function CertificadosAvulsos() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const assinatura2Nome = useMemo(() => {
-    const achada = assinaturas.find(
-      (assinatura) => String(assinatura.id) === String(assinatura2Id)
-    );
+const assinaturaAdicionalNome = useMemo(() => {
+  const achada = assinaturas.find(
+    (assinatura) => String(assinatura.id) === String(assinaturaAdicionalId)
+  );
 
-    return achada?.nome || "";
-  }, [assinaturas, assinatura2Id]);
+  return achada?.nome || "";
+}, [assinaturas, assinaturaAdicionalId]);
 
   const kpis = useMemo(() => {
     const total = lista.length;
@@ -1432,16 +1531,10 @@ export default function CertificadosAvulsos() {
         setSalvando(true);
         setLive("Cadastrando certificado avulso.");
 
-        const response = await api.certificadoAvulso.criar(payload);
-        const novo = extrairData(response);
+await api.certificadoAvulso.criar(payload);
 
-        if (novo) {
-  setLista((prev) => [novo, ...prev]);
-} else {
-  await carregarCertificados();
-}
-
-        setLista((prev) => [novo, ...prev]);
+      setPagina(1);
+await carregarCertificados(1);
         setFiltroEnvio("todos");
         setFiltroStatus("todos");
         setBusca("");
@@ -1462,7 +1555,7 @@ export default function CertificadosAvulsos() {
         notifySuccess("Certificado avulso cadastrado com sucesso.");
         setLive("Certificado avulso cadastrado.");
       } catch (error) {
-        console.error("[CertificadosAvulsos] erro ao cadastrar:", error);
+        console.error("[CertificadoAvulso] erro ao cadastrar:", error);
 
         notifyError(
           obterMensagemErro(error, "Não foi possível cadastrar o certificado.")
@@ -1475,18 +1568,42 @@ export default function CertificadosAvulsos() {
     [form, salvando, setLive, carregarCertificados]
   );
 
-  const getAssinaturaParams = useCallback(() => {
-    if (!usarAssinatura2) return undefined;
+const getAssinaturaParams = useCallback(() => {
+  const assinantes = [];
 
-    if (!assinatura2Id) {
-      notifyInfo("Selecione a 2ª assinatura antes de continuar.");
+  if (usarAssinaturaAdicional) {
+    if (!assinaturaAdicionalId) {
+      notifyInfo("Selecione a assinatura complementar antes de continuar.");
       return false;
     }
 
-    return {
-      assinatura2_id: Number(assinatura2Id),
-    };
-  }, [usarAssinatura2, assinatura2Id]);
+    const adicionalId = Number(assinaturaAdicionalId);
+
+    if (
+      !Number.isInteger(adicionalId) ||
+      adicionalId <= 0 ||
+      adicionalId === RAFAELLA_PITOL_ID ||
+      adicionalId === FABIO_LOPEZ_ID
+    ) {
+      notifyWarning("Selecione uma assinatura complementar válida.");
+      return false;
+    }
+
+    assinantes.push(adicionalId);
+  }
+
+  if (usarAssinaturaSecretario) {
+    assinantes.push(FABIO_LOPEZ_ID);
+  }
+
+  return {
+    assinantes_ids: assinantes.join(","),
+  };
+}, [
+  usarAssinaturaAdicional,
+  assinaturaAdicionalId,
+  usarAssinaturaSecretario,
+]);
 
   const gerarPdf = useCallback(
   async (item) => {
@@ -1537,7 +1654,7 @@ export default function CertificadosAvulsos() {
 
       await carregarCertificados();
     } catch (error) {
-      console.error("[CertificadosAvulsos] erro ao consolidar/baixar PDF:", error);
+      console.error("[CertificadoAvulso] erro ao consolidar/baixar PDF:", error);
 
       notifyError(
         obterMensagemErro(
@@ -1592,7 +1709,7 @@ export default function CertificadosAvulsos() {
         notifySuccess("E-mail enviado com sucesso.");
         setLive("Certificado avulso enviado por e-mail.");
       } catch (error) {
-        console.error("[CertificadosAvulsos] erro ao enviar e-mail:", error);
+        console.error("[CertificadoAvulso] erro ao enviar e-mail:", error);
 
         notifyError(
           obterMensagemErro(error, "Não foi possível enviar o certificado por e-mail.")
@@ -1607,13 +1724,33 @@ export default function CertificadosAvulsos() {
 
   return (
     <div className="flex min-h-dvh flex-col bg-slate-50 text-slate-950 dark:bg-zinc-950 dark:text-white">
-      <Hero
-        kpis={kpis}
-        carregando={carregando}
-        onRefresh={carregarCertificados}
-        onCadastrar={() => formRef.current?.requestSubmit?.()}
-        onFocusBusca={() => buscaRef.current?.focus()}
-      />
+      <div className="mx-auto w-full max-w-7xl px-4 pt-4 sm:px-6">
+  <HeaderHero
+    titulo="Certificados avulsos"
+    subtitulo="Cadastre certificados fora do fluxo automático, consolide o PDF eletrônico oficial e envie por e-mail quando necessário."
+    icone={Award}
+    tamanho="md"
+    raio="xl"
+  />
+</div>
+
+<section className="mx-auto w-full max-w-7xl space-y-4 px-4 pt-6 sm:px-6">
+  <BarraAcoesPagina
+    carregando={carregando}
+    onRefresh={carregarCertificados}
+    onCadastrar={() => formRef.current?.requestSubmit?.()}
+    onFocusBusca={() => buscaRef.current?.focus()}
+  />
+
+  <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+    <MiniStat icon={Award} label="Total" value={paginacao.total} tone="cyan" />
+    <MiniStat icon={Mail} label="Enviados" value={kpis.enviados} tone="emerald" />
+    <MiniStat icon={Send} label="Pendentes" value={kpis.pendentes} tone="amber" />
+    <MiniStat icon={ShieldCheck} label="Válidos" value={kpis.validos} tone="rose" />
+  </div>
+
+  <AvisoIdentificadorSeguro />
+</section>
 
       <p ref={liveRef} className="sr-only" aria-live="polite" />
 
@@ -1638,19 +1775,21 @@ export default function CertificadosAvulsos() {
       >
         <div>
           <FormularioCertificado
-            form={form}
-            setForm={setForm}
-            salvando={salvando}
-            onSubmit={cadastrarCertificado}
-            formRef={formRef}
-            usarAssinatura2={usarAssinatura2}
-            setUsarAssinatura2={setUsarAssinatura2}
-            assinatura2Id={assinatura2Id}
-            setAssinatura2Id={setAssinatura2Id}
-            assinaturas={assinaturas}
-            assinaturasCarregando={assinaturasCarregando}
-            assinatura2Nome={assinatura2Nome}
-          />
+  form={form}
+  setForm={setForm}
+  salvando={salvando}
+  onSubmit={cadastrarCertificado}
+  formRef={formRef}
+  usarAssinaturaAdicional={usarAssinaturaAdicional}
+  setUsarAssinaturaAdicional={setUsarAssinaturaAdicional}
+  assinaturaAdicionalId={assinaturaAdicionalId}
+  setAssinaturaAdicionalId={setAssinaturaAdicionalId}
+  usarAssinaturaSecretario={usarAssinaturaSecretario}
+  setUsarAssinaturaSecretario={setUsarAssinaturaSecretario}
+  assinaturas={assinaturas}
+  assinaturasCarregando={assinaturasCarregando}
+  assinaturaAdicionalNome={assinaturaAdicionalNome}
+/>
         </div>
 
         <section className="flex min-w-0 flex-col gap-4">
@@ -1695,7 +1834,7 @@ export default function CertificadosAvulsos() {
                   </h2>
 
                   <p className="text-sm text-slate-500 dark:text-zinc-400">
-                    Exibindo {listaFiltrada.length} de {lista.length} registro(s).
+                    Exibindo {listaFiltrada.length} de {paginacao.total} registro(s).
                   </p>
                 </div>
 
@@ -1704,20 +1843,48 @@ export default function CertificadosAvulsos() {
                   Certificado eletrônico v2.0
                 </Badge>
               </div>
+<div className="grid grid-cols-1 gap-4">
+  {listaFiltrada.map((item) => (
+    <CertificadoAvulsoCard
+      key={item.id}
+      item={item}
+      onGerarPdf={gerarPdf}
+      onEnviarEmail={enviarPorEmail}
+      acaoLoading={acaoLoading}
+      usarAssinaturaAdicional={usarAssinaturaAdicional}
+      assinaturaAdicionalId={assinaturaAdicionalId}
+      usarAssinaturaSecretario={usarAssinaturaSecretario}
+    />
+  ))}
+</div>
 
-              <div className="grid grid-cols-1 gap-4">
-                {listaFiltrada.map((item) => (
-                  <CertificadoAvulsoCard
-                    key={item.id}
-                    item={item}
-                    onGerarPdf={gerarPdf}
-                    onEnviarEmail={enviarPorEmail}
-                    acaoLoading={acaoLoading}
-                    usarAssinatura2={usarAssinatura2}
-                    assinatura2Id={assinatura2Id}
-                  />
-                ))}
-              </div>
+<div className="mt-4 flex flex-col gap-3 rounded-2xl bg-white p-3 ring-1 ring-slate-200 dark:bg-zinc-900 dark:ring-zinc-800 sm:flex-row sm:items-center sm:justify-between">
+  <p className="text-sm font-semibold text-slate-600 dark:text-zinc-300">
+    Página {paginacao.pagina} de {paginacao.total_paginas} —{" "}
+    {paginacao.total} certificado(s)
+  </p>
+
+  <div className="flex items-center gap-2">
+    <Botao
+      type="button"
+      variant="contorno"
+      disabled={!paginacao.tem_anterior || carregando}
+      onClick={() => setPagina((prev) => Math.max(prev - 1, 1))}
+    >
+      Anterior
+    </Botao>
+
+    <Botao
+      type="button"
+      variant="contorno"
+      disabled={!paginacao.tem_proxima || carregando}
+      onClick={() => setPagina((prev) => prev + 1)}
+    >
+      Próxima
+    </Botao>
+  </div>
+</div>
+
             </section>
           )}
         </section>

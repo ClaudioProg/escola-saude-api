@@ -2259,23 +2259,54 @@ export async function apiAssinaturaListar(opts = {}) {
    Certificado — contrato oficial
 ────────────────────────────────────────────────────────────── */
 
-export async function apiCertAvulsoPDF(
-  id,
-  { palestrante = false, assinatura2_id } = {}
-) {
-  if (!id) throw new Error("ID do certificado é obrigatório.");
+export async function apiCertAvulsoListar(params = {}, opts = {}) {
+  return apiGet("/certificado/admin/avulso", {
+    auth: true,
+    query: params,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
 
-  const query = {
-    ...(palestrante ? { palestrante: "1" } : {}),
-    ...(assinatura2_id ? { assinatura2_id } : {}),
-  };
-
-  return apiGetFile(`/certificado/avulso/${id}/pdf`, {
-    query,
+export async function apiCertAvulsoCriar(payload = {}, opts = {}) {
+  return apiPost("/certificado/admin/avulso", payload, {
     auth: true,
     on401: "redirect",
     on403: "silent",
+    ...opts,
   });
+}
+
+export async function apiCertAvulsoPDF(id, { assinantes_ids } = {}, opts = {}) {
+  if (!id) throw new Error("ID do certificado é obrigatório.");
+
+  return apiGetFile(`/certificado/admin/avulso/${id}/pdf`, {
+    query: {
+      ...(assinantes_ids ? { assinantes_ids } : {}),
+    },
+    auth: true,
+    on401: "redirect",
+    on403: "silent",
+    ...opts,
+  });
+}
+
+export async function apiCertAvulsoEnviar(id, { assinantes_ids } = {}, opts = {}) {
+  if (!id) throw new Error("ID do certificado é obrigatório.");
+
+  return apiPost(
+    `/certificado/admin/avulso/${id}/enviar`,
+    {
+      ...(assinantes_ids ? { assinantes_ids } : {}),
+    },
+    {
+      auth: true,
+      on401: "redirect",
+      on403: "silent",
+      ...opts,
+    }
+  );
 }
 
 export async function apiCertificadoAdminArvore(params = {}, opts = {}) {
@@ -3713,6 +3744,13 @@ certificado: {
   gerar: apiCertificadoGerar,
   validarPublico: (codigoValidacao, opts) =>
     apiCertificadoValidarPublico(codigoValidacao, opts),
+},
+
+certificadoAvulso: {
+  listar: (params, opts) => apiCertAvulsoListar(params, opts),
+  criar: (payload, opts) => apiCertAvulsoCriar(payload, opts),
+  pdf: (id, params, opts) => apiCertAvulsoPDF(id, params, opts),
+  enviar: (id, params, opts) => apiCertAvulsoEnviar(id, params, opts),
 },
 
 relatorio: {

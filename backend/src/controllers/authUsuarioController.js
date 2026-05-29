@@ -38,7 +38,7 @@ const jwt = require("jsonwebtoken");
 const dbModule = require("../db");
 const db = dbModule?.db ?? dbModule;
 
-const { send: enviarEmail } = require("../services/mailer");
+const { sendEmail: enviarEmail } = require("../services/mailer");
 
 /* ─────────────────────────────────────────────────────────────
    Config

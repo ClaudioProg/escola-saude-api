@@ -117,7 +117,7 @@ for (const fnName of certificadoFns) {
 
 const certificadoAvulsoFns = [
   "criarCertificadoAvulso",
-  "listarCertificadosAvulsos",
+  "listarCertificadoAvulso",
   "gerarPdfCertificado",
   "enviarPorEmail",
   "cancelarCertificadoAvulso",
@@ -703,7 +703,7 @@ adminRouter.post(
  */
 adminRouter.get(
   "/avulso",
-  asyncHandler(certificadoAvulsoController.listarCertificadosAvulsos)
+  asyncHandler(certificadoAvulsoController.listarCertificadoAvulso)
 );
 
 /**

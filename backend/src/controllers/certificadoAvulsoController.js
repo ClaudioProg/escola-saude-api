@@ -1123,78 +1123,84 @@ async function criarCertificadoAvulso(req, res) {
 
       const insert = await tx.query(
         `
-        INSERT INTO certificados_avulsos (
-          nome,
-          cpf,
-          email,
-          curso,
-          carga_horaria,
-          emitido_em,
-          enviado,
-          data_inicio,
-          data_fim,
-          modalidade,
-          titulo_trabalho,
-          texto_personalizado,
-          numero_certificado,
-          codigo_validacao,
-          status,
-          algoritmo_hash,
-          emitido_por,
-          identificador_tipo,
-          identificador_hash,
-          identificador_mascarado,
-          metadados_json,
-          dados_assinatura_json,
-          atualizado_em
-        )
+INSERT INTO certificados_avulsos (
+  nome,
+  cpf,
+  email,
+  curso,
+  carga_horaria,
+  emitido_em,
+  enviado,
+  data_inicio,
+  data_fim,
+  modalidade,
+  titulo_trabalho,
+  texto_personalizado,
+  numero_certificado,
+  codigo_validacao,
+  status,
+  hash_dados,
+  algoritmo_hash,
+  emitido_por,
+identificador_tipo,
+identificador_hash,
+identificador_mascarado,
+cpf_hash,
+metadados_json,
+dados_assinatura_json,
+atualizado_em
+)
         VALUES (
-          $1, $2, $3, $4, $5,
-          NOW(),
-          false,
-          $6::date,
-          $7::date,
-          $8,
-          $9,
-          $10,
-          $11,
-          $12,
-          'emitido',
-          'sha256',
-          $13,
-          $14,
-          $15,
-          $16,
-          $17::jsonb,
-          '{}'::jsonb,
-          NOW()
-        )
+  $1, $2, $3, $4, $5,
+  NOW(),
+  false,
+  $6::date,
+  $7::date,
+  $8,
+  $9,
+  $10,
+  $11,
+  $12,
+  'emitido',
+  $18,
+  'sha256',
+  $13,
+ $14,
+$15,
+$16,
+$19,
+$17::jsonb,
+'{}'::jsonb,
+NOW()
+)
         RETURNING *
         `,
         [
-          nome,
-          identificadorOriginal,
-          email,
-          curso,
-          cargaHoraria,
-          dataInicio || null,
-          dataFim || null,
-          modalidade,
-          tituloTrabalho,
-          textoPersonalizado,
-          numeroCertificado,
-          codigoValidacao,
-          usuarioId,
-          identificador.identificador_tipo,
-          identificador.identificador_hash,
-          identificador.identificador_mascarado,
-          JSON.stringify({
-            origem: "avulso",
-            numero_certificado: numeroCertificado,
-            codigo_validacao: codigoValidacao,
-            validacao_url: urlValidacaoPublica(codigoValidacao),
-          }),
-        ]
+  nome,
+  identificadorOriginal,
+  email,
+  curso,
+  cargaHoraria,
+  dataInicio || null,
+  dataFim || null,
+  modalidade,
+  tituloTrabalho,
+  textoPersonalizado,
+  numeroCertificado,
+  codigoValidacao,
+  usuarioId,
+  identificador.identificador_tipo,
+  identificador.identificador_hash,
+  identificador.identificador_mascarado,
+JSON.stringify({
+  origem: "avulso",
+  numero_certificado: numeroCertificado,
+  codigo_validacao: codigoValidacao,
+  validacao_url: urlValidacaoPublica(codigoValidacao),
+}),
+sha256(`certificado-avulso:${numeroCertificado}:${codigoValidacao}`),
+identificador.identificador_hash,
+]
       );
 
       const criado = insert.rows[0];
@@ -1258,11 +1264,25 @@ async function criarCertificadoAvulso(req, res) {
   }
 }
 
-async function listarCertificadosAvulsos(req, res) {
+async function listarCertificadoAvulso(req, res) {
   const rid = reqRid(req);
   const db = getDb(req);
 
+  const pagina = Math.max(Number(req.query?.pagina || 1), 1);
+  const limiteRaw = Number(req.query?.limite || 25);
+  const limite = Math.min(Math.max(limiteRaw, 1), 100);
+  const offset = (pagina - 1) * limite;
+
   try {
+    const totalResult = await db.query(
+      `
+      SELECT COUNT(*)::int AS total
+      FROM certificados_avulsos
+      `
+    );
+
+    const total = Number(totalResult.rows?.[0]?.total || 0);
+
     const result = await db.query(
       `
       SELECT
@@ -1299,17 +1319,34 @@ async function listarCertificadosAvulsos(req, res) {
         atualizado_em
       FROM certificados_avulsos
       ORDER BY id DESC
-      `
+      LIMIT $1 OFFSET $2
+      `,
+      [limite, offset]
     );
 
-    logInfo(rid, "listarCertificadosAvulsos OK", {
-      total: result.rows.length,
+    const totalPaginas = Math.max(Math.ceil(total / limite), 1);
+
+    logInfo(rid, "listarCertificadoAvulso OK", {
+      total,
+      pagina,
+      limite,
+      retornados: result.rows.length,
     });
 
     return responderSucesso(
       res,
       200,
-      result.rows,
+      {
+        lista: result.rows,
+        paginacao: {
+          pagina,
+          limite,
+          total,
+          total_paginas: totalPaginas,
+          tem_anterior: pagina > 1,
+          tem_proxima: pagina < totalPaginas,
+        },
+      },
       "Certificados avulsos carregados com sucesso.",
       "CERTIFICADOS_AVULSOS_LISTADOS"
     );
@@ -1321,7 +1358,7 @@ async function listarCertificadosAvulsos(req, res) {
       500,
       "Erro ao listar certificados avulsos.",
       "CERTIFICADO_AVULSO_ERRO_LISTAR",
-      "Falha inesperada em listarCertificadosAvulsos.",
+      "Falha inesperada em listarCertificadoAvulso.",
       IS_DEV ? error.message : null
     );
   }
@@ -2133,7 +2170,7 @@ async function historicoCertificadoAvulso(req, res) {
 
 module.exports = {
   criarCertificadoAvulso,
-  listarCertificadosAvulsos,
+  listarCertificadoAvulso,
   gerarPdfCertificado,
   enviarPorEmail,
   cancelarCertificadoAvulso,

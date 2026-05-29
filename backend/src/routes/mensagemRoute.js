@@ -67,6 +67,25 @@ router.get("/admin/resumo", mensagemController.resumoMensagensAdmin);
 router.get("/admin", mensagemController.listarConversasAdmin);
 
 /**
+ * GET /api/mensagem/admin/:id
+ *
+ * Consulta uma conversa específica pela visão administrativa.
+ *
+ * Regras:
+ * - exige autenticação;
+ * - permissão administrativa validada no controller/service;
+ * - retorna conversa e histórico completo.
+ */
+router.get("/admin/:id", mensagemController.obterConversa);
+
+/**
+ * POST /api/mensagem/admin/:id/resposta
+ *
+ * Responde uma conversa pela visão administrativa.
+ */
+router.post("/admin/:id/resposta", mensagemController.responderConversa);
+
+/**
  * PATCH /api/mensagem/admin/:id
  *
  * Atualiza dados administrativos da conversa:

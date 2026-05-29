@@ -186,7 +186,7 @@ const AdminSubmissao = lazy(() => import("./pages/AdminSubmissao"));
 const CancelarInscricaoAdmin = lazy(() =>
   import("./pages/CancelarInscricaoAdmin")
 );
-const CertificadosAvulsos = lazy(() => import("./pages/CertificadosAvulsos"));
+const CertificadoAvulso = lazy(() => import("./pages/CertificadoAvulso"));
 const QRCodesEventosAdmin = lazy(() => import("./pages/QRCodesEventosAdmin"));
 
 /* ─────────────────────────────────────────────────────────────
@@ -842,7 +842,7 @@ function AdministradorRoutes() {
         element={
           <ProtectedPage
             permitido={PERFIL_PERMITIDO.administrador}
-            element={<CertificadosAvulsos />}
+            element={<CertificadoAvulso />}
           />
         }
       />

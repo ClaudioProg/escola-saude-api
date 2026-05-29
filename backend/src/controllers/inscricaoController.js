@@ -50,7 +50,7 @@
  */
 
 const db = require("../db");
-const { send: enviarEmail } = require("../services/mailer");
+const { sendEmail: enviarEmail } = require("../services/mailer");
 const { criarNotificacao } = require("./notificacaoController");
 const {
   podeAcessarEvento,

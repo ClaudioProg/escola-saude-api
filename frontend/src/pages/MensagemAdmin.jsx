@@ -1165,17 +1165,53 @@ if (carregando) {
         ) : null}
       </section>
 
-      <Modal
-        aberto={Boolean(conversaSelecionada)}
-        onFechar={() => {
+<Modal
+  open={Boolean(conversaSelecionada)}
+  onClose={() => {
+    setConversaSelecionada(null);
+    setDetalhe(null);
+    setResposta("");
+    setVisivelUsuario(true);
+  }}
+  labelledBy="mensagem-admin-modal-title"
+  describedBy="mensagem-admin-modal-desc"
+  className="w-[96%] max-w-7xl overflow-hidden p-0"
+>
+  <header className="border-b border-slate-200 bg-white px-5 py-4 dark:border-slate-800 dark:bg-slate-950">
+    <div className="flex items-start justify-between gap-3">
+      <div>
+        <h2
+          id="mensagem-admin-modal-title"
+          className="text-xl font-black tracking-tight text-slate-950 dark:text-white"
+        >
+          Atendimento da conversa
+        </h2>
+
+        <p
+          id="mensagem-admin-modal-desc"
+          className="mt-1 text-sm text-slate-500 dark:text-slate-400"
+        >
+          Visualize o histórico, responda como administrador e registre a gestão da conversa.
+        </p>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => {
           setConversaSelecionada(null);
           setDetalhe(null);
           setResposta("");
           setVisivelUsuario(true);
         }}
-        titulo="Atendimento da conversa"
-        tamanho="xl"
+        className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
+        aria-label="Fechar atendimento"
       >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  </header>
+
+  <div className="max-h-[calc(92vh-88px)] overflow-y-auto bg-slate-50 p-4 dark:bg-slate-950 sm:p-5">
         {carregandoDetalhe ? (
           <CarregandoSkeleton
             linhas={8}
@@ -1469,6 +1505,7 @@ if (carregando) {
             }
           />
         )}
+          </div>
       </Modal>
     </section>
 
