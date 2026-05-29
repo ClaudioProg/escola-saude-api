@@ -504,9 +504,9 @@ export default function ModalAvaliacoes({ isOpen, onClose, avaliacao }) {
       </div>
 
       <div className="sticky bottom-0 left-0 right-0 flex justify-end border-t border-slate-200 bg-white/90 px-4 py-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/90 sm:px-6">
-        <Botao type="button" variant="secondary" onClick={onClose}>
-          Fechar
-        </Botao>
+        <Botao type="button" variant="contorno" onClick={onClose}>
+  Fechar
+</Botao>
       </div>
     </Modal>
   );

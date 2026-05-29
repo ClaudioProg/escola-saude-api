@@ -1,5 +1,5 @@
-// ✅ frontend/src/components/avaliacoes/ModalAvaliacaoFormulario.jsx — v2.0
-// Atualizado em: 14/05/2026
+// ✅ frontend/src/components/avaliacoes/ModalAvaliacaoFormulario.jsx — v2.2
+// Atualizado em: 29/05/2026
 // Plataforma Escola da Saúde
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -15,6 +15,7 @@ import {
   SendHorizontal,
   ShieldCheck,
   Sparkles,
+  X,
 } from "lucide-react";
 
 import Modal from "../ui/Modal";
@@ -106,6 +107,10 @@ const TEXTOS = [
   },
 ];
 
+/* ─────────────────────────────────────────────
+ * Helpers
+ * ───────────────────────────────────────────── */
+
 function cls(...parts) {
   return parts.filter(Boolean).join(" ");
 }
@@ -184,6 +189,13 @@ function MiniCard({ icon: Icon, title, children, tone = "violet" }) {
   );
 }
 
+MiniCard.propTypes = {
+  icon: PropTypes.elementType,
+  title: PropTypes.string.isRequired,
+  children: PropTypes.node.isRequired,
+  tone: PropTypes.oneOf(["violet", "amber", "emerald", "rose"]),
+};
+
 function RatingField({
   rotulo,
   chave,
@@ -194,8 +206,6 @@ function RatingField({
   hintId,
   setFieldRef,
 }) {
-  const fieldName = `nota-${chave}`;
-
   return (
     <fieldset
       className={cls(
@@ -242,42 +252,34 @@ function RatingField({
         {invalid ? "Selecione uma nota para continuar." : "Escolha uma opção."}
       </p>
 
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-5">
-        {NOTA_ENUM_OFICIAL.map((opcao, index) => {
+      <div
+        ref={(element) => setFieldRef(chave, element)}
+        role="radiogroup"
+        aria-label={rotulo}
+        className="grid grid-cols-1 gap-2 sm:grid-cols-5"
+      >
+        {NOTA_ENUM_OFICIAL.map((opcao) => {
           const checked = value === opcao;
-          const optionId = `${fieldName}-${opcao}`;
 
           return (
-            <label
+            <button
               key={opcao}
-              htmlFor={optionId}
+              type="button"
+              role="radio"
+              aria-checked={checked ? "true" : "false"}
+              onClick={() => onChange(chave, opcao)}
               className={cls(
-                "cursor-pointer rounded-2xl border px-3 py-3 text-center text-xs font-black ring-1 transition focus-within:ring-4",
+                "rounded-2xl border px-3 py-3 text-center text-xs font-black ring-1 transition focus:outline-none focus:ring-4",
                 checked
                   ? NOTA_STYLE[opcao]
-                  : `${NOTA_STYLE_INATIVA} focus-within:ring-violet-100 dark:focus-within:ring-violet-950`
+                  : `${NOTA_STYLE_INATIVA} focus:ring-violet-100 dark:focus:ring-violet-950`
               )}
             >
-              <input
-                ref={
-                  index === 0
-                    ? (element) => setFieldRef(chave, element)
-                    : undefined
-                }
-                id={optionId}
-                type="radio"
-                name={fieldName}
-                value={opcao}
-                checked={checked}
-                onChange={() => onChange(chave, opcao)}
-                className="sr-only"
-              />
-
               <span>{opcao}</span>
               <span className="mt-1 block text-[10px] opacity-70">
                 {NOTA_PONTUACAO[opcao]}/10
               </span>
-            </label>
+            </button>
           );
         })}
       </div>
@@ -291,6 +293,17 @@ function RatingField({
     </fieldset>
   );
 }
+
+RatingField.propTypes = {
+  rotulo: PropTypes.string.isRequired,
+  chave: PropTypes.string.isRequired,
+  obrigatorio: PropTypes.bool,
+  value: PropTypes.string,
+  onChange: PropTypes.func.isRequired,
+  invalid: PropTypes.bool,
+  hintId: PropTypes.string.isRequired,
+  setFieldRef: PropTypes.func.isRequired,
+};
 
 function CampoTexto({ item, value, onChange }) {
   return (
@@ -320,6 +333,17 @@ function CampoTexto({ item, value, onChange }) {
     </div>
   );
 }
+
+CampoTexto.propTypes = {
+  item: PropTypes.shape({
+    chave: PropTypes.string.isRequired,
+    rotulo: PropTypes.string.isRequired,
+    placeholder: PropTypes.string,
+    rows: PropTypes.number,
+  }).isRequired,
+  value: PropTypes.string,
+  onChange: PropTypes.func.isRequired,
+};
 
 /* ─────────────────────────────────────────────
  * Componente principal
@@ -405,7 +429,7 @@ export default function ModalAvaliacaoFormulario({
 
     if (!primeiro) return;
 
-    requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
       fieldRefs.current[primeiro]?.focus?.();
       fieldRefs.current[primeiro]?.scrollIntoView?.({
         behavior: "smooth",
@@ -428,10 +452,6 @@ export default function ModalAvaliacaoFormulario({
     setTentouEnviar(false);
     setEnviando(false);
     fieldRefs.current = {};
-
-    requestAnimationFrame(() => {
-      fieldRefs.current[CAMPOS_BASE[0].chave]?.focus?.();
-    });
   }, [isOpen, evento?.id, turma_id]);
 
   const handleNotaChange = useCallback((campo, valor) => {
@@ -524,16 +544,19 @@ export default function ModalAvaliacaoFormulario({
       onClose={enviando ? undefined : onClose}
       labelledBy="modal-avaliacao-titulo"
       describedBy="modal-avaliacao-descricao"
-      className="w-[96%] max-w-4xl overflow-hidden p-0"
+      padding={false}
+      scroll="content"
+      showCloseButton={false}
+      className="grid h-[92dvh] w-[96%] max-w-5xl grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden p-0"
     >
-      <div className="relative overflow-hidden bg-gradient-to-br from-slate-950 via-violet-950 to-fuchsia-900 px-4 py-5 text-white sm:px-6">
-        <div className="absolute inset-0 opacity-30">
+      <header className="relative row-start-1 overflow-hidden bg-gradient-to-br from-slate-950 via-violet-950 to-fuchsia-900 px-4 py-5 text-white sm:px-6">
+        <div className="absolute inset-0 opacity-30" aria-hidden="true">
           <div className="absolute -left-24 -top-24 h-64 w-64 rounded-full bg-fuchsia-500 blur-3xl" />
           <div className="absolute right-0 top-10 h-64 w-64 rounded-full bg-indigo-500 blur-3xl" />
           <div className="absolute bottom-0 left-1/2 h-56 w-56 -translate-x-1/2 rounded-full bg-cyan-400 blur-3xl" />
         </div>
 
-        <div className="relative">
+        <div className="relative pr-11">
           <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-bold ring-1 ring-white/20 backdrop-blur">
             <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
             Avaliação institucional
@@ -572,9 +595,19 @@ export default function ModalAvaliacaoFormulario({
             </span>
           </div>
         </div>
-      </div>
 
-      <div className="max-h-[75vh] overflow-y-auto bg-slate-50 px-4 pb-28 pt-4 dark:bg-zinc-950 sm:px-6">
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={enviando}
+          className="absolute right-3 top-3 z-20 grid h-10 w-10 place-items-center rounded-full bg-white/15 text-white ring-1 ring-white/25 transition hover:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:cursor-not-allowed disabled:opacity-50"
+          aria-label="Fechar avaliação"
+        >
+          <X className="h-5 w-5" aria-hidden="true" />
+        </button>
+      </header>
+
+      <div className="row-start-2 min-h-0 overflow-y-auto bg-slate-50 px-4 py-4 dark:bg-zinc-950 sm:px-6">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <MiniCard icon={Gauge} title="Progresso" tone="violet">
             <div className="mb-2 text-sm text-slate-600 dark:text-zinc-300">
@@ -592,7 +625,9 @@ export default function ModalAvaliacaoFormulario({
 
           <MiniCard icon={Sparkles} title="Média prévia" tone="violet">
             <div className="text-2xl font-black text-slate-950 dark:text-white">
-              {mediaPrevia != null ? `${mediaPrevia.toFixed(2)} / 10` : "— / 10"}
+              {mediaPrevia != null
+                ? `${mediaPrevia.toFixed(2)} / 10`
+                : "— / 10"}
             </div>
 
             <div className="text-xs text-slate-600 dark:text-zinc-300">
@@ -722,59 +757,64 @@ export default function ModalAvaliacaoFormulario({
         </section>
       </div>
 
-      <div className="sticky bottom-0 left-0 right-0 flex flex-col gap-2 border-t border-slate-200 bg-white/90 px-4 py-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/90 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-        <p className="text-xs font-semibold text-slate-500 dark:text-zinc-400">
-          Campos obrigatórios: {preenchidosObrigatorios}/{totalObrigatorios}.
-        </p>
+      <footer className="row-start-3 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/95 sm:px-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs font-semibold text-slate-500 dark:text-zinc-400">
+            Campos obrigatórios: {preenchidosObrigatorios}/{totalObrigatorios}.
+          </p>
 
-        <div className="flex items-center justify-end gap-2">
-          <Botao
-            type="button"
-            variant="secondary"
-            onClick={onClose}
-            disabled={enviando}
-          >
-            Cancelar
-          </Botao>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+            <Botao
+              type="button"
+              variant="contorno"
+              onClick={onClose}
+              disabled={enviando}
+            >
+              Cancelar
+            </Botao>
 
-          <Botao
-            type="button"
-            variant="secondary"
-            onClick={() => {
-              setNotas({});
-              setTextos({
-                gostou_mais: "",
-                sugestoes_melhoria: "",
-                comentarios_finais: "",
-              });
-              setTentouEnviar(false);
-              setMsgA11y("Formulário limpo.");
-            }}
-            disabled={enviando}
-          >
-            <span className="inline-flex items-center gap-2">
-              <Eraser className="h-4 w-4" aria-hidden="true" />
-              Limpar
-            </span>
-          </Botao>
+            <Botao
+              type="button"
+              variant="contorno"
+              onClick={() => {
+                setNotas({});
+                setTextos({
+                  gostou_mais: "",
+                  sugestoes_melhoria: "",
+                  comentarios_finais: "",
+                });
+                setTentouEnviar(false);
+                setMsgA11y("Formulário limpo.");
+              }}
+              disabled={enviando}
+            >
+              <span className="inline-flex items-center gap-2">
+                <Eraser className="h-4 w-4" aria-hidden="true" />
+                Limpar
+              </span>
+            </Botao>
 
-          <Botao
-            type="button"
-            variant="primary"
-            onClick={enviarAvaliacao}
-            disabled={enviando}
-          >
-            <span className="inline-flex items-center gap-2">
-              {enviando ? (
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              ) : (
-                <SendHorizontal className="h-4 w-4" aria-hidden="true" />
-              )}
-              {enviando ? "Enviando..." : "Enviar avaliação"}
-            </span>
-          </Botao>
+            <Botao
+              type="button"
+              variant="sucesso"
+              onClick={enviarAvaliacao}
+              disabled={enviando}
+            >
+              <span className="inline-flex items-center gap-2">
+                {enviando ? (
+                  <Loader2
+                    className="h-4 w-4 animate-spin"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <SendHorizontal className="h-4 w-4" aria-hidden="true" />
+                )}
+                {enviando ? "Enviando..." : "Enviar avaliação"}
+              </span>
+            </Botao>
+          </div>
         </div>
-      </div>
+      </footer>
     </Modal>
   );
 }

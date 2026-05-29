@@ -1,9 +1,10 @@
-// ✅ src/components/ui/Modal.jsx — v2.0
+// ✅ frontend/src/components/ui/Modal.jsx — v2.2
+// Atualizado em: 29/05/2026
 // Plataforma Escola da Saúde
 //
 // Motor global oficial de modal.
 //
-// Revisão premium:
+// Revisão premium v2.2:
 // - componente genérico real de UI;
 // - portal em #modal-root;
 // - stack-safe para múltiplos modais;
@@ -15,6 +16,10 @@
 // - mobile-first com fullscreen opcional;
 // - reduced motion;
 // - dark mode;
+// - subcomponentes oficiais Modal.Header, Modal.Body e Modal.Footer;
+// - suporte real a cabeçalho fixo, corpo rolável e rodapé separado;
+// - quando scroll="content", NÃO envolve children em wrapper interno;
+// - evita rodapé cobrindo conteúdo ou competindo com o corpo do modal;
 // - sem logs em produção;
 // - sem dependência de hacks por domínio.
 
@@ -140,7 +145,9 @@ function lockBodyScroll() {
     body.style.overflow = "hidden";
 
     if (scrollbarWidth > 0) {
-      body.style.paddingRight = `calc(${body.style.paddingRight || "0px"} + ${scrollbarWidth}px)`;
+      body.style.paddingRight = `calc(${
+        body.style.paddingRight || "0px"
+      } + ${scrollbarWidth}px)`;
     }
   }
 
@@ -181,6 +188,7 @@ function hideAppRoots() {
   getAppRootsToHide().forEach((element) => {
     if (element.dataset.__modal_prev_aria_hidden__ == null) {
       const previous = element.getAttribute("aria-hidden");
+
       element.dataset.__modal_prev_aria_hidden__ =
         previous == null ? "__null__" : previous;
     }
@@ -262,6 +270,44 @@ function mapMaxWidthToSize(maxWidth) {
   if (value.includes("max-w-7xl")) return "full";
 
   return null;
+}
+
+/* ─────────────────────────────────────────────
+ * Subcomponentes oficiais
+ * ───────────────────────────────────────────── */
+
+function ModalHeader({ children, className = "" }) {
+  return (
+    <div className={classNames("relative z-10 shrink-0", className)}>
+      {children}
+    </div>
+  );
+}
+
+function ModalBody({ children, className = "" }) {
+  return (
+    <div
+      className={classNames(
+        "relative z-10 min-h-0 flex-1 overflow-y-auto overscroll-contain",
+        className
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+function ModalFooter({ children, className = "" }) {
+  return (
+    <div
+      className={classNames(
+        "relative z-10 shrink-0 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 sm:px-6",
+        className
+      )}
+    >
+      {children}
+    </div>
+  );
 }
 
 const Modal = forwardRef(function Modal(
@@ -588,13 +634,23 @@ const Modal = forwardRef(function Modal(
   const panelSize = mobileFullScreen
     ? classNames(
         "h-[100dvh] max-h-[100dvh] w-screen max-w-[100vw]",
-        "sm:h-auto sm:max-h-[min(92vh,860px)]",
+        scroll === "content"
+          ? "sm:h-[min(92vh,860px)] sm:max-h-[min(92vh,860px)]"
+          : "sm:h-auto sm:max-h-[min(92vh,860px)]",
         panelSizeClass
       )
-    : classNames(panelSizeClass, "max-h-[min(92vh,860px)]");
+    : classNames(
+        panelSizeClass,
+        scroll === "content"
+          ? "h-[min(92vh,860px)] max-h-[min(92vh,860px)]"
+          : "max-h-[min(92vh,860px)]"
+      );
 
-  const panelOverflow = scroll === "content" ? "overflow-hidden" : "overflow-auto";
+  const panelOverflow = "overflow-hidden";
   const panelPadding = padding ? "p-5 sm:p-6" : "";
+
+  const childrenWrapperClass =
+    "relative z-10 min-h-0 flex-1 overflow-y-auto";
 
   const modal = (
     <AnimatePresence>
@@ -637,7 +693,7 @@ const Modal = forwardRef(function Modal(
           aria-describedby={describedBy}
           aria-label={ariaLabelFinal}
           className={classNames(
-            "relative min-h-0 outline-none",
+            "relative flex min-h-0 flex-col outline-none",
             panelRadius,
             "border border-slate-200/80 bg-white text-slate-950 shadow-[0_28px_90px_-54px_rgba(0,0,0,0.85)]",
             "dark:border-slate-800 dark:bg-slate-950 dark:text-white",
@@ -651,8 +707,15 @@ const Modal = forwardRef(function Modal(
           )}
           onPointerDown={(event) => event.stopPropagation()}
         >
-          <div className="pointer-events-none absolute -right-28 -top-28 h-72 w-72 rounded-full bg-emerald-400/10 blur-3xl" />
-          <div className="pointer-events-none absolute -bottom-28 -left-28 h-72 w-72 rounded-full bg-fuchsia-400/10 blur-3xl" />
+          <div
+            className="pointer-events-none absolute -right-28 -top-28 h-72 w-72 rounded-full bg-emerald-400/10 blur-3xl"
+            aria-hidden="true"
+          />
+
+          <div
+            className="pointer-events-none absolute -bottom-28 -left-28 h-72 w-72 rounded-full bg-fuchsia-400/10 blur-3xl"
+            aria-hidden="true"
+          />
 
           {showCloseButton && (
             <button
@@ -673,7 +736,11 @@ const Modal = forwardRef(function Modal(
             </button>
           )}
 
-          <div className="relative min-h-0">{children}</div>
+          {scroll === "content" ? (
+            children
+          ) : (
+            <div className={childrenWrapperClass}>{children}</div>
+          )}
         </motion.div>
 
         <span
@@ -725,5 +792,24 @@ Modal.propTypes = {
   mobileFullScreen: PropTypes.bool,
   maxWidth: PropTypes.string,
 };
+
+ModalHeader.propTypes = {
+  children: PropTypes.node.isRequired,
+  className: PropTypes.string,
+};
+
+ModalBody.propTypes = {
+  children: PropTypes.node.isRequired,
+  className: PropTypes.string,
+};
+
+ModalFooter.propTypes = {
+  children: PropTypes.node.isRequired,
+  className: PropTypes.string,
+};
+
+Modal.Header = ModalHeader;
+Modal.Body = ModalBody;
+Modal.Footer = ModalFooter;
 
 export default Modal;
