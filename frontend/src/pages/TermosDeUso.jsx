@@ -223,6 +223,63 @@ function assinaturaId(assinatura) {
   return assinatura.id || assinatura.assinatura_id || null;
 }
 
+function getNomeAssinante(assinatura) {
+  if (!assinatura || typeof assinatura === "string") return "";
+
+  return (
+    assinatura.nome_usuario ||
+    assinatura.usuario_nome ||
+    assinatura.nome_completo ||
+    assinatura.nome_assinante ||
+    assinatura.nome ||
+    ""
+  );
+}
+
+function getDataAssinatura(assinatura) {
+  if (!assinatura || typeof assinatura === "string") return "";
+
+  return (
+    assinatura.assinado_em ||
+    assinatura.atualizado_em ||
+    assinatura.criado_em ||
+    assinatura.data_assinatura ||
+    assinatura.created_at ||
+    ""
+  );
+}
+
+function getNomeUsuarioLocal() {
+  try {
+    const raw = localStorage.getItem("usuario");
+    const usuario = raw ? JSON.parse(raw) : null;
+
+    return (
+      usuario?.nome_completo ||
+      usuario?.nome ||
+      usuario?.usuario_nome ||
+      usuario?.name ||
+      ""
+    );
+  } catch {
+    return "";
+  }
+}
+
+function textoDocumentoAssinado(nome, dataHora) {
+  const nomeSeguro = String(nome || getNomeUsuarioLocal() || "")
+    .trim()
+    .toUpperCase();
+
+  const dataSegura = brDateTime(dataHora || new Date().toISOString());
+
+  if (!nomeSeguro) {
+    return `DOCUMENTO ASSINADO DIGITALMENTE EM ${dataSegura}.`;
+  }
+
+  return `DOCUMENTO ASSINADO DIGITALMENTE POR ${nomeSeguro}, EM ${dataSegura}.`;
+}
+
 /* =========================================================================
    Componentes locais
 =========================================================================== */
@@ -688,44 +745,53 @@ function ModalTermoUso({
           </div>
 
           {assinaturaDisponivel ? (
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900/40 dark:bg-emerald-950/15">
-              <div className="flex items-start gap-3">
-                <FileSignature className="mt-0.5 h-5 w-5 text-emerald-600 dark:text-emerald-300" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-black text-emerald-900 dark:text-emerald-100">
-                    Assinatura cadastrada encontrada
-                  </p>
-                  <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-100/85">
-                    Esta assinatura será utilizada para o aceite digital do termo.
-                  </p>
+  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900/40 dark:bg-emerald-950/15">
+    <div className="flex items-start gap-3">
+      <FileSignature className="mt-0.5 h-5 w-5 text-emerald-600 dark:text-emerald-300" />
 
-                  {assinaturaNome ? (
-                    <p className="mt-2 text-xs text-emerald-900 dark:text-emerald-100">
-                      <span className="font-semibold">Assinante:</span>{" "}
-                      {assinaturaNome}
-                    </p>
-                  ) : null}
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-black text-emerald-900 dark:text-emerald-100">
+          Assinatura cadastrada encontrada
+        </p>
 
-                  {assinaturaEm ? (
-                    <p className="mt-1 text-xs text-emerald-900 dark:text-emerald-100">
-                      <span className="font-semibold">Último registro:</span>{" "}
-                      {brDateTime(assinaturaEm)}
-                    </p>
-                  ) : null}
+        <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-100/85">
+          Esta assinatura real será utilizada para o aceite digital do termo.
+        </p>
 
-                  {assinaturaPreview ? (
-                    <div className="mt-3 inline-block rounded-xl border border-emerald-200 bg-white p-3">
-                      <img
-                        src={assinaturaPreview}
-                        alt="Pré-visualização da assinatura"
-                        className="h-20 w-auto object-contain"
-                      />
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-          ) : null}
+        {assinaturaPreview ? (
+          <div className="mt-3 inline-block rounded-xl border border-emerald-200 bg-white p-3">
+            <img
+              src={assinaturaPreview}
+              alt="Pré-visualização da assinatura digital cadastrada"
+              className="h-20 w-auto object-contain"
+            />
+          </div>
+        ) : null}
+
+        <p className="mt-3 rounded-xl bg-white/80 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-emerald-950 ring-1 ring-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-50 dark:ring-emerald-800/60">
+          {textoDocumentoAssinado(assinaturaNome, assinaturaEm)}
+        </p>
+      </div>
+    </div>
+  </div>
+) : (
+  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/40 dark:bg-amber-950/15">
+    <div className="flex items-start gap-3">
+      <AlertTriangle className="mt-0.5 h-5 w-5 text-amber-600 dark:text-amber-300" />
+
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-black text-amber-950 dark:text-amber-100">
+          Nenhuma assinatura cadastrada
+        </p>
+
+        <p className="mt-1 text-xs leading-5 text-amber-900 dark:text-amber-100/85">
+          Para assinar este termo, é necessário cadastrar uma assinatura digital
+          real. O sistema não criará assinatura automática com nome e sobrenome.
+        </p>
+      </div>
+    </div>
+  </div>
+)}
         </article>
       </div>
 
@@ -750,14 +816,26 @@ function ModalTermoUso({
           </button>
 
           <button
-            type="button"
-            onClick={onAssinarTermo}
-            disabled={loading}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-2 font-black text-white transition hover:bg-sky-700 disabled:opacity-60"
-          >
-            <FileSignature className="h-4 w-4" />
-            Concordar e assinar
-          </button>
+  type="button"
+  onClick={onAssinarTermo}
+  disabled={loading}
+  className={cx(
+    "inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 font-black text-white transition disabled:opacity-60",
+    assinaturaDisponivel
+      ? "bg-sky-600 hover:bg-sky-700"
+      : "bg-amber-600 hover:bg-amber-700"
+  )}
+>
+  {loading ? (
+    <Loader2 className="h-4 w-4 animate-spin" />
+  ) : assinaturaDisponivel ? (
+    <FileSignature className="h-4 w-4" />
+  ) : (
+    <PenTool className="h-4 w-4" />
+  )}
+
+  {assinaturaDisponivel ? "Concordar e assinar" : "Criar assinatura"}
+</button>
         </div>
       </footer>
     </Modal>
@@ -1114,25 +1192,38 @@ export default function ModalSolicitarReserva({
     }
   }
 
-  function handleAssinarTermo() {
-    if (assinaturaPreview) {
-      const agora = new Date().toISOString();
+ function handleAssinarTermo() {
+  if (loading || loadingAssinatura) return;
 
-      setTermoAceito(true);
-      setTermoAssinadoEm(agora);
-      setTermoModalOpen(false);
-
-      showMessage({
-        type: "success",
-        title: "Termo assinado",
-        message:
-          "Termo assinado com a assinatura já cadastrada. A solicitação já pode ser enviada.",
-      });
-      return;
-    }
-
+  if (!assinaturaSalva || !assinaturaPreview) {
+    setTermoAceito(false);
+    setTermoAssinadoEm("");
+    setTermoModalOpen(false);
     setAssinaturaModalOpen(true);
+
+    showMessage({
+      type: "warning",
+      title: "Assinatura necessária",
+      message:
+        "Cadastre sua assinatura digital real antes de concordar com o termo. O sistema não criará assinatura automática.",
+    });
+
+    return;
   }
+
+  const agora = new Date().toISOString();
+
+  setTermoAceito(true);
+  setTermoAssinadoEm(agora);
+  setTermoModalOpen(false);
+
+  showMessage({
+    type: "success",
+    title: "Termo assinado",
+    message:
+      "Termo assinado digitalmente com a assinatura cadastrada. A solicitação já pode ser enviada.",
+  });
+}
 
   function validarFormulario() {
     const qtd = Number(qtdPessoas);
@@ -1222,7 +1313,7 @@ export default function ModalSolicitarReserva({
           finalidade: finalidade.trim(),
         };
 
-        await api.put(`/salas/minhas/${reservaAtual.id}`, payload);
+        await api.put(`/sala/minhas/${reservaAtual.id}`, payload);
 
         showMessage({
           type: "success",
@@ -1471,10 +1562,10 @@ export default function ModalSolicitarReserva({
                     </div>
 
                     {termoAceito && termoAssinadoEm ? (
-                      <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">
-                        Assinado digitalmente em {brDateTime(termoAssinadoEm)}.
-                      </p>
-                    ) : null}
+  <p className="mt-2 text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400">
+    {textoDocumentoAssinado(getNomeAssinante(assinaturaSalva), termoAssinadoEm)}
+  </p>
+) : null}
                   </div>
 
                   <button
@@ -1498,6 +1589,11 @@ export default function ModalSolicitarReserva({
                       alt="Assinatura digital cadastrada"
                       className="h-20 w-auto object-contain"
                     />
+                    {termoAceito && termoAssinadoEm ? (
+  <p className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-slate-700 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700">
+    {textoDocumentoAssinado(getNomeAssinante(assinaturaSalva), termoAssinadoEm)}
+  </p>
+) : null}
                   </div>
                 ) : null}
               </div>
@@ -1553,13 +1649,8 @@ export default function ModalSolicitarReserva({
         dataISO={dataISO}
         assinaturaDisponivel={Boolean(assinaturaPreview)}
         assinaturaPreview={assinaturaPreview}
-        assinaturaNome={
-          assinaturaSalva?.nome_assinante ||
-          assinaturaSalva?.nome ||
-          assinaturaSalva?.usuario_nome ||
-          ""
-        }
-        assinaturaEm={termoAssinadoEm || ""}
+        assinaturaNome={getNomeAssinante(assinaturaSalva) || getNomeUsuarioLocal()}
+        assinaturaEm={termoAssinadoEm || getDataAssinatura(assinaturaSalva)}
         onAssinarTermo={handleAssinarTermo}
         loading={loadingAssinatura}
       />

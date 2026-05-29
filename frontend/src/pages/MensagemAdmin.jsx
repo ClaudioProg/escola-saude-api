@@ -1,6 +1,6 @@
 /**
- * ✅ frontend/src/pages/MensagemAdmin.jsx — v2.0
- * Atualizado em: 19/05/2026
+ * ✅ frontend/src/pages/MensagemAdmin.jsx — v2.1
+ * Atualizado em: 29/05/2026
  * Plataforma Escola da Saúde
  *
  * Página administrativa da Caixa de Mensagens Institucional.
@@ -51,7 +51,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
-  Archive,
   BarChart3,
   CheckCircle2,
   ChevronLeft,
@@ -67,7 +66,6 @@ import {
   Save,
   Search,
   Send,
-  ShieldCheck,
   Sparkles,
   Tag,
   UserRound,
@@ -78,6 +76,8 @@ import {
 import api from "../services/api";
 import Botao from "../components/ui/Botao";
 import Modal from "../components/ui/Modal";
+import HeaderHero from "../components/layout/HeaderHero";
+import Footer from "../components/layout/Footer";
 import CarregandoSkeleton from "../components/ui/CarregandoSkeleton";
 import ErroCarregamento from "../components/ui/ErroCarregamento";
 import NadaEncontrado from "../components/ui/NadaEncontrado";
@@ -397,6 +397,40 @@ function RespostaItem({ resposta }) {
   );
 }
 
+function BarraAcoesPagina({ atualizando, onAtualizar }) {
+  return (
+    <section
+      aria-label="Ações da caixa de mensagens administrativa"
+      className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950"
+    >
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-sm font-black text-slate-950 dark:text-white">
+            Atendimento institucional
+          </p>
+
+          <p className="mt-1 text-xs font-medium text-slate-500 dark:text-slate-400">
+            Acompanhe, responda, priorize e encerre conversas com rastreabilidade.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={onAtualizar}
+          disabled={atualizando}
+          className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-slate-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
+        >
+          <RefreshCw
+            className={cx("h-4 w-4", atualizando && "animate-spin")}
+            aria-hidden="true"
+          />
+          {atualizando ? "Atualizando..." : "Atualizar"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 export default function MensagemAdmin() {
   const [conversas, setConversas] = useState([]);
   const [resumo, setResumo] = useState(null);
@@ -447,7 +481,7 @@ export default function MensagemAdmin() {
     : false;
 
   const carregarResumo = useCallback(async () => {
-    const respostaApi = await api.mensagem.adminResumo();
+    const respostaApi = await api.mensagem.resumoAdmin();
     setResumo(respostaApi?.data || null);
   }, []);
 
@@ -466,7 +500,7 @@ export default function MensagemAdmin() {
           Object.entries(filtros).filter(([, valor]) => valor !== "" && valor !== null)
         );
 
-        const respostaApi = await api.mensagem.adminListar(params);
+        const respostaApi = await api.mensagem.listarAdmin(params);
 
         setConversas(Array.isArray(respostaApi?.data) ? respostaApi.data : []);
         setMeta({
@@ -538,7 +572,7 @@ export default function MensagemAdmin() {
       setVisivelUsuario(true);
       preencherEdicao(conversa);
 
-      const respostaApi = await api.mensagem.obterPorId(conversa.id);
+      const respostaApi = await api.mensagem.obterAdmin(conversa.id);
       const dados = respostaApi?.data || null;
 
       setDetalhe(dados);
@@ -562,7 +596,7 @@ export default function MensagemAdmin() {
     if (!detalhe?.conversa?.id && !conversaSelecionada?.id) return;
 
     const id = detalhe?.conversa?.id || conversaSelecionada?.id;
-    const respostaApi = await api.mensagem.obterPorId(id);
+    const respostaApi = await api.mensagem.obterAdmin(id);
     const dados = respostaApi?.data || null;
 
     setDetalhe(dados);
@@ -593,10 +627,10 @@ export default function MensagemAdmin() {
     try {
       setEnviandoResposta(true);
 
-      const respostaApi = await api.mensagem.responder(detalhe.conversa.id, {
-        mensagem: resposta.trim(),
-        visivel_usuario: visivelUsuario,
-      });
+      const respostaApi = await api.mensagem.responderAdmin(detalhe.conversa.id, {
+  mensagem: resposta.trim(),
+  visivel_usuario: visivelUsuario,
+});
 
       notifySuccess(respostaApi?.message || "Resposta enviada com sucesso.");
 
@@ -654,22 +688,20 @@ export default function MensagemAdmin() {
     try {
       setSalvandoEdicao(true);
 
-      const payload = {
-        status: editando.status,
-        prioridade: editando.prioridade,
-        atribuido_para: editando.atribuido_para
-          ? Number(editando.atribuido_para)
-          : null,
-        motivo_encerramento: STATUS_FINAIS.has(editando.status)
-          ? editando.motivo_encerramento.trim()
-          : null,
-      };
+      let respostaApi = null;
 
-      const respostaApi = await api.mensagem.adminAtualizar(
-        detalhe.conversa.id,
-        payload
-      );
+respostaApi = await api.mensagem.alterarStatus(detalhe.conversa.id, {
+  status: editando.status,
+  prioridade: editando.prioridade,
+  motivo_encerramento: STATUS_FINAIS.has(editando.status)
+    ? editando.motivo_encerramento.trim()
+    : null,
+});
 
+await api.mensagem.atribuir(
+  detalhe.conversa.id,
+  editando.atribuido_para ? Number(editando.atribuido_para) : null
+);
       notifySuccess(respostaApi?.message || "Conversa atualizada com sucesso.");
 
       await recarregarDetalhe();
@@ -689,68 +721,75 @@ export default function MensagemAdmin() {
   const paginaAtual = Number(meta.pagina || filtros.pagina || 1);
   const totalPaginas = Math.max(Number(meta.total_paginas || 1), 1);
 
-  if (carregando) {
-    return (
-      <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+if (carregando) {
+  return (
+    <main className="flex min-h-screen flex-col overflow-x-hidden bg-gradient-to-b from-slate-50 via-white to-white text-slate-950 dark:from-slate-950 dark:via-slate-950 dark:to-black dark:text-white">
+      <div className="mx-auto w-full max-w-7xl px-4 pt-4 sm:px-6 lg:px-8">
+        <HeaderHero
+          titulo="Caixa de Mensagens Administrativa"
+          subtitulo="Acompanhe dúvidas, sugestões e problemas enviados pelos usuários."
+          icone={MessageCircle}
+          tamanho="md"
+          raio="xl"
+        />
+      </div>
+
+      <section className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 lg:px-8">
         <CarregandoSkeleton
           linhas={8}
           titulo="Carregando caixa de mensagens administrativa"
           subtitulo="Buscando conversas, pendências e resumo institucional."
         />
-      </main>
-    );
-  }
+      </section>
+
+      <Footer />
+    </main>
+  );
+}
 
   if (erro) {
-    return (
-      <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+  return (
+    <main className="flex min-h-screen flex-col overflow-x-hidden bg-gradient-to-b from-slate-50 via-white to-white text-slate-950 dark:from-slate-950 dark:via-slate-950 dark:to-black dark:text-white">
+      <div className="mx-auto w-full max-w-7xl px-4 pt-4 sm:px-6 lg:px-8">
+        <HeaderHero
+          titulo="Caixa de Mensagens Administrativa"
+          subtitulo="Acompanhe dúvidas, sugestões e problemas enviados pelos usuários."
+          icone={MessageCircle}
+          tamanho="md"
+          raio="xl"
+        />
+      </div>
+
+      <section className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 lg:px-8">
         <ErroCarregamento
           titulo="Não foi possível carregar a caixa de mensagens"
           mensagem={erro}
           onTentarNovamente={() => carregarConversas()}
         />
-      </main>
-    );
-  }
+      </section>
 
-  return (
-    <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-      <header className="relative overflow-hidden rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950 sm:p-6">
-        <div className="absolute right-0 top-0 h-40 w-40 rounded-full bg-blue-100 blur-3xl dark:bg-blue-950/50" />
-        <div className="absolute bottom-0 left-1/4 h-32 w-32 rounded-full bg-emerald-100 blur-3xl dark:bg-emerald-950/40" />
+      <Footer />
+    </main>
+  );
+}
 
-        <div className="relative flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-          <div className="max-w-3xl">
-            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-black uppercase tracking-wide text-blue-700 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-200">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              Mensagens Institucionais
-            </div>
+ return (
+  <main className="flex min-h-screen flex-col overflow-x-hidden bg-gradient-to-b from-slate-50 via-white to-white text-slate-950 dark:from-slate-950 dark:via-slate-950 dark:to-black dark:text-white">
+    <div className="mx-auto w-full max-w-7xl px-4 pt-4 sm:px-6 lg:px-8">
+      <HeaderHero
+        titulo="Caixa de Mensagens Administrativa"
+        subtitulo="Acompanhe dúvidas, sugestões e problemas enviados pelos usuários. Responda, registre observações internas, priorize atendimentos e encerre conversas com rastreabilidade."
+        icone={MessageCircle}
+        tamanho="md"
+        raio="xl"
+      />
+    </div>
 
-            <h1 className="text-2xl font-black tracking-tight text-slate-950 dark:text-white sm:text-3xl">
-              Caixa de Mensagens Administrativa
-            </h1>
-
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300">
-              Acompanhe dúvidas, sugestões e problemas enviados pelos usuários.
-              Responda, registre observações internas, priorize atendimentos e encerre
-              conversas com rastreabilidade.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => carregarConversas({ silencioso: true })}
-            disabled={atualizando}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-slate-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
-          >
-            <RefreshCw
-              className={cx("h-4 w-4", atualizando && "animate-spin")}
-              aria-hidden="true"
-            />
-            Atualizar
-          </button>
-        </div>
-      </header>
+    <section className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 lg:px-8">
+      <BarraAcoesPagina
+        atualizando={atualizando}
+        onAtualizar={() => carregarConversas({ silencioso: true })}
+      />
 
       <section className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <CardResumo
@@ -1431,6 +1470,9 @@ export default function MensagemAdmin() {
           />
         )}
       </Modal>
-    </main>
-  );
+    </section>
+
+    <Footer />
+  </main>
+);
 }

@@ -1,35 +1,21 @@
 "use strict";
 
 /**
- * ✅ backend/src/routes/mensagemRoute.js — v2.0
- * Atualizado em: 19/05/2026
+ * ✅ backend/src/routes/mensagemRoute.js — v2.1
+ * Atualizado em: 29/05/2026
  * Plataforma Escola da Saúde
  *
  * Rotas oficiais da Caixa de Mensagens Institucional.
  *
- * Mount oficial futuro:
+ * Mount oficial:
  * - /api/mensagem
  *
- * Responsabilidades:
- * - Expor rotas de mensagens do usuário.
- * - Expor rotas administrativas da caixa de mensagens.
- * - Permitir consulta e resposta em conversas institucionais.
- *
- * Contratos aplicados:
- * - Controller oficial: mensagemController
- * - Tabelas oficiais:
- *   - mensagem_conversas
- *   - mensagem_respostas
- * - Perfis oficiais:
- *   - usuario
- *   - organizador
- *   - administrador
- * - Sem aliases
- * - Sem legado
- * - Sem rotas paralelas
- *
- * Observação:
- * - O mount em backend/src/routes/index.js será feito no fechamento consolidado.
+ * Regra estrutural:
+ * - rotas fixas/específicas sempre antes de rotas dinâmicas;
+ * - /admin precisa vir antes de /:id;
+ * - sem aliases;
+ * - sem legado;
+ * - sem rotas paralelas.
  */
 
 const express = require("express");
@@ -48,67 +34,10 @@ const router = express.Router();
 router.use(authMiddleware);
 
 /* ─────────────────────────────────────────────────────────────
- * Usuário autenticado
- * ───────────────────────────────────────────────────────────── */
-
-/**
- * POST /api/mensagem
- *
- * Abre uma nova conversa institucional.
- *
- * Body oficial:
- * {
- *   "assunto": "Dúvida sobre certificado",
- *   "categoria": "certificado",
- *   "prioridade": "normal",
- *   "mensagem": "Texto da dúvida ou solicitação."
- * }
- */
-router.post("/", mensagemController.abrirConversa);
-
-/**
- * GET /api/mensagem/minhas
- *
- * Lista as conversas do próprio usuário autenticado.
- *
- * Query params opcionais:
- * - status
- * - categoria
- * - pagina
- * - limite
- */
-router.get("/minhas", mensagemController.listarMinhasConversas);
-
-/**
- * GET /api/mensagem/:id
- *
- * Consulta uma conversa específica.
- *
- * Regras:
- * - usuário comum só acessa a própria conversa;
- * - administrador acessa qualquer conversa.
- */
-router.get("/:id", mensagemController.obterConversa);
-
-/**
- * POST /api/mensagem/:id/resposta
- *
- * Responde uma conversa.
- *
- * Body oficial:
- * {
- *   "mensagem": "Texto da resposta.",
- *   "visivel_usuario": true
- * }
- *
- * Observação:
- * - visivel_usuario só é respeitado para administrador.
- * - usuário comum sempre envia resposta visível.
- */
-router.post("/:id/resposta", mensagemController.responderConversa);
-
-/* ─────────────────────────────────────────────────────────────
  * Administração
+ * IMPORTANTE:
+ * Estas rotas precisam vir antes de /:id.
+ * Caso contrário, "admin" será interpretado como id de conversa.
  * ───────────────────────────────────────────────────────────── */
 
 /**
@@ -155,5 +84,51 @@ router.get("/admin", mensagemController.listarConversasAdmin);
  * }
  */
 router.patch("/admin/:id", mensagemController.atualizarConversaAdmin);
+
+/* ─────────────────────────────────────────────────────────────
+ * Usuário autenticado
+ * ───────────────────────────────────────────────────────────── */
+
+/**
+ * POST /api/mensagem
+ *
+ * Abre uma nova conversa institucional.
+ */
+router.post("/", mensagemController.abrirConversa);
+
+/**
+ * GET /api/mensagem/minhas
+ *
+ * Lista as conversas do próprio usuário autenticado.
+ */
+router.get("/minhas", mensagemController.listarMinhasConversas);
+
+/**
+ * GET /api/mensagem/:id
+ *
+ * Consulta uma conversa específica.
+ *
+ * Regras:
+ * - usuário comum só acessa a própria conversa;
+ * - administrador acessa qualquer conversa.
+ */
+router.get("/:id", mensagemController.obterConversa);
+
+/**
+ * POST /api/mensagem/:id/resposta
+ *
+ * Responde uma conversa.
+ *
+ * Body oficial:
+ * {
+ *   "mensagem": "Texto da resposta.",
+ *   "visivel_usuario": true
+ * }
+ *
+ * Observação:
+ * - visivel_usuario só é respeitado para administrador.
+ * - usuário comum sempre envia resposta visível.
+ */
+router.post("/:id/resposta", mensagemController.responderConversa);
 
 module.exports = router;

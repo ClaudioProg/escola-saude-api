@@ -1,7 +1,7 @@
 // 📁 src/pages/GestaoInformacoes.jsx
-// Atualizado em: 15/05/2026
+// Atualizado em: 29/05/2026
 //
-// Plataforma Escola da Saúde — v2.0
+// Plataforma Escola da Saúde — v2.1
 //
 // Página:
 // - Gestão administrativa de informações institucionais/publicações.
@@ -71,6 +71,7 @@ import {
 
 import api from "../services/api";
 import Footer from "../components/layout/Footer";
+import HeaderHero from "../components/layout/HeaderHero";
 import Modal from "../components/ui/Modal";
 import NadaEncontrado from "../components/ui/NadaEncontrado";
 
@@ -365,79 +366,45 @@ function StatPill({ icon: Icon, label, value, tone = "zinc" }) {
   );
 }
 
-function HeaderHero({ onCriar, onAtualizar, loading, hint }) {
+function BarraAcoesPagina({ onCriar, onAtualizar, loading, hint }) {
   return (
-    <header className="relative isolate overflow-hidden text-white" role="banner">
-      <div
-        className="absolute inset-0 bg-gradient-to-br from-slate-950 via-fuchsia-800 to-rose-700"
-        aria-hidden="true"
-      />
-      <div
-        className="absolute -left-28 -top-28 h-96 w-96 rounded-full bg-white/10 blur-3xl"
-        aria-hidden="true"
-      />
-      <div
-        className="absolute -bottom-28 -right-28 h-96 w-96 rounded-full bg-pink-300/20 blur-3xl"
-        aria-hidden="true"
-      />
-      <div
-        className="absolute inset-0 opacity-[0.10] bg-[radial-gradient(circle_at_1px_1px,rgba(255,255,255,0.6)_1px,transparent_0)] [background-size:18px_18px]"
-        aria-hidden="true"
-      />
-
-      <a
-        href="#conteudo"
-        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-xl focus:bg-white/20 focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-white focus:shadow"
-      >
-        Ir para o conteúdo
-      </a>
-
-      <div className="relative z-10 mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-9 md:py-11">
-        <div className="flex flex-col items-center gap-3 text-center">
-          <div className="inline-flex items-center justify-center gap-2 text-white">
-            <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-white/15 backdrop-blur">
-              <Megaphone className="h-6 w-6" aria-hidden="true" />
-            </span>
-
-            <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">
-              Gestão de Informações
-            </h1>
-          </div>
-
-          <p className="max-w-2xl text-sm leading-relaxed text-white/90 sm:text-base">
-            Crie comunicados, campanhas e destaques institucionais com período de publicação, imagem e conteúdo rico.
+    <section
+      aria-label="Ações da gestão de informações"
+      className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+    >
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-sm font-black text-slate-900 dark:text-white">
+            Publicações institucionais
           </p>
 
-          <div className="text-[12px] text-white/80 sm:text-xs">{hint}</div>
+          <p className="mt-1 text-xs font-medium text-slate-500 dark:text-zinc-400">
+            {hint}
+          </p>
+        </div>
 
-          <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-            <SoftButton
-              type="button"
-              onClick={onAtualizar}
-              disabled={loading}
-              className="border border-white/20 bg-white/15 text-white backdrop-blur hover:bg-white/20"
-            >
-              <RefreshCcw className={cx("h-4 w-4", loading ? "animate-spin" : "")} />
-              {loading ? "Atualizando..." : "Atualizar"}
-            </SoftButton>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <SoftButton
+            type="button"
+            onClick={onAtualizar}
+            disabled={loading}
+            className="border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900"
+          >
+            <RefreshCcw className={cx("h-4 w-4", loading ? "animate-spin" : "")} />
+            {loading ? "Atualizando..." : "Atualizar"}
+          </SoftButton>
 
-            <SoftButton
-              type="button"
-              onClick={onCriar}
-              className="border border-white/40 bg-white text-zinc-900 shadow-md hover:bg-white/90"
-            >
-              <Plus className="h-4 w-4" />
-              Nova publicação
-            </SoftButton>
-          </div>
+          <SoftButton
+            type="button"
+            onClick={onCriar}
+            className="border border-fuchsia-600 bg-fuchsia-600 text-white shadow-sm hover:bg-fuchsia-700"
+          >
+            <Plus className="h-4 w-4" />
+            Nova publicação
+          </SoftButton>
         </div>
       </div>
-
-      <div
-        className="absolute bottom-0 left-0 right-0 h-px bg-white/25"
-        aria-hidden="true"
-      />
-    </header>
+    </section>
   );
 }
 
@@ -1456,12 +1423,15 @@ export default function GestaoInformacoes() {
     <main className="flex min-h-screen flex-col overflow-x-hidden bg-gradient-to-b from-slate-50 via-white to-white text-slate-950 dark:from-zinc-950 dark:via-zinc-950 dark:to-black dark:text-white">
       <p ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" />
 
-      <HeaderHero
-        onCriar={abrirCriacao}
-        onAtualizar={carregar}
-        loading={loading}
-        hint={hint}
-      />
+      <div className="mx-auto w-full max-w-6xl px-3 pt-4 sm:px-4">
+  <HeaderHero
+    titulo="Gestão de Informações"
+    subtitulo="Crie comunicados, campanhas e destaques institucionais com período de publicação, imagem e conteúdo rico."
+    icone={Megaphone}
+    tamanho="md"
+    raio="xl"
+  />
+</div>
 
       {loading ? (
         <div
@@ -1479,19 +1449,26 @@ export default function GestaoInformacoes() {
       ) : null}
 
       <section id="conteudo" className="mx-auto w-full max-w-6xl flex-1 px-3 py-6 sm:px-4">
-        {mensagem ? (
-          <div className="mb-4">
-            <AlertBox
-              type={mensagem.type}
-              title={mensagem.title}
-              message={mensagem.message}
-              onClose={() => setMensagem(null)}
-            />
-          </div>
-        ) : null}
+  {mensagem ? (
+    <div className="mb-4">
+      <AlertBox
+        type={mensagem.type}
+        title={mensagem.title}
+        message={mensagem.message}
+        onClose={() => setMensagem(null)}
+      />
+    </div>
+  ) : null}
 
-        {!loading ? (
-          <section aria-label="Métricas das publicações" className="mb-4">
+<BarraAcoesPagina
+  onCriar={abrirCriacao}
+  onAtualizar={carregar}
+  loading={loading}
+  hint={hint}
+/>
+
+{!loading ? (
+  <section aria-label="Métricas das publicações" className="mb-4 mt-4">
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-5">
               <StatPill icon={LayoutGrid} label="Total" value={stats.total} tone="zinc" />
               <StatPill icon={Newspaper} label="Ativas" value={stats.ativas} tone="emerald" />

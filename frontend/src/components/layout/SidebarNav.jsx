@@ -5,7 +5,7 @@
 //
 // Menu lateral oficial da aplicação.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -667,10 +667,22 @@ function criarSecoes() {
       perfil: PERFIL.administrador,
       items: [
                 {
-          label: "Agenda de salas",
+          label: "Agenda de salas (ADM)",
           path: ROTA.administradorReserva,
           icon: CalendarDays,
           resumo_chave: "reserva_pendente",
+        },
+                 { label: "Criar Informativos", path: ROTA.gestaoInformacao, icon: Megaphone },
+                         {
+          label: "Certificados avulsos",
+          path: ROTA.certificadoAvulso,
+          icon: FileText,
+        },
+                         {
+          label: "Caixa de mensagens",
+          path: ROTA.administradorMensagem,
+          icon: MessageSquareText,
+          resumo_chave: "mensagem_pendente",
         },
         ],
     },
@@ -683,7 +695,6 @@ function criarSecoes() {
           path: ROTA.administrador,
           icon: LayoutDashboard,
         },
-         { label: "Informações", path: ROTA.gestaoInformacao, icon: Megaphone },
         { label: "Usuários", path: ROTA.gestaoUsuario, icon: Users },
         {
           label: "Organizadores",
@@ -760,43 +771,9 @@ function criarSecoes() {
           resumo_chave: "interacao_votacao_publicada",
         },
         {
-          label: "Auditoria",
-          path: ROTA.administradorAuditoria,
-          icon: ShieldAlert,
-          resumo_chave: "auditoria_erro",
-        },
-        {
-          label: "Caixa de mensagens",
-          path: ROTA.administradorMensagem,
-          icon: MessageSquareText,
-          resumo_chave: "mensagem_pendente",
-        },
-        {
-          label: "Pendências",
-          path: ROTA.administradorPendencia,
-          icon: ClipboardList,
-          resumo_chave: "pendencia_aberta",
-        },
-        {
-          label: "Saúde da Plataforma",
-          path: ROTA.administradorSaudePlataforma,
-          icon: HeartPulse,
-          resumo_chave: "saude_plataforma_alerta",
-        },
-        {
-          label: "Certificados avulsos",
-          path: ROTA.certificadoAvulso,
-          icon: FileText,
-        },
-        {
           label: "Criar chamada de trabalhos",
           path: ROTA.chamadaNova,
           icon: PlusCircle,
-        },
-        {
-          label: "Relatórios customizados",
-          path: ROTA.relatorioCustomizado,
-          icon: ClipboardList,
         },
         {
           label: "Lista de presença por turma",
@@ -810,7 +787,7 @@ function criarSecoes() {
           resumo_chave: "trabalho_pendente",
         },
         {
-          label: "Registros e relatórios",
+          label: "Relatórios",
           path: ROTA.relatorioCustomizado,
           icon: History,
         },
@@ -865,6 +842,7 @@ const [textoMensagemRapida, setTextoMensagemRapida] = useState("");
 const [mensagensRecentes, setMensagensRecentes] = useState([]);
 const [carregandoMensagens, setCarregandoMensagens] = useState(false);
 const [enviandoMensagemRapida, setEnviandoMensagemRapida] = useState(false);
+const rotaAnteriorMobileRef = useRef(location.pathname);
 
   const recolhidaFinal = mobile
     ? false
@@ -911,15 +889,40 @@ const [enviandoMensagemRapida, setEnviandoMensagemRapida] = useState(false);
     [aoAlternarRecolhida, recolhida]
   );
 
-  const navegar = useCallback(
-    (path) => {
-      if (!path) return;
+const navegar = useCallback(
+  (path) => {
+    if (!path) return;
 
-      navigate(path);
+    if (mobile) {
       aoFechar?.();
-    },
-    [aoFechar, navigate]
-  );
+
+      window.setTimeout(() => {
+        if (location.pathname !== path) {
+          navigate(path);
+        }
+      }, 0);
+
+      return;
+    }
+
+    if (location.pathname !== path) {
+      navigate(path);
+    }
+  },
+  [aoFechar, location.pathname, mobile, navigate]
+);
+
+useEffect(() => {
+  if (!mobile) {
+    rotaAnteriorMobileRef.current = location.pathname;
+    return;
+  }
+
+  if (rotaAnteriorMobileRef.current !== location.pathname) {
+    rotaAnteriorMobileRef.current = location.pathname;
+    aoFechar?.();
+  }
+}, [aoFechar, location.pathname, mobile]);
 
   const alternarSecao = useCallback(
     (title) => {

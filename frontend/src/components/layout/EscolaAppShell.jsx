@@ -149,6 +149,20 @@ function unlockBodyScroll() {
   body.dataset.escolaScrollLockCount = String(next);
 }
 
+function forceUnlockBodyScroll() {
+  if (!hasDOM()) return;
+
+  const body = document.body;
+
+  body.style.overflow = body.dataset.escolaScrollAnteriorOverflow || "";
+  body.style.paddingRight = body.dataset.escolaScrollAnteriorPaddingRight || "";
+
+  delete body.dataset.escolaScrollAnteriorOverflow;
+  delete body.dataset.escolaScrollAnteriorPaddingRight;
+
+  body.dataset.escolaScrollLockCount = "0";
+}
+
 function setInert(element, value) {
   if (!element) return;
 
@@ -255,9 +269,16 @@ export default function EscolaAppShell({
         },
       };
 
-  const fecharMenu = useCallback(() => {
-    setMenuAberto(false);
-  }, []);
+const fecharMenu = useCallback(() => {
+  setMenuAberto(false);
+
+  if (hasDOM()) {
+    window.setTimeout(() => {
+      forceUnlockBodyScroll();
+      setInert(conteudoRef.current, false);
+    }, 0);
+  }
+}, []);
 
   const abrirMenu = useCallback(() => {
     setMenuAberto(true);
@@ -323,9 +344,16 @@ export default function EscolaAppShell({
     navigate(rotaLogin, { replace: true });
   }, [navigate, rotaLogin]);
 
-  useEffect(() => {
-    setMenuAberto(false);
-  }, [location.pathname]);
+useEffect(() => {
+  setMenuAberto(false);
+
+  if (hasDOM()) {
+    window.setTimeout(() => {
+      forceUnlockBodyScroll();
+      setInert(conteudoRef.current, false);
+    }, 0);
+  }
+}, [location.pathname]);
 
   useEffect(() => {
     setPerfil(getStoredPerfil());
