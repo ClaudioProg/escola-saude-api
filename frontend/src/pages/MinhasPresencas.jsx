@@ -229,6 +229,21 @@ function extrairDatasAusencias(turma) {
     .filter((data) => !presentes.has(data));
 }
 
+function calcularAusencias(turma) {
+  const total = Number(turma?.total_encontros || 0);
+  const presentes = Number(turma?.presentes || 0);
+
+  const derivadas = Math.max(0, total - presentes);
+
+  const datasAusencias = extrairDatasAusencias(turma);
+
+  if (datasAusencias.length > 0) {
+    return datasAusencias.length;
+  }
+
+  return derivadas;
+}
+
 function getPeriodoInicio(turma) {
   return ymd(turma?.periodo?.data_inicio || turma?.data_inicio);
 }
@@ -538,13 +553,9 @@ function PresencaCard({ turma, index, reduceMotion }) {
   const status = statusInfo(turma?.status);
   const StatusIcon = status.icon;
 
-  const total = Number(turma?.total_encontros || 0);
-  const presentes = Number(turma?.presentes || 0);
-  const ausencias = Number(
-    typeof turma?.ausencias === "number"
-      ? turma.ausencias
-      : Math.max(0, total - presentes)
-  );
+ const total = Number(turma?.total_encontros || 0);
+const presentes = Number(turma?.presentes || 0);
+const ausencias = calcularAusencias(turma);
 
   const freq = clampPercent(turma?.frequencia);
   const encerrado = String(turma?.status || "").toLowerCase() === "encerrado";

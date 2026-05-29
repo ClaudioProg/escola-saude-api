@@ -140,6 +140,11 @@ function safeText(value, max = 5000) {
   return text.length > max ? text.slice(0, max) : text;
 }
 
+function inputText(value, max = 5000) {
+  const text = String(value || "").replace(/\s{2,}/g, " ");
+  return text.length > max ? text.slice(0, max) : text;
+}
+
 function onlyDigits(value = "") {
   return String(value || "").replace(/\D+/g, "");
 }
@@ -531,21 +536,21 @@ function FormularioCertificado({
     (event) => {
       const { name, value } = event.target;
 
-      if (name === "identificador") {
-        setForm((prev) => ({
-          ...prev,
-          identificador: safeText(value, 80),
-        }));
-        return;
-      }
+     if (name === "identificador") {
+  setForm((prev) => ({
+    ...prev,
+    identificador: inputText(value, 80),
+  }));
+  return;
+}
 
-      if (name === "email") {
-        setForm((prev) => ({
-          ...prev,
-          email: safeText(value, 160).toLowerCase(),
-        }));
-        return;
-      }
+if (name === "email") {
+  setForm((prev) => ({
+    ...prev,
+    email: inputText(value, 160).trim().toLowerCase(),
+  }));
+  return;
+}
 
       if (name === "carga_horaria") {
         setForm((prev) => ({
@@ -578,10 +583,10 @@ function FormularioCertificado({
         texto_personalizado: 5000,
       };
 
-      setForm((prev) => ({
-        ...prev,
-        [name]: safeText(value, maxMap[name] || 300),
-      }));
+setForm((prev) => ({
+  ...prev,
+  [name]: inputText(value, maxMap[name] || 300),
+}));
     },
     [setForm]
   );

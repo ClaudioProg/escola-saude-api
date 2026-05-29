@@ -255,12 +255,7 @@ function onlyDigits(value = "") {
 }
 
 function safeText(value, max = 5000) {
-  if (value == null) return null;
-
-  const text = String(value).trim();
-
-  if (!text) return null;
-
+  const text = String(value || "").replace(/\s+/g, " ").trim();
   return text.length > max ? text.slice(0, max) : text;
 }
 
@@ -635,6 +630,26 @@ function parseAssinantesIdsInput(value) {
     .filter((id) => Number.isInteger(id) && id > 0);
 }
 
+function assinaturaImagemToBuffer(value) {
+  const raw = String(value || "").trim();
+
+  if (!raw) return null;
+
+  const direto = dataUrlToBuffer(raw);
+  if (direto) return direto;
+
+  try {
+    const base64 = raw.includes(",") ? raw.split(",").pop() : raw;
+    const cleaned = String(base64 || "").replace(/\s+/g, "");
+
+    if (!cleaned || cleaned.length < 80) return null;
+
+    return Buffer.from(cleaned, "base64");
+  } catch {
+    return null;
+  }
+}
+
 function normalizarAssinantesAvulso(input) {
   const ids = [
     ...new Set(parseAssinantesIdsInput(input)),
@@ -699,7 +714,15 @@ async function carregarAssinaturasAvulsas(db, assinantesIds = []) {
       a.imagem_base64
     FROM usuarios u
     LEFT JOIN cargos c ON c.id = u.cargo_id
-    LEFT JOIN assinaturas a ON a.usuario_id = u.id
+    LEFT JOIN LATERAL (
+  SELECT imagem_base64
+  FROM assinaturas
+  WHERE usuario_id = u.id
+    AND imagem_base64 IS NOT NULL
+    AND LENGTH(TRIM(imagem_base64)) > 0
+  ORDER BY id DESC
+  LIMIT 1
+) a ON TRUE
     WHERE u.id = ANY($1::int[])
     ORDER BY array_position($1::int[], u.id)
     `,
@@ -742,14 +765,14 @@ async function carregarAssinaturasAvulsas(db, assinantesIds = []) {
     throw error;
   }
 
-  return ids.map((id, index) => {
-    const row = rowsMap.get(id);
+return ids.map((id, index) => {
+  const row = rowsMap.get(id);
 
-    const imgBuffer = dataUrlToBuffer(row?.imagem_base64);
+  const imgBuffer = assinaturaImagemToBuffer(row?.imagem_base64);
 
-    return {
-      id,
-      usuario_id: id,
+  return {
+    id,
+    usuario_id: id,
       nome: row?.nome || "—",
       email: row?.email || null,
       perfil: row?.perfil || null,

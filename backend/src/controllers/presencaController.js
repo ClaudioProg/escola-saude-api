@@ -2070,12 +2070,25 @@ async function listarMinhasPresencas(req, res) {
           to_char(t.horario_fim::time, 'HH24:MI') AS horario_fim,
           (t.data_inicio::date + COALESCE(t.horario_inicio::time, '00:00'::time))::timestamp AS inicio_ts,
           (t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))::timestamp AS fim_ts,
-          COALESCE((
-            SELECT COUNT(*)::int
-            FROM datas_turma dt
-            WHERE dt.turma_id = t.id
-          ), 0) AS total_encontros_datas_turma,
-          COALESCE(SUM(CASE WHEN p.presente IS TRUE THEN 1 ELSE 0 END), 0)::int AS presentes_usuario,
+COALESCE((
+  SELECT COUNT(*)::int
+  FROM datas_turma dt
+  WHERE dt.turma_id = t.id
+), 0) AS total_encontros_datas_turma,
+
+COALESCE((
+  SELECT COUNT(*)::int
+  FROM datas_turma dt
+  WHERE dt.turma_id = t.id
+), 0) AS total_encontros_datas_turma,
+
+COALESCE((
+  SELECT ARRAY_AGG(to_char(dt.data::date, 'YYYY-MM-DD') ORDER BY dt.data::date)
+  FROM datas_turma dt
+  WHERE dt.turma_id = t.id
+), ARRAY[to_char(t.data_inicio::date, 'YYYY-MM-DD')]) AS datas_encontros,
+
+COALESCE(SUM(CASE WHEN p.presente IS TRUE THEN 1 ELSE 0 END), 0)::int AS presentes_usuario,
           COALESCE(SUM(CASE WHEN p.presente IS FALSE THEN 1 ELSE 0 END), 0)::int AS ausencias_usuario,
           COALESCE(
             ARRAY_REMOVE(
@@ -2124,10 +2137,22 @@ async function listarMinhasPresencas(req, res) {
     );
 
     const turmas = (result.rows || []).map((row) => {
-      const totalDatas = Number(row.total_encontros_datas_turma || 0);
-      const totalEncontros = totalDatas > 0 ? totalDatas : 1;
-      const presentes = Number(row.presentes_usuario || 0);
-      const ausencias = Number(row.ausencias_usuario || 0);
+const datasEncontros = Array.isArray(row.datas_encontros)
+  ? row.datas_encontros.filter(Boolean)
+  : [];
+
+const datasPresentes = Array.isArray(row.datas_presentes)
+  ? row.datas_presentes.filter(Boolean)
+  : [];
+
+const datasAusencias = datasEncontros.filter(
+  (data) => !datasPresentes.includes(data)
+);
+
+const totalDatas = datasEncontros.length;
+const totalEncontros = totalDatas > 0 ? totalDatas : 1;
+const presentes = datasPresentes.length;
+const ausencias = datasAusencias.length;
 
       let status = "programado";
 
@@ -2161,17 +2186,14 @@ async function listarMinhasPresencas(req, res) {
         pre_elegivel_avaliacao:
           status === "encerrado" && frequenciaDecimal >= 0.75,
         frequencia,
-        datas: {
-          registradas: Array.isArray(row.datas_registradas)
-            ? row.datas_registradas
-            : [],
-          presentes: Array.isArray(row.datas_presentes)
-            ? row.datas_presentes
-            : [],
-          ausencias: Array.isArray(row.datas_ausencias)
-            ? row.datas_ausencias
-            : [],
-        },
+       datas: {
+  encontros: datasEncontros,
+  registradas: Array.isArray(row.datas_registradas)
+    ? row.datas_registradas
+    : [],
+  presentes: datasPresentes,
+  ausencias: datasAusencias,
+},
       };
     });
 

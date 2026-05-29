@@ -432,15 +432,15 @@ export default function Scanner() {
         }
 
         notifySuccess("Presença registrada com sucesso.");
-        setLive("Presença registrada com sucesso.");
+setLive("Presença registrada com sucesso.");
 
-        await stopCamera();
+await stopCamera();
 
-        if (!mountedRef.current) return;
+if (!mountedRef.current) return;
 
-        navigate("/minha-presenca", {
-          replace: true,
-        });
+navigate("/minha-presenca", {
+  replace: true,
+});
       } catch (error) {
         const message = getErrorMessage(
           error,
